@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}诊断信息 - 合同管理工具{% endblock %}
+{% block content %}
+
+<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+    <div>
+        <h2 class="text-2xl font-bold leading-tight">诊断信息</h2>
+        <p class="text-xs text-base-content/50 mt-1">运行路径、PDF 支持、自启动状态、最近日志和数据备份</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+        <button type="button" class="btn btn-primary btn-sm" id="copyDiagnosticsBtn" data-testid="copy-diagnostics">
+            <i data-lucide="copy" class="w-4 h-4"></i> 复制诊断
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="refreshDiagnosticsBtn" data-testid="refresh-diagnostics">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重新检测
+        </button>
+        <a href="{{ url_for('backups') }}" class="btn btn-ghost btn-sm">
+            <i data-lucide="database-backup" class="w-4 h-4"></i> 数据备份
+        </a>
+        <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">返回首页</a>
+    </div>
+</div>
+
+<div id="diagnosticsToast" class="hidden alert mb-3 text-sm"></div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4">
+        <h3 class="font-semibold text-sm mb-3">运行环境</h3>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt class="text-base-content/50">Python</dt><dd>{{ diagnostics.app.python }}</dd>
+            <dt class="text-base-content/50">系统</dt><dd class="break-all">{{ diagnostics.app.platform }}</dd>
+            <dt class="text-base-content/50">监听地址</dt><dd>{{ diagnostics.app.host }}:{{ diagnostics.app.port }}</dd>
+            <dt class="text-base-content/50">调试模式</dt><dd>{{ '开启' if diagnostics.app.debug else '关闭' }}</dd>
+            <dt class="text-base-content/50">模板数量</dt><dd data-diagnostics-field="templates">{{ diagnostics.counts.templates }}</dd>
+            <dt class="text-base-content/50">合同数量</dt><dd data-diagnostics-field="contracts">{{ diagnostics.counts.contracts }}</dd>
+            <dt class="text-base-content/50">备份数量</dt><dd data-diagnostics-field="backups">{{ diagnostics.counts.backups }}</dd>
+        </dl>
+    </section>
+
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4">
+        <div class="flex items-center justify-between gap-2 mb-3">
+            <h3 class="font-semibold text-sm">自启动</h3>
+            <form method="post" action="{{ url_for('diagnostics_open_folder') }}" class="diagnostics-folder-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="folder" value="logs">
+                <button type="submit" class="btn btn-ghost btn-xs">打开日志目录</button>
+            </form>
+        </div>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt class="text-base-content/50">状态</dt>
+            <dd>
+                <span id="autostartDiagnosticBadge"
+                      class="badge badge-sm {{ 'badge-success' if diagnostics.autostart.enabled else 'badge-ghost' }}">
+                    {{ '已开启' if diagnostics.autostart.enabled else '未开启' }}
+                </span>
+            </dd>
+            <dt class="text-base-content/50">来源</dt><dd id="autostartDiagnosticDescription">{{ diagnostics.autostart.description }}</dd>
+            <dt class="text-base-content/50">计划任务</dt><dd id="autostartTaskState">{{ diagnostics.autostart.task_state or '-' }}</dd>
+            <dt class="text-base-content/50">启动脚本</dt><dd class="break-all">{{ diagnostics.autostart.startup_path or '-' }}</dd>
+            {% if diagnostics.autostart.message %}
+            <dt class="text-base-content/50">提示</dt><dd class="text-warning break-all">{{ diagnostics.autostart.message }}</dd>
+            {% endif %}
+        </dl>
+    </section>
+
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4">
+        <div class="flex items-center justify-between gap-2 mb-3">
+            <h3 class="font-semibold text-sm">数据路径</h3>
+            <div class="flex items-center gap-1">
+                {% for folder_key, label in [('data','数据'), ('output','输出'), ('backups','备份')] %}
+                <form method="post" action="{{ url_for('diagnostics_open_folder') }}" class="diagnostics-folder-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="folder" value="{{ folder_key }}">
+                    <button type="submit" class="btn btn-ghost btn-xs">{{ label }}</button>
+                </form>
+                {% endfor %}
+            </div>
+        </div>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+            {% for key, value in diagnostics.paths.items() %}
+            <dt class="text-base-content/50">{{ key }}</dt><dd class="break-all font-mono text-xs">{{ value }}</dd>
+            {% endfor %}
+        </dl>
+    </section>
+
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4">
+        <div class="flex items-center justify-between gap-2 mb-3">
+            <h3 class="font-semibold text-sm">PDF 支持</h3>
+            <button type="button" class="btn btn-ghost btn-xs" id="pdfCheckBtn">重新检测 PDF</button>
+        </div>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm" id="pdfDiagnosticsList">
+            {% for key, value in diagnostics.pdf.items() %}
+            <dt class="text-base-content/50">{{ key }}</dt><dd class="break-all">{{ value }}</dd>
+            {% endfor %}
+        </dl>
+    </section>
+</div>
+
+<section class="bg-base-100 rounded-lg border border-base-300 p-4 mt-3">
+    <h3 class="font-semibold text-sm mb-3">最近日志</h3>
+    {% if diagnostics.recent_logs %}
+    <pre class="text-xs whitespace-pre-wrap break-all bg-base-200 rounded p-3 max-h-80 overflow-auto">{{ diagnostics.recent_logs|join('\n') }}</pre>
+    {% else %}
+    <p class="text-sm text-base-content/50">暂无日志</p>
+    {% endif %}
+</section>
+
+<script id="diagnosticsPayload" type="application/json">{{ diagnostics|tojson }}</script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const payload = JSON.parse(document.getElementById('diagnosticsPayload').textContent || '{}');
+    const toast = document.getElementById('diagnosticsToast');
+
+    function showMessage(message, type) {
+        toast.textContent = message;
+        toast.className = 'alert mb-3 text-sm ' + (type === 'error' ? 'alert-error' : 'alert-success');
+        toast.classList.remove('hidden');
+        window.setTimeout(function() { toast.classList.add('hidden'); }, 2600);
+    }
+
+    function diagnosticsText(data) {
+        return JSON.stringify(data, null, 2);
+    }
+
+    document.getElementById('copyDiagnosticsBtn').addEventListener('click', function() {
+        const text = diagnosticsText(payload);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+                showMessage('诊断信息已复制', 'success');
+            }).catch(function() {
+                showMessage('复制失败，请使用浏览器手动复制页面内容', 'error');
+            });
+        } else {
+            showMessage('当前浏览器不支持自动复制', 'error');
+        }
+    });
+
+    function applyDiagnostics(data) {
+        const autostart = data.autostart || {};
+        const badge = document.getElementById('autostartDiagnosticBadge');
+        badge.textContent = autostart.enabled ? '已开启' : '未开启';
+        badge.classList.toggle('badge-success', !!autostart.enabled);
+        badge.classList.toggle('badge-ghost', !autostart.enabled);
+        document.getElementById('autostartDiagnosticDescription').textContent = autostart.description || '-';
+        document.getElementById('autostartTaskState').textContent = autostart.task_state || '-';
+        ['templates', 'contracts', 'backups'].forEach(function(key) {
+            const target = document.querySelector('[data-diagnostics-field="' + key + '"]');
+            if (target && data.counts) target.textContent = data.counts[key];
+        });
+    }
+
+    function refreshDiagnostics(label) {
+        return fetch('{{ url_for("api_diagnostics") }}', { headers: { 'Accept': 'application/json' } })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                applyDiagnostics(data);
+                showMessage(label || '检测完成', 'success');
+                return data;
+            })
+            .catch(function(err) { showMessage(err.message || '检测失败', 'error'); });
+    }
+
+    document.getElementById('refreshDiagnosticsBtn').addEventListener('click', function() {
+        refreshDiagnostics('诊断信息已刷新');
+    });
+    document.getElementById('pdfCheckBtn').addEventListener('click', function() {
+        refreshDiagnostics('PDF 环境已重新检测');
+    });
+
+    document.querySelectorAll('.diagnostics-folder-form').forEach(function(form) {
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            fetch(form.action, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': form.querySelector('[name="csrf_token"]').value,
+                    'Accept': 'application/json'
+                },
+                body: new FormData(form)
+            })
+            .then(function(response) {
+                return response.json().then(function(data) {
+                    if (!response.ok || !data.success) throw new Error(data.message || '打开目录失败');
+                    return data;
+                });
+            })
+            .then(function(data) { showMessage('已请求打开目录：' + data.path, 'success'); })
+            .catch(function(err) { showMessage(err.message || '打开目录失败', 'error'); });
+        });
+    });
+});
+</script>
+
+{% endblock %}

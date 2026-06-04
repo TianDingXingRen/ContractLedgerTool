@@ -1,0 +1,847 @@
+{
+  "format_version": "1.0",
+  "template_name": "模板1",
+  "source_docx": "198abbb2-6059-45f6-a0e2-fd4a703a89fa.docx",
+  "fields": [
+    {
+      "key": "密级",
+      "label": "密级",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 0,
+        "placeholder": "{密级}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 0
+    },
+    {
+      "key": "合同编号",
+      "label": "合同编号",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 0,
+        "placeholder": "{合同编号}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 1
+    },
+    {
+      "key": "合同名称",
+      "label": "合同名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 5,
+        "placeholder": "{合同名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 2
+    },
+    {
+      "key": "乙方单位名称",
+      "label": "乙方单位名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 12,
+        "placeholder": "{乙方单位名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 3
+    },
+    {
+      "key": "签订日期",
+      "label": "签订日期",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 21,
+        "placeholder": "{签订日期}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 4
+    },
+    {
+      "key": "乙方单位名称_1",
+      "label": "乙方单位名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方单位名称}",
+        "row_index": 1,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 5
+    },
+    {
+      "key": "乙方统一社会信用代码",
+      "label": "乙方统一社会信用代码",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方统一社会信用代码}",
+        "row_index": 2,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 6
+    },
+    {
+      "key": "乙方地址",
+      "label": "乙方地址",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方地址}",
+        "row_index": 3,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 7
+    },
+    {
+      "key": "乙方邮政编码",
+      "label": "乙方邮政编码",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方邮政编码}",
+        "row_index": 4,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 8
+    },
+    {
+      "key": "乙方电话",
+      "label": "乙方电话",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方电话}",
+        "row_index": 5,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 9
+    },
+    {
+      "key": "乙方开户银行",
+      "label": "乙方开户银行",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方开户银行}",
+        "row_index": 6,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 10
+    },
+    {
+      "key": "乙方账户名",
+      "label": "乙方账户名",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方账户名}",
+        "row_index": 7,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 11
+    },
+    {
+      "key": "乙方账号",
+      "label": "乙方账号",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方账号}",
+        "row_index": 8,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 12
+    },
+    {
+      "key": "甲方联系人",
+      "label": "甲方联系人",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 0,
+        "placeholder": "{甲方联系人}",
+        "row_index": 9,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 13
+    },
+    {
+      "key": "甲方联系方式",
+      "label": "甲方联系方式",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 0,
+        "placeholder": "{甲方联系方式}",
+        "row_index": 9,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 14
+    },
+    {
+      "key": "乙方法定代表人",
+      "label": "乙方法定代表人",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方法定代表人}",
+        "row_index": 9,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 15
+    },
+    {
+      "key": "乙方联系人",
+      "label": "乙方联系人",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方联系人}",
+        "row_index": 9,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 16
+    },
+    {
+      "key": "乙方联系方式",
+      "label": "乙方联系方式",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 1,
+        "placeholder": "{乙方联系方式}",
+        "row_index": 9,
+        "table_index": 0,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 17
+    },
+    {
+      "key": "合同标的名称",
+      "label": "合同标的名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 25,
+        "placeholder": "{合同标的名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 18
+    },
+    {
+      "key": "乙方单位名称_2",
+      "label": "乙方单位名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 25,
+        "placeholder": "{乙方单位名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 19
+    },
+    {
+      "key": "合同标的名称_1",
+      "label": "合同标的名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 25,
+        "placeholder": "{合同标的名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 20
+    },
+    {
+      "key": "table_1",
+      "label": "表格2",
+      "field_type": "table",
+      "required": false,
+      "location": {
+        "table_index": 1,
+        "template_row_index": 1,
+        "type": "table"
+      },
+      "columns": [
+        {
+          "key": "序号",
+          "label": "序号",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "文件名称",
+          "label": "文件名称",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "文件号",
+          "label": "文件号",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "uom",
+          "label": "发文单位",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "remark",
+          "label": "备注",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "列6",
+          "label": "列6",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        }
+      ],
+      "id": 21
+    },
+    {
+      "key": "table_2",
+      "label": "表格3",
+      "field_type": "table",
+      "required": false,
+      "location": {
+        "table_index": 2,
+        "template_row_index": 1,
+        "type": "table"
+      },
+      "columns": [
+        {
+          "key": "序号",
+          "label": "序号",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "文件名称",
+          "label": "文件名称",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "文件号",
+          "label": "文件号",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "remark",
+          "label": "备注",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        }
+      ],
+      "id": 22
+    },
+    {
+      "key": "配合完成的相关试验",
+      "label": "配合完成的相关试验",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 32,
+        "placeholder": "{配合完成的相关试验}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 23
+    },
+    {
+      "key": "提供的服务项目",
+      "label": "提供的服务项目",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 34,
+        "placeholder": "{提供的服务项目}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 24
+    },
+    {
+      "key": "交付日期",
+      "label": "交付日期",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 39,
+        "placeholder": "{交付日期}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 25
+    },
+    {
+      "key": "交付产品名称",
+      "label": "交付产品名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 39,
+        "placeholder": "{交付产品名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 26
+    },
+    {
+      "key": "table_3",
+      "label": "表格4",
+      "field_type": "table",
+      "required": false,
+      "location": {
+        "table_index": 3,
+        "template_row_index": 1,
+        "type": "table"
+      },
+      "columns": [
+        {
+          "key": "序号",
+          "label": "序号",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "product_name",
+          "label": "产品名称",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "spec",
+          "label": "规格型号",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "uom",
+          "label": "单位",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "qty",
+          "label": "订货数量",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "unit_price",
+          "label": "单价（万元）",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "subtotal",
+          "label": "合计（万元）",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "tax_rate",
+          "label": "增值税率",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        },
+        {
+          "key": "remark",
+          "label": "备注",
+          "field_type": "text",
+          "formula": "",
+          "default_value": ""
+        }
+      ],
+      "id": 27
+    },
+    {
+      "key": "总计金额",
+      "label": "总计金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "col_index": 2,
+        "placeholder": "{总计金额}",
+        "row_index": 2,
+        "table_index": 3,
+        "type": "table_cell"
+      },
+      "default_value": "",
+      "id": 28
+    },
+    {
+      "key": "执行的法律法规",
+      "label": "执行的法律法规",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 44,
+        "placeholder": "{执行的法律法规}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 29
+    },
+    {
+      "key": "合同标的",
+      "label": "合同标的",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 62,
+        "placeholder": "{合同标的}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 30
+    },
+    {
+      "key": "小写合同金额",
+      "label": "小写合同金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 62,
+        "placeholder": "{小写合同金额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 31
+    },
+    {
+      "key": "大写合同金额",
+      "label": "大写合同金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 62,
+        "placeholder": "{大写合同金额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 32
+    },
+    {
+      "key": "不含税金额",
+      "label": "不含税金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 62,
+        "placeholder": "{不含税金额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 33
+    },
+    {
+      "key": "税额",
+      "label": "税额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 62,
+        "placeholder": "{税额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 34
+    },
+    {
+      "key": "字段名",
+      "label": "字段名",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 66,
+        "placeholder": "{字段名}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 35
+    },
+    {
+      "key": "合同金额",
+      "label": "合同金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 67,
+        "placeholder": "{合同金额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 36
+    },
+    {
+      "key": "付款时间",
+      "label": "付款时间",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 67,
+        "placeholder": "{付款时间}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 37
+    },
+    {
+      "key": "付款第几笔",
+      "label": "付款第几笔",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 69,
+        "placeholder": "{付款第几笔}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 38
+    },
+    {
+      "key": "本笔支付款项百分比",
+      "label": "本笔支付款项百分比",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 69,
+        "placeholder": "{本笔支付款项百分比}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 39
+    },
+    {
+      "key": "本笔支付款项金额",
+      "label": "本笔支付款项金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 69,
+        "placeholder": "{本笔支付款项金额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 40
+    },
+    {
+      "key": "本笔支付款项大写金额",
+      "label": "本笔支付款项大写金额",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 69,
+        "placeholder": "{本笔支付款项大写金额}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 41
+    },
+    {
+      "key": "本笔支付款项时间",
+      "label": "本笔支付款项时间",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 69,
+        "placeholder": "{本笔支付款项时间}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 42
+    },
+    {
+      "key": "N日内提供发票",
+      "label": "N日内提供发票",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 70,
+        "placeholder": "{N日内提供发票}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 43
+    },
+    {
+      "key": "税率",
+      "label": "税率",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 70,
+        "placeholder": "{税率}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 44
+    },
+    {
+      "key": "乙方账户名称",
+      "label": "乙方账户名称",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 72,
+        "placeholder": "{乙方账户名称}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 45
+    },
+    {
+      "key": "乙方开户银行_1",
+      "label": "乙方开户银行",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 73,
+        "placeholder": "{乙方开户银行}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 46
+    },
+    {
+      "key": "乙方银行账号",
+      "label": "乙方银行账号",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 74,
+        "placeholder": "{乙方银行账号}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 47
+    },
+    {
+      "key": "字段名_1",
+      "label": "字段名",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 90,
+        "placeholder": "{字段名}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 48
+    },
+    {
+      "key": "逾期周期",
+      "label": "逾期周期",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 95,
+        "placeholder": "{逾期周期}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 49
+    },
+    {
+      "key": "字段名_2",
+      "label": "字段名",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 107,
+        "placeholder": "{字段名}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 50
+    },
+    {
+      "key": "字段名_3",
+      "label": "字段名",
+      "field_type": "text",
+      "required": false,
+      "location": {
+        "body_index": 136,
+        "placeholder": "{字段名}",
+        "type": "paragraph"
+      },
+      "default_value": "",
+      "id": 51
+    }
+  ]
+}

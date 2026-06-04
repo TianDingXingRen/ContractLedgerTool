@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests", "."]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+addopts = [
+    "--tb=short",
+    "--strict-markers",
+    "--color=yes",
+]
+markers = [
+    "slow: 慢速测试",
+    "e2e: 端到端测试（需要完整环境）",
+]

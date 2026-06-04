@@ -1,0 +1,129 @@
+"""Shared helpers: session, path helpers, and autostart.
+
+Path variables (UPLOAD_FOLDER, BASE_DIR, etc.) are set by app.py at startup.
+
+Most business logic has been split to:
+  - utils.labels            → status label constants (re-exports from utils.constants)
+  - utils.field_utils       → key generation, parsing, marker detection, table normalization
+  - utils.generation_utils  → calculations, contract summary, ledger, batch, payment helpers
+  - utils.autostart         → Windows 自启动管理
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import subprocess
+import threading
+import time as _time
+from typing import Any
+
+import template_def
+
+from utils.security import (
+    path_within, safe_join_file, bounded_int,
+)
+from utils.logger import get_logger
+from utils.labels import (
+    CONTRACT_STATUS_LABELS,
+    CONFIRM_STATUS_LABELS,
+    PAYMENT_STATUS_LABELS,
+    CONFIDENCE_LABELS,
+)
+# ── Re-export from sub-modules for backward compatibility ──
+from utils.field_utils import (
+    field_key_from_label, unique_key, safe_col_key,
+    safe_filename_part, parse_number, normalize_date,
+    to_calc_number, float_or_none, int_or_none,
+    detect_markers, filter_table_rows,
+    normalize_table_columns, apply_submitted_table_columns,
+    parse_submitted_field_values,
+)
+from utils.generation_utils import (
+    calc_context, recalculate_scalar_fields, recalculate_table_fields,
+    infer_contract_summary, create_ledger_record, docx_write_order,
+    generate_docx_document,
+    counterparty_batch_keys, next_month_ym, next_month_range,
+    has_payment_content, can_bulk_confirm_payment,
+    validate_template_source_bindings,
+)
+# ── Re-export from autostart module ──
+from utils.autostart import (
+    autostart_status, enable_autostart, disable_autostart,
+    AUTOSTART_TASK_NAME, AUTOSTART_LAUNCHER_NAME,
+    AUTOSTART_LEGACY_LAUNCHER_NAMES,
+)
+
+# ── Paths set by app.py at startup ──
+UPLOAD_FOLDER = None
+OUTPUT_FOLDER = None
+SESSION_FOLDER = None
+BASE_DIR = None
+
+
+# ═══════════════════════════════════════════════════════
+#  Session helpers
+# ═══════════════════════════════════════════════════════
+
+def save_session_data(sid: str, data: dict[str, Any]) -> None:
+    if SESSION_FOLDER is None:
+        raise RuntimeError('SESSION_FOLDER 未初始化，请先调用 init_runtime()')
+    path = safe_join_file(SESSION_FOLDER, f'{sid}.json', allowed_ext={'.json'})
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def load_session_data(sid: str) -> dict[str, Any]:
+    if SESSION_FOLDER is None:
+        raise RuntimeError('SESSION_FOLDER 未初始化，请先调用 init_runtime()')
+    path = safe_join_file(SESSION_FOLDER, f'{sid}.json', allowed_ext={'.json'})
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+# ═══════════════════════════════════════════════════════
+#  Path helpers
+# ═══════════════════════════════════════════════════════
+
+def safe_uploaded_docx_path(filename: str) -> str:
+    if UPLOAD_FOLDER is None:
+        raise RuntimeError('UPLOAD_FOLDER 未初始化，请先调用 init_runtime()')
+    return safe_join_file(UPLOAD_FOLDER, filename, allowed_ext={'.docx'})
+
+
+def safe_template_path(name: str) -> str:
+    filename = os.path.basename(name or '')
+    if not filename.endswith('.contract-template'):
+        raise ValueError('模板文件名无效')
+    return safe_join_file(template_def.TEMPLATES_DIR, filename, allowed_ext={'.contract-template'})
+
+
+def validate_stored_docx(filename: str) -> str:
+    if not filename:
+        return ''
+    path = safe_uploaded_docx_path(filename)
+    if not os.path.isfile(path):
+        raise ValueError('模板源文件不存在')
+    return os.path.basename(filename)
+
+
+def template_path_from_session(data: dict[str, Any]) -> str:
+    template_path_data = data.get('template_path', '')
+    if template_path_data:
+        path = os.path.abspath(template_path_data)
+        if path_within(template_def.TEMPLATES_DIR, path) and os.path.exists(path):
+            return path
+
+    template_filename = data.get('template_filename', '')
+    if template_filename:
+        try:
+            path = safe_template_path(template_filename)
+        except ValueError:
+            return ''
+        if os.path.exists(path):
+            return path
+    return ''

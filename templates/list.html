@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}模板列表 - 合同管理工具{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-bold">我的模板</h2>
+        <p class="text-base-content/50 text-sm mt-1">选择模板填写合同，或手动定义新模板
+        {% set categories = templates|map(attribute='category')|select|unique|list %}
+        {% if categories %}
+        · <span class="text-xs">
+            {% for cat in categories[:5] %}
+            <a href="?category={{ cat }}" class="link link-hover text-base-content/50">{{ cat }}</a>{% if not loop.last %} · {% endif %}
+            {% endfor %}
+        </span>
+        {% endif %}
+        </p>
+    </div>
+    <div class="flex gap-2">
+        {% if request.args.get('category') %}
+        <a href="{{ url_for('list_templates') }}" class="btn btn-ghost btn-sm text-xs">清除筛选</a>
+        {% endif %}
+        <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-sm">合同台账</a>
+        <a href="{{ url_for('payment_plan_list') }}" class="btn btn-ghost btn-sm">付款计划</a>
+        <a href="{{ url_for('create_template') }}" class="btn btn-primary btn-sm gap-1">
+            <i data-lucide="plus" class="w-4 h-4"></i> 新建模板
+        </a>
+    </div>
+</div>
+
+{% if templates %}
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for tpl in templates %}
+    <div class="card bg-base-100 shadow-sm hover:shadow-md transition-all border border-base-300/50">
+        <div class="card-body p-5">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <i data-lucide="file-text" class="w-5 h-5 text-primary"></i>
+                </div>
+                <div>
+                    <h3 class="font-semibold text-sm leading-tight">{{ tpl.name }}</h3>
+                    <p class="text-xs text-base-content/40">
+                        {{ tpl.field_count }} 个字段
+                        {% if tpl.category %}
+                        · <span class="badge badge-outline badge-xs">{{ tpl.category }}</span>
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+            <p class="text-xs text-base-content/30 mb-4">修改于 {{ tpl.modified }}</p>
+            <div class="card-actions">
+                <a href="{{ url_for('template_editor', name=tpl.filename) }}"
+                   class="btn btn-primary btn-sm flex-1">填写合同</a>
+                <form method="post" action="{{ url_for('template_copy', filename=tpl.filename) }}" class="contents">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-ghost btn-sm">复制</button>
+                </form>
+                <form method="post" action="{{ url_for('template_delete', filename=tpl.filename) }}"
+                      onsubmit="return confirm('确定删除模板「{{ tpl.name }}」？')" class="contents">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-ghost btn-sm text-error">删除</button>
+                </form>
+                <a href="{{ url_for('template_versions', name=tpl.filename) }}" class="btn btn-ghost btn-xs text-base-content/50 ml-auto">
+                    <i data-lucide="history" class="w-3 h-3"></i> 版本
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card bg-base-100 shadow-sm">
+    <div class="card-body text-center py-16">
+        <i data-lucide="file-text" class="w-16 h-16 text-base-content/20 mx-auto mb-4"></i>
+        <h2 class="text-xl font-semibold mb-2">还没有模板</h2>
+        <p class="text-base-content/50 mb-6">编制合同模板，定义字段名称、类型和规则，快速生成合同文档。</p>
+        <div>
+            <a href="{{ url_for('create_template') }}" class="btn btn-primary">编制模板</a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

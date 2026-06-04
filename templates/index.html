@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}合同管理工具 - 首页{% endblock %}
+{% block content %}
+
+<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
+    <div>
+        <h2 class="text-2xl font-bold leading-tight">工作台</h2>
+        <p class="text-xs text-base-content/50 mt-1">{{ today.strftime('%Y-%m-%d') }} · 合同与付款计划概览</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 lg:justify-end">
+        <div class="inline-flex items-center gap-1.5 rounded-lg bg-base-100 border border-base-300 px-2 py-1 shadow-sm text-xs"
+             id="autostartControl">
+            <i data-lucide="power" class="w-3.5 h-3.5 text-accent"></i>
+            <span class="text-base-content/50">自启</span>
+            <span id="autostartBadge"
+                  class="badge badge-xs {{ 'badge-success' if autostart.enabled else 'badge-ghost' }}">
+                {% if not autostart.supported %}
+                    不支持
+                {% elif autostart.enabled %}
+                    开
+                {% else %}
+                    关
+                {% endif %}
+            </span>
+            <span id="autostartDetail" class="hidden sm:inline text-base-content/40 max-w-28 truncate"
+                  title="{{ autostart.description or '' }}">{{ autostart.description or '' }}</span>
+            {% if autostart.supported %}
+                {% if autostart.enabled %}
+                <form method="post" action="{{ url_for('autostart_disable') }}" class="contents autostart-form"
+                      data-next-action="{{ url_for('autostart_enable') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" id="autostartButton" class="btn btn-ghost btn-xs min-h-6 h-6 px-2">关闭</button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ url_for('autostart_enable') }}" class="contents autostart-form"
+                      data-next-action="{{ url_for('autostart_disable') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" id="autostartButton" class="btn btn-primary btn-xs min-h-6 h-6 px-2">开启</button>
+                </form>
+                {% endif %}
+            {% endif %}
+            <span id="autostartError" class="hidden text-error max-w-40 truncate"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Row -->
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2.5 mb-3">
+    <div class="stats bg-base-100 shadow-sm rounded-box">
+        <div class="stat py-2.5 px-4">
+            <div class="stat-title text-xs">合同总数</div>
+            <div class="stat-value text-2xl">{{ contract_stats.total }}</div>
+        </div>
+    </div>
+    {% for status_key in ['draft','signed','active','completed','void'] %}
+    {% set s = contract_stats.by_status.get(status_key, {}) %}
+    <div class="stats bg-base-100 shadow-sm rounded-box">
+        <div class="stat py-2.5 px-4">
+            <div class="stat-title text-xs">{{ status_labels.get(status_key, status_key) }}</div>
+            <div class="stat-value text-2xl {{ 'text-warning' if status_key == 'draft' else 'text-success' if status_key in ('signed','active') else 'text-info' if status_key == 'completed' else '' }}">
+                {{ s.get('count', 0) }}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if autostart_error %}
+<div class="alert alert-error shadow-sm mb-4">
+    <i data-lucide="alert-circle" class="w-4 h-4"></i>
+    <span>{{ autostart_error }}</span>
+</div>
+{% endif %}
+
+<!-- Payment Overview -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+    <!-- Due/Paid/Unpaid -->
+    <div class="card bg-base-100 shadow-sm">
+        <div class="card-body p-4">
+            <h3 class="card-title text-sm mb-3">
+                <i data-lucide="banknote" class="w-4 h-4"></i> 付款概览
+            </h3>
+            <div class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="text-base-content/60">应付总额</span>
+                    <span class="font-semibold tabular-nums">{{ '%.2f'|format(payment_stats.total_due) }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-success/70">已付</span>
+                    <span class="font-semibold text-success tabular-nums">{{ '%.2f'|format(payment_stats.total_paid) }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-error/70">未付</span>
+                    <span class="font-semibold text-error tabular-nums">{{ '%.2f'|format(payment_stats.total_unpaid) }}</span>
+                </div>
+            </div>
+            {% if payment_stats.total_due > 0 %}
+            <progress class="progress progress-success w-full mt-2"
+                      value="{{ payment_stats.total_paid }}" max="{{ payment_stats.total_due }}"></progress>
+            {% endif %}
+            {% if payment_stats.pending_count > 0 %}
+            <div class="mt-3 pt-3 border-t border-base-200 text-xs text-base-content/60">
+                <div class="flex justify-between">
+                    <span>待确认付款</span>
+                    <span class="font-semibold tabular-nums">{{ payment_stats.pending_count }} 笔 / {{ '%.2f'|format(payment_stats.pending_amount) }}</span>
+                </div>
+                {% if payment_stats.pending_missing_date > 0 %}
+                <div class="text-warning mt-1">其中 {{ payment_stats.pending_missing_date }} 笔缺少预计付款日</div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- This Month -->
+    <div class="card bg-base-100 shadow-sm">
+        <div class="card-body p-4">
+            <h3 class="card-title text-sm mb-3">
+                <i data-lucide="calendar" class="w-4 h-4"></i> 本月应付款（{{ today.month }}月）
+            </h3>
+            <div class="stat-value text-2xl {{ 'text-error' if this_month.count > 0 else '' }}">{{ this_month.count }}</div>
+            <div class="text-sm text-base-content/60 mt-2">
+                合计 <span class="font-semibold tabular-nums">{{ '%.2f'|format(this_month.amount) }}</span> 元
+            </div>
+        </div>
+    </div>
+
+    <!-- Next Month -->
+    <div class="card bg-base-100 shadow-sm">
+        <div class="card-body p-4">
+            <h3 class="card-title text-sm mb-3">
+                <i data-lucide="calendar-days" class="w-4 h-4"></i> 下月应付款
+            </h3>
+            <div class="stat-value text-2xl">{{ next_month.count }}</div>
+            <div class="text-sm text-base-content/60 mt-2">
+                合计 <span class="font-semibold tabular-nums">{{ '%.2f'|format(next_month.amount) }}</span> 元
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Expiring Contracts -->
+{% if expiring_contracts %}
+<div class="card bg-info/10 border border-info/30 shadow-sm mb-3">
+    <div class="card-body p-3">
+        <div class="flex items-center gap-2 mb-2">
+            <i data-lucide="clock" class="w-5 h-5 text-info"></i>
+            <h3 class="font-semibold text-sm">合同到期提醒（30天内）</h3>
+            <span class="badge badge-info badge-sm">{{ expiring_contracts|length }} 份</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-xs">
+                <thead>
+                    <tr class="text-info/70">
+                        <th>到期日期</th><th>合同编号</th><th>合同名称</th><th>对方单位</th><th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in expiring_contracts %}
+                    <tr>
+                        <td class="font-mono text-xs {{ 'text-error font-semibold' if c.expiry_date <= today.strftime('%Y-%m-%d') else '' }}">
+                            {{ c.expiry_date }}
+                        </td>
+                        <td class="text-xs">{{ c.contract_no or '-' }}</td>
+                        <td>
+                            <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                               class="link link-hover text-sm">{{ c.title }}</a>
+                        </td>
+                        <td class="text-sm">{{ c.counterparty or '-' }}</td>
+                        <td>
+                            <span class="badge badge-xs {{ 'badge-success' if c.status == 'active' else 'badge-info' }}">
+                                {{ status_labels.get(c.status, c.status) }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Due Soon Alerts -->
+{% if due_soon %}
+<div class="card bg-warning/10 border border-warning/30 shadow-sm mb-3">
+    <div class="card-body p-3">
+        <div class="flex items-center gap-2 mb-2">
+            <i data-lucide="alert-triangle" class="w-5 h-5 text-warning"></i>
+            <h3 class="font-semibold text-sm">即将到期提醒</h3>
+            <span class="badge badge-warning badge-sm">{{ due_soon|length }} 笔</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-xs">
+                <thead>
+                    <tr class="text-warning/70">
+                        <th>应付日期</th><th>合同</th><th>款项</th><th>金额</th><th>对方</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in due_soon %}
+                    <tr>
+                        <td class="font-mono text-xs {{ 'text-error font-semibold' if p.due_date <= today.strftime('%Y-%m-%d') else '' }}">
+                            {{ p.due_date }}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
+                               class="link link-hover text-sm">{{ p.contract_title }}</a>
+                        </td>
+                        <td class="text-sm">{{ p.phase_name or '-' }}</td>
+                        <td class="text-sm tabular-nums font-medium">
+                            {{ '%.2f'|format((p.due_amount or 0) - (p.paid_amount or 0)) }}
+                        </td>
+                        <td class="text-xs text-base-content/50">{{ p.counterparty or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Recent Contracts & Templates -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    <!-- Recent Contracts -->
+    <div class="card bg-base-100 shadow-sm">
+        <div class="card-body p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="card-title text-sm">
+                    <i data-lucide="book-open" class="w-4 h-4"></i> 最近合同
+                </h3>
+                <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-xs">全部</a>
+            </div>
+            {% if recent_contracts %}
+            <div class="flex flex-col gap-2">
+                {% for c in recent_contracts %}
+                <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                   class="flex items-center gap-3 p-1.5 rounded-lg hover:bg-base-200 transition-colors">
+                    <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <i data-lucide="file-text" class="w-4 h-4 text-primary"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium truncate">{{ c.title }}</div>
+                        <div class="text-xs text-base-content/40">{{ c.contract_no or '未编号' }} · {{ c.counterparty or '未知对方' }}</div>
+                    </div>
+                    <span class="badge badge-xs
+                        {{ 'badge-warning' if c.status == 'draft' else 'badge-success' if c.status in ('signed','active') else 'badge-info' if c.status == 'completed' else 'badge-ghost' }}">
+                        {{ status_labels.get(c.status, c.status) }}
+                    </span>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-base-content/40 text-sm text-center py-6">暂无合同记录</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Templates -->
+    <div class="card bg-base-100 shadow-sm">
+        <div class="card-body p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="card-title text-sm">
+                    <i data-lucide="pen-line" class="w-4 h-4"></i> 最近模板
+                </h3>
+                <a href="{{ url_for('list_templates') }}" class="btn btn-ghost btn-xs">全部</a>
+            </div>
+            {% if recent_templates %}
+            <div class="flex flex-col gap-2">
+                {% for tpl in recent_templates %}
+                <a href="{{ url_for('template_editor', name=tpl.filename) }}"
+                   class="flex items-center gap-3 p-1.5 rounded-lg hover:bg-base-200 transition-colors group">
+                    <div class="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center flex-shrink-0">
+                        <i data-lucide="layout-grid" class="w-4 h-4 text-info"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium truncate">{{ tpl.name }}</div>
+                        <div class="text-xs text-base-content/40">{{ tpl.field_count }} 个字段</div>
+                    </div>
+                    <i data-lucide="chevron-right" class="w-4 h-4 text-base-content/20 group-hover:text-primary transition-colors"></i>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-base-content/40 text-sm text-center py-6">暂无模板</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('.autostart-form');
+    if (!form) return;
+
+    const badge = document.getElementById('autostartBadge');
+    const button = document.getElementById('autostartButton');
+    const error = document.getElementById('autostartError');
+    const detail = document.getElementById('autostartDetail');
+    const tokenInput = form.querySelector('input[name="csrf_token"]');
+
+    function setError(message) {
+        if (!error) return;
+        error.textContent = message || '';
+        error.classList.toggle('hidden', !message);
+    }
+
+    function renderState(enabled, description) {
+        if (badge) {
+            badge.textContent = enabled ? '开' : '关';
+            badge.classList.toggle('badge-success', enabled);
+            badge.classList.toggle('badge-ghost', !enabled);
+        }
+        if (detail && description) {
+            detail.textContent = description;
+            detail.title = description;
+        }
+        if (button) {
+            button.textContent = enabled ? '关闭' : '开启';
+            button.classList.toggle('btn-primary', !enabled);
+            button.classList.toggle('btn-ghost', enabled);
+        }
+        form.action = enabled ? "{{ url_for('autostart_disable') }}" : "{{ url_for('autostart_enable') }}";
+    }
+
+    form.addEventListener('submit', function(event) {
+        event.preventDefault();
+        setError('');
+        if (button) {
+            button.disabled = true;
+            button.dataset.originalText = button.textContent;
+            button.textContent = '...';
+        }
+
+        fetch(form.action, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': tokenInput ? tokenInput.value : '',
+                'Accept': 'application/json'
+            },
+            body: new FormData(form)
+        })
+        .then(function(response) {
+            return response.json().then(function(data) {
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || '自启设置失败');
+                }
+                return data;
+            });
+        })
+        .then(function(data) {
+            renderState(!!data.enabled, data.description || '');
+        })
+        .catch(function(err) {
+            setError(err.message || '自启设置失败');
+            if (button && button.dataset.originalText) {
+                button.textContent = button.dataset.originalText;
+            }
+        })
+        .finally(function() {
+            if (button) button.disabled = false;
+        });
+    });
+});
+</script>
+{% endblock %}

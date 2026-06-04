@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}付款计划 - 合同管理工具{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-bold">付款计划</h2>
+        <p class="text-base-content/50 text-sm mt-1">
+            下月范围：{{ next_start }} 至 {{ next_end }} · 共 {{ total }} 条
+        </p>
+    </div>
+    <div class="flex gap-2">
+        <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-sm">合同台账</a>
+        <a href="{{ url_for('export_next_month_payments') }}" class="btn btn-primary btn-sm gap-1">
+            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> 导出下月付款计划
+        </a>
+    </div>
+</div>
+
+<div class="card bg-base-100 shadow-sm">
+    <!-- Filter -->
+    <form class="flex items-center gap-3 p-4 border-b border-base-200 flex-wrap" method="get"
+          action="{{ url_for('payment_plan_list') }}">
+        <select name="confirm_status" class="select select-bordered select-sm">
+            <option value="">全部确认状态</option>
+            {% for value, label in confirm_status_labels.items() %}
+            <option value="{{ value }}" {% if confirm_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <select name="payment_status" class="select select-bordered select-sm">
+            <option value="">全部付款状态</option>
+            {% for value, label in payment_status_labels.items() %}
+            <option value="{{ value }}" {% if payment_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="start_date" value="{{ start_date }}" class="input input-bordered input-sm w-32"
+               placeholder="开始日期">
+        <input type="text" name="end_date" value="{{ end_date }}" class="input input-bordered input-sm w-32"
+               placeholder="结束日期">
+        <button type="submit" class="btn btn-ghost btn-sm">查询</button>
+    </form>
+
+    <!-- Table -->
+    <div class="overflow-x-auto">
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr>
+                    <th>应付日期</th><th>合同编号</th><th>合同名称</th>
+                    <th>对方单位</th><th>款项</th><th>应付金额</th>
+                    <th>已付金额</th><th>状态</th><th>确认</th>
+                    <th>负责人</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in plans %}
+                <tr class="hover">
+                    <td class="text-xs">{{ p.due_date or '待补充' }}</td>
+                    <td class="text-xs">{{ p.contract_no or '-' }}</td>
+                    <td class="font-medium text-sm">{{ p.contract_title }}</td>
+                    <td class="text-sm">{{ p.counterparty or '-' }}</td>
+                    <td class="text-sm">{{ p.phase_name or '-' }}</td>
+                    <td class="text-sm tabular-nums">{{ '%.2f'|format(p.due_amount) if p.due_amount is not none else '-' }}</td>
+                    <td class="text-sm tabular-nums">{{ '%.2f'|format(p.paid_amount or 0) }}</td>
+                    <td>
+                        <span class="badge badge-xs
+                            {% if p.payment_status == 'unpaid' %}badge-error
+                            {% elif p.payment_status == 'partial' %}badge-warning
+                            {% elif p.payment_status == 'paid' %}badge-info
+                            {% else %}badge-ghost{% endif %}">
+                            {{ payment_status_labels.get(p.payment_status, p.payment_status) }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge badge-xs
+                            {% if p.confirm_status == 'confirmed' %}badge-success
+                            {% elif p.confirm_status == 'void' %}badge-ghost
+                            {% else %}badge-warning{% endif %}">
+                            {{ confirm_status_labels.get(p.confirm_status, p.confirm_status) }}
+                        </span>
+                    </td>
+                    <td class="text-sm">{{ p.owner or '-' }}</td>
+                    <td>
+                        <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}" class="btn btn-ghost btn-xs">编辑</a>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="11" class="text-center py-12 text-base-content/40">
+                        <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 text-base-content/20"></i>
+                        暂无付款计划。
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if pages > 1 %}
+    <div class="flex items-center justify-between px-4 py-3 border-t border-base-200">
+        <span class="text-xs text-base-content/50">第 {{ page }} / {{ pages }} 页</span>
+        <div class="join">
+            {% if page > 1 %}
+            <a href="{{ url_for('payment_plan_list', confirm_status=confirm_status, payment_status=payment_status, start_date=start_date, end_date=end_date, page=page-1) }}" class="join-item btn btn-sm">上一页</a>
+            {% endif %}
+            {% for p in range(1, pages + 1) %}
+            {% if p >= page - 2 and p <= page + 2 %}
+            <a href="{{ url_for('payment_plan_list', confirm_status=confirm_status, payment_status=payment_status, start_date=start_date, end_date=end_date, page=p) }}"
+               class="join-item btn btn-sm {{ 'btn-active' if p == page else '' }}">{{ p }}</a>
+            {% endif %}
+            {% endfor %}
+            {% if page < pages %}
+            <a href="{{ url_for('payment_plan_list', confirm_status=confirm_status, payment_status=payment_status, start_date=start_date, end_date=end_date, page=page+1) }}" class="join-item btn btn-sm">下一页</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}

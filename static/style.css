@@ -1,0 +1,187 @@
+/* Minimal overrides — Tailwind + DaisyUI handle everything else */
+
+/* ── Upload zone ── */
+.upload-zone.dragover {
+    border-color: oklch(var(--p)) !important;
+    background: oklch(var(--p) / 0.05) !important;
+}
+
+/* ── Loading overlay ── */
+.loading-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 9998;
+    align-items: center;
+    justify-content: center;
+}
+.loading-overlay.active { display: flex; }
+
+/* ── Toast ── */
+.toast {
+    transform: translateX(120%);
+    transition: transform .35s ease;
+}
+.toast.show { transform: translateX(0); }
+
+/* ── Field item filled state ── */
+.field-item.filled {
+    border-left: 3px solid oklch(var(--su));
+}
+
+/* ── Table calculated cell ── */
+.calc-cell {
+    color: oklch(var(--wa));
+    font-weight: 500;
+    text-align: right;
+    display: block;
+    min-width: 60px;
+    padding: 0 8px;
+}
+
+/* ── Builder field card confidence borders ── */
+.builder-field-item.high-confidence {
+    border-left: 3px solid oklch(var(--su));
+}
+.builder-field-item.low-confidence {
+    border-left: 3px solid oklch(var(--wa));
+    background: oklch(var(--wa) / 0.05);
+}
+.builder-field-item.disabled {
+    opacity: 0.5;
+}
+
+/* ── Table header input ── */
+.th-input {
+    border: none;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: background .15s;
+}
+.th-input:focus {
+    outline: none;
+    background: #fff;
+    border: 1px solid oklch(var(--p));
+    box-shadow: 0 0 0 2px oklch(var(--p) / 0.1);
+}
+
+/* ── Custom checkbox (legacy layout) ── */
+.checkbox-wrap {
+    position: relative;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+}
+.checkbox-wrap input {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+}
+.checkmark {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #cbd5e1;
+    border-radius: 4px;
+    transition: all .2s;
+}
+.checkbox-wrap input:checked ~ .checkmark {
+    background: oklch(var(--p));
+    border-color: oklch(var(--p));
+}
+.checkbox-wrap input:checked ~ .checkmark::after {
+    content: '\2713';
+    color: #fff;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 14px;
+}
+
+/* ── Payment edit table ── */
+.payment-edit-table {
+    min-width: 1500px;
+}
+.payment-edit-wrap textarea {
+    resize: vertical;
+    min-height: 48px;
+}
+
+/* ── Builder layout ── */
+.builder-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+    gap: 1.5rem;
+    align-items: start;
+}
+@media (max-width: 1024px) {
+    .builder-layout {
+        grid-template-columns: 1fr;
+    }
+    .preview-panel {
+        position: static !important;
+    }
+}
+
+/* ── Preview panel ── */
+.preview-panel {
+    position: relative;
+    min-width: 0;
+}
+.preview-pane-inner {
+    max-height: none;
+    overflow: visible;
+}
+.preview-panel .card {
+    width: 100%;
+}
+.preview-field {
+    transition: background 0.15s;
+}
+.preview-input-mock {
+    font-family: 'SimSun', 'Microsoft YaHei', serif;
+}
+.preview-input-mock code {
+    background: oklch(var(--a) / 0.1);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+.preview-table-mock table {
+    font-size: 11px;
+}
+.preview-table-mock th {
+    font-weight: 600;
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+.preview-table-mock td {
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+
+/* ── Field editor card ── */
+.field-editor-card {
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.field-editor-card:hover {
+    border-color: oklch(var(--p) / 0.3);
+    box-shadow: 0 1px 3px oklch(var(--p) / 0.06);
+}
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+    .builder-field-item { padding: 16px; }
+    .payment-edit-table { font-size: 12px; }
+    .payment-edit-table input { font-size: 12px; }
+    .builder-field-item .config-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+}

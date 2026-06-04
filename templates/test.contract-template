@@ -1,0 +1,37 @@
+{
+  "format_version": "1.0",
+  "template_name": "test",
+  "source_docx": "",
+  "fields": [
+    {
+      "id": 0,
+      "key": "var1",
+      "label": "var1",
+      "field_type": "text",
+      "required": true,
+      "location": {
+        "type": "paragraph",
+        "body_index": 0,
+        "placeholder": ""
+      },
+      "default_value": ""
+    },
+    {
+      "id": 1,
+      "key": "var2",
+      "label": "var2",
+      "field_type": "calculated",
+      "required": true,
+      "location": {
+        "type": "paragraph",
+        "body_index": 0,
+        "placeholder": ""
+      },
+      "formula": "var1*5",
+      "decimal_places": 2,
+      "depends_on": [
+        "var1"
+      ]
+    }
+  ]
+}

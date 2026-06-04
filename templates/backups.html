@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}数据备份 - 合同管理工具{% endblock %}
+{% block content %}
+
+<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+    <div>
+        <h2 class="text-2xl font-bold leading-tight">数据备份</h2>
+        <p class="text-xs text-base-content/50 mt-1">手动备份、下载和恢复本地合同台账数据库</p>
+    </div>
+    <div class="flex items-center gap-2">
+        <form method="post" action="{{ url_for('backup_create') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-primary btn-sm" data-testid="create-backup">
+                <i data-lucide="database-backup" class="w-4 h-4"></i> 立即备份
+            </button>
+        </form>
+        <a href="{{ url_for('diagnostics') }}" class="btn btn-ghost btn-sm">诊断信息</a>
+    </div>
+</div>
+
+{% if request.args.get('error') %}
+<div class="alert alert-error mb-3">
+    <i data-lucide="alert-circle" class="w-4 h-4"></i>
+    <span>{{ request.args.get('error') }}</span>
+</div>
+{% endif %}
+
+<section class="bg-base-100 rounded-lg border border-base-300 overflow-hidden">
+    {% if backups %}
+    <div class="overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>备份文件</th>
+                    <th>修改时间</th>
+                    <th>大小</th>
+                    <th class="text-right">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for backup in backups %}
+                <tr>
+                    <td class="font-mono text-xs">{{ backup.filename }}</td>
+                    <td>{{ backup.modified }}</td>
+                    <td>{{ '%.1f'|format(backup.size / 1024) }} KB</td>
+                    <td class="text-right">
+                        <div class="inline-flex items-center gap-1">
+                            <a href="{{ url_for('backup_download', filename=backup.filename) }}"
+                               class="btn btn-ghost btn-xs">下载</a>
+                            <form method="post" action="{{ url_for('backup_restore', filename=backup.filename) }}"
+                                  onsubmit="return confirm('确定要恢复这个备份吗？当前数据库会先自动备份。')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-warning btn-xs">恢复</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="p-8 text-center">
+        <i data-lucide="database" class="w-10 h-10 mx-auto text-base-content/30 mb-3"></i>
+        <p class="font-medium">暂无备份</p>
+        <p class="text-sm text-base-content/50 mt-1">点击“立即备份”创建第一份数据库快照。</p>
+    </div>
+    {% endif %}
+</section>
+
+{% endblock %}

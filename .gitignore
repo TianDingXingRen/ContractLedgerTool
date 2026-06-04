@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+sessions/
+uploads/
+output/
+logs/
+*.log
+.secret_key
+*.db
+*.spec
+# data/ — 仅忽略数据库文件，保留脚本和种子数据
+data/*.db
+data/*.db-wal
+data/*.db-shm
+# templates/versions/ — 模板历史版本（用户数据，自动生成）
+templates/versions/
+# config.json — 用户本地配置（由程序自动生成）
+config.json

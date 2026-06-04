@@ -1,0 +1,380 @@
+"""计算字段公式求值模块
+
+使用 ast.parse 白名单安全求值，支持 + - * / 四则运算和常用聚合。
+"""
+
+import ast
+import functools
+import math
+import operator
+import re
+
+from utils.constants import FieldType
+
+# ── 安全运算白名单 ──────────────────────────
+_SAFE_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+_SAFE_FUNCS = {'SUM', 'AVG', 'MAX', 'MIN', 'COUNT'}
+MAX_FORMULA_LENGTH = 500
+MAX_AST_NODES = 100
+MAX_FUNC_ARGS = 100
+MAX_LIST_ITEMS = 100
+MAX_ABS_NUMBER = 1_000_000_000_000
+
+
+class FormulaError(ValueError):
+    """公式求值错误"""
+    pass
+
+
+class _EvalVisitor(ast.NodeVisitor):
+    """AST 求值访问器"""
+
+    def __init__(self, context):
+        self.context = context
+
+    def visit(self, node):
+        if isinstance(node, ast.Expression):
+            return self.visit(node.body)
+        elif isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float)) or isinstance(node.value, bool):
+                raise FormulaError('公式只允许数字常量')
+            return _checked_number(node.value)
+        elif isinstance(node, ast.BinOp):
+            op = _SAFE_OPS.get(type(node.op))
+            if op is None:
+                raise FormulaError(f'不支持的运算符: {type(node.op).__name__}')
+            left_val = self.visit(node.left)
+            right_val = self.visit(node.right)
+            try:
+                return _checked_number(op(left_val, right_val))
+            except ZeroDivisionError:
+                raise FormulaError(
+                    '除数为零，请检查公式中的分母变量是否为空、为零，'
+                    '或常量计算中出现除以零',
+                )
+        elif isinstance(node, ast.UnaryOp):
+            op = _SAFE_OPS.get(type(node.op))
+            if op is None:
+                raise FormulaError(f'不支持的运算符: {type(node.op).__name__}')
+            return _checked_number(op(self.visit(node.operand)))
+        elif isinstance(node, ast.Name):
+            if node.id in self.context:
+                val = self.context[node.id]
+                if val is None or val == '':
+                    raise FormulaError(f'变量 {node.id} 未设置')
+                try:
+                    return _checked_number(float(val))
+                except (ValueError, TypeError):
+                    raise FormulaError(f'变量 {node.id} 的值 "{val}" 不是有效数字')
+            raise FormulaError(f'未找到变量: {node.id}')
+        elif isinstance(node, ast.Call):
+            func_name = node.func.id if isinstance(node.func, ast.Name) else ''
+            if func_name not in _SAFE_FUNCS:
+                raise FormulaError(f'不支持的函数: {func_name}')
+            if node.keywords:
+                raise FormulaError('函数不支持关键字参数')
+            if len(node.args) > MAX_FUNC_ARGS:
+                raise FormulaError('函数参数过多')
+            args = [self.visit(a) for a in node.args]
+
+            if func_name == 'SUM':
+                return _checked_number(sum(args))
+            elif func_name == 'AVG':
+                return _checked_number(sum(args) / len(args) if args else 0)
+            elif func_name == 'MAX':
+                return max(args) if args else 0
+            elif func_name == 'MIN':
+                return min(args) if args else 0
+            elif func_name == 'COUNT':
+                return len(args)
+        elif isinstance(node, ast.List):
+            if len(node.elts) > MAX_LIST_ITEMS:
+                raise FormulaError('列表元素过多')
+            return [self.visit(el) for el in node.elts]
+        else:
+            raise FormulaError(f'不支持的表达式: {type(node).__name__}')
+
+
+class _ValidateVisitor(ast.NodeVisitor):
+    """Validate formula syntax without requiring variable values."""
+
+    def visit_Expression(self, node):
+        self.visit(node.body)
+
+    def visit_Constant(self, node):
+        if not isinstance(node.value, (int, float)) or isinstance(node.value, bool):
+            raise FormulaError('公式只允许数字常量')
+
+    def visit_BinOp(self, node):
+        if type(node.op) not in _SAFE_OPS:
+            raise FormulaError(f'不支持的运算符: {type(node.op).__name__}')
+        self.visit(node.left)
+        self.visit(node.right)
+
+    def visit_UnaryOp(self, node):
+        if type(node.op) not in _SAFE_OPS:
+            raise FormulaError(f'不支持的运算符: {type(node.op).__name__}')
+        self.visit(node.operand)
+
+    def visit_Name(self, node):
+        return None
+
+    def visit_Call(self, node):
+        func_name = node.func.id if isinstance(node.func, ast.Name) else ''
+        if func_name not in _SAFE_FUNCS:
+            raise FormulaError(f'不支持的函数: {func_name}')
+        if node.keywords:
+            raise FormulaError('函数不支持关键字参数')
+        if len(node.args) > MAX_FUNC_ARGS:
+            raise FormulaError('函数参数过多')
+        for arg in node.args:
+            self.visit(arg)
+
+    def visit_List(self, node):
+        if len(node.elts) > MAX_LIST_ITEMS:
+            raise FormulaError('列表元素过多')
+        for item in node.elts:
+            self.visit(item)
+
+    def generic_visit(self, node):
+        raise FormulaError(f'不支持的表达式: {type(node).__name__}')
+
+
+def _checked_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise FormulaError('公式结果不是数字')
+    if not math.isfinite(number) or abs(number) > MAX_ABS_NUMBER:
+        raise FormulaError('公式数值超出允许范围')
+    return number
+
+
+@functools.lru_cache(maxsize=128)
+def _parse_formula(expr):
+    text = str(expr or '').strip()
+    if len(text) > MAX_FORMULA_LENGTH:
+        raise FormulaError('公式过长')
+    try:
+        tree = ast.parse(text, mode='eval')
+    except SyntaxError as e:
+        raise FormulaError(f'公式语法错误: {e}')
+    nodes = list(ast.walk(tree))
+    if len(nodes) > MAX_AST_NODES:
+        raise FormulaError('公式过于复杂')
+    return tree
+
+
+def validate_formula(expr):
+    if not expr or not str(expr).strip():
+        return True
+    _ValidateVisitor().visit(_parse_formula(expr))
+    return True
+
+
+def safe_eval(expr, context=None):
+    """安全求值公式表达式
+
+    参数:
+        expr: 公式字符串，如 "unit_price * quantity"
+        context: 变量值字典，如 {'unit_price': 100, 'quantity': 5}
+
+    返回:
+        计算结果 (float)
+
+    示例:
+        >>> safe_eval('2 + 3 * 4')
+        14.0
+        >>> safe_eval('unit_price * qty', {'unit_price': 100, 'qty': 5})
+        500.0
+        >>> safe_eval('SUM(a, b, c)', {'a': 1, 'b': 2, 'c': 3})
+        6.0
+    """
+    if context is None:
+        context = {}
+
+    # 空公式返回 0
+    if not expr or not expr.strip():
+        return 0
+
+    try:
+        tree = _parse_formula(expr)
+        visitor = _EvalVisitor(context)
+        result = visitor.visit(tree)
+        return _checked_number(result)
+    except FormulaError:
+        raise
+    except Exception as e:
+        raise FormulaError(f'公式求值失败: {e}')
+
+
+def resolve_table_aggregate(rows_data, column_key, func='SUM'):
+    """计算表格列的聚合值
+
+    参数:
+        rows_data: [{col_key: value}, ...] 表格行数据列表
+        column_key: 要聚合的列 key
+        func: 聚合函数 SUM/AVG/MAX/MIN/COUNT
+
+    返回:
+        聚合结果 (float)
+    """
+    values = []
+    for row in rows_data:
+        raw = row.get(column_key, 0)
+        if isinstance(raw, (int, float)):
+            values.append(raw)
+        else:
+            try:
+                values.append(float(raw))
+            except (ValueError, TypeError):
+                values.append(0)
+
+    if func == 'SUM':
+        return sum(values)
+    elif func == 'AVG':
+        return sum(values) / len(values) if values else 0
+    elif func == 'MAX':
+        return max(values) if values else 0
+    elif func == 'MIN':
+        return min(values) if values else 0
+    elif func == 'COUNT':
+        return len(values)
+    return 0
+
+
+def sort_fields_by_dependency(fields):
+    """按依赖关系拓扑排序字段
+
+    返回排序后的字段列表，计算字段在依赖的输入字段之后
+
+    参数:
+        fields: 字段定义列表，每个含 key, field_type, formula, depends_on 等
+    """
+    # 分离输入字段和计算字段
+    calc_value = FieldType.CALCULATED.value
+    input_fields = [f for f in fields if f.get('field_type') != calc_value]
+    calc_fields = [f for f in fields if f.get('field_type') == calc_value]
+
+    # 构建依赖图
+    calc_by_key = {f['key']: f for f in fields if f.get('key')}
+    all_keys = set(calc_by_key)
+    resolved = {f['key'] for f in input_fields if f.get('key')}
+    ordered_calcs = []
+    remaining = list(calc_fields)
+
+    # 迭代解析
+    max_iter = len(calc_fields) * 2
+    for _ in range(max_iter):
+        if not remaining:
+            break
+        newly_resolved = []
+        still_remaining = []
+        for f in remaining:
+            deps = _get_calc_deps(f)
+            if all(d in resolved for d in deps):
+                ordered_calcs.append(f)
+                resolved.add(f['key'])
+                newly_resolved.append(f['key'])
+            else:
+                still_remaining.append(f)
+        remaining = still_remaining
+        if not newly_resolved:
+            break  # 无法继续解析
+
+    if remaining:
+        problem_parts = []
+        for f in remaining:
+            deps = _get_calc_deps(f)
+            missing = sorted(d for d in deps if d not in all_keys)
+            name = f.get('label') or f.get('key') or '未命名字段'
+            if missing:
+                problem_parts.append(f'{name} 缺少依赖: {", ".join(missing)}')
+            else:
+                problem_parts.append(f'{name} 存在循环依赖')
+        raise FormulaError('；'.join(problem_parts))
+    return input_fields + ordered_calcs
+
+
+def _get_calc_deps(field):
+    """获取计算字段的依赖列表（单次 AST walk，避免重复解析）"""
+    formula = field.get('formula', '')
+    deps = set()
+    tree = _parse_formula(formula)
+    # 单次遍历同时完成：变量提取 + 基础安全校验
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id not in _SAFE_FUNCS:
+            deps.add(node.id)
+        elif isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float)) or isinstance(node.value, bool):
+                raise FormulaError('公式只允许数字常量')
+        elif isinstance(node, ast.BinOp):
+            if type(node.op) not in _SAFE_OPS:
+                raise FormulaError(f'不支持的运算符: {type(node.op).__name__}')
+        elif isinstance(node, ast.UnaryOp):
+            if type(node.op) not in _SAFE_OPS:
+                raise FormulaError(f'不支持的运算符: {type(node.op).__name__}')
+        elif isinstance(node, ast.Call):
+            func_name = node.func.id if isinstance(node.func, ast.Name) else ''
+            if func_name not in _SAFE_FUNCS:
+                raise FormulaError(f'不支持的函数: {func_name}')
+            if node.keywords:
+                raise FormulaError('函数不支持关键字参数')
+            if len(node.args) > MAX_FUNC_ARGS:
+                raise FormulaError('函数参数过多')
+        elif isinstance(node, ast.List):
+            if len(node.elts) > MAX_LIST_ITEMS:
+                raise FormulaError('列表元素过多')
+        elif isinstance(node, (ast.Add, ast.Sub, ast.Mult, ast.Div,
+                                ast.USub, ast.UAdd, ast.Load, ast.Store)):
+            pass  # 运算符/上下文节点，由父节点处理
+        elif not isinstance(node, (ast.Expression, ast.Name, ast.Module)):
+            raise FormulaError(f'不支持的表达式: {type(node).__name__}')
+    field_deps = field.get('depends_on', [])
+    deps.update(field_deps)
+    return deps
+
+
+def format_number(value, decimal_places=2):
+    """格式化数字，保留指定位数小数"""
+    try:
+        v = float(value)
+        return round(v, decimal_places)
+    except (ValueError, TypeError):
+        return value
+
+
+def get_calc_deps(field):
+    """获取计算字段的依赖列表（公开接口）"""
+    return _get_calc_deps(field)
+
+
+def make_col_key(label, index):
+    """从列标签生成键名"""
+    key_map = {
+        '产品名称': 'product_name', '产品': 'product_name',
+        '数量': 'qty',
+        '单价': 'unit_price', '价格': 'unit_price',
+        '小计': 'subtotal', '合计': 'subtotal', '金额': 'amount',
+        '总价': 'total_price',
+        '规格型号': 'spec', '型号': 'spec',
+        '单位': 'uom', '计量单位': 'uom',
+        '备注': 'remark', '说明': 'note',
+        '税率': 'tax_rate',
+        '税额': 'tax_amount',
+    }
+    for kw, key in key_map.items():
+        if kw in label:
+            base = key
+            break
+    else:
+        base = re.sub(r'[^\w]', '', label)[:15] or f'col_{index}'
+
+    return base

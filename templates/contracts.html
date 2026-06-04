@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}合同台账 - 合同管理工具{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-bold">{{ '回收站' if trash_mode else '合同台账' }}</h2>
+        <p class="text-base-content/50 text-sm mt-1">
+            {% if trash_mode %}
+            共 {{ total }} 条已删除合同 · 可恢复或永久删除
+            {% else %}
+            共 {{ total }} 条 · 查看已生成合同，维护状态和付款计划
+            {% endif %}
+        </p>
+    </div>
+    <div class="flex gap-2">
+        <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">首页</a>
+        {% if not trash_mode %}
+        <a href="{{ url_for('contract_export', q=q, status=status) }}" class="btn btn-ghost btn-sm gap-1">
+            <i data-lucide="download" class="w-4 h-4"></i> 导出
+        </a>
+        <a href="{{ url_for('list_templates') }}" class="btn btn-primary btn-sm gap-1">
+            <i data-lucide="plus" class="w-4 h-4"></i> 生成合同
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card bg-base-100 shadow-sm" x-data="batchSelect()">
+    <!-- Filter (hidden in trash mode) -->
+    {% if not trash_mode %}
+    <form class="flex items-center gap-3 p-4 border-b border-base-200 flex-wrap" method="get"
+          action="{{ url_for('contract_ledger') }}">
+        <input type="text" name="q" value="{{ q }}" class="input input-bordered input-sm flex-1 min-w-[200px]"
+               placeholder="合同编号、名称、对方单位、负责人、合同内容、付款条款...">
+        <select name="status" class="select select-bordered select-sm">
+            <option value="">全部状态</option>
+            {% for value, label in contract_status_labels.items() %}
+            <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-ghost btn-sm">查询</button>
+    </form>
+    {% endif %}
+
+    <!-- Batch toolbar (hidden in trash mode) -->
+    {% if not trash_mode %}
+    <div class="flex items-center gap-2 px-4 py-2 border-b border-base-200 bg-base-200/50" x-show="selected.length > 0" x-cloak>
+        <span class="text-xs text-base-content/60" x-text="'已选 ' + selected.length + ' 项'"></span>
+        <form method="post" action="{{ url_for('contract_batch_status') }}" class="flex items-center gap-1">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="ids" :value="JSON.stringify(selected)">
+            <select name="status" class="select select-bordered select-xs">
+                <option value="">批量改状态</option>
+                <option value="draft">草稿</option>
+                <option value="signed">已签订</option>
+                <option value="active">执行中</option>
+                <option value="completed">已完成</option>
+                <option value="void">已作废</option>
+            </select>
+            <button type="submit" class="btn btn-ghost btn-xs">应用</button>
+        </form>
+        <form method="post" action="{{ url_for('contract_batch_delete') }}" x-on:submit="if (!confirm('确认将选中的 ' + selected.length + ' 份合同移入回收站？可在回收站中恢复或永久删除。')) $event.preventDefault()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="ids" :value="JSON.stringify(selected)">
+            <button type="submit" class="btn btn-ghost btn-xs text-error">批量删除</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <!-- Table -->
+    <div class="overflow-x-auto">
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr>
+                    {% if not trash_mode %}<th><input type="checkbox" x-on:change="toggleAll($el, {{ contracts|tojson }})"></th>{% endif %}
+                    <th>合同编号</th>
+                    <th>合同名称</th>
+                    <th>对方单位</th>
+                    <th>金额</th>
+                    <th>签订日期</th>
+                    <th>负责人</th>
+                    <th>状态</th>
+                    <th>付款计划</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in contracts %}
+                <tr class="hover">
+                    {% if not trash_mode %}<td><input type="checkbox" value="{{ c.id }}" x-model="selected"></td>{% endif %}
+                    <td class="text-xs">{{ c.contract_no or '-' }}</td>
+                    <td class="font-medium text-sm">{{ c.title }}</td>
+                    <td class="text-sm">{{ c.counterparty or '-' }}</td>
+                    <td class="text-sm tabular-nums">{{ '%.2f'|format(c.amount) if c.amount is not none else '-' }}</td>
+                    <td class="text-xs">{{ c.sign_date or '-' }}</td>
+                    <td class="text-sm">{{ c.owner or '-' }}</td>
+                    <td>
+                        <span class="status-pill badge
+                            {% if c.status == 'draft' %}badge-warning
+                            {% elif c.status == 'signed' or c.status == 'active' %}badge-success
+                            {% elif c.status == 'completed' %}badge-info
+                            {% elif c.status == 'void' %}badge-ghost
+                            {% else %}badge-ghost{% endif %} text-xs">
+                            {{ contract_status_labels.get(c.status, c.status) }}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="flex gap-1 flex-wrap">
+                            <span class="mini-stat badge badge-ghost badge-xs">总 {{ c.plan_count or 0 }}</span>
+                            {% if c.pending_count %}
+                            <span class="mini-stat badge badge-warning badge-xs">待确认 {{ c.pending_count }}</span>
+                            {% endif %}
+                            {% if c.payable_count %}
+                            <span class="mini-stat badge badge-success badge-xs">待付 {{ c.payable_count }}</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td class="table-actions">
+                        <div class="flex gap-1">
+                            <a href="{{ url_for('contract_detail', contract_id=c.id) }}" class="btn btn-ghost btn-xs">查看</a>
+                            {% if not trash_mode and c.docx_path %}
+                            <a href="{{ url_for('contract_download', contract_id=c.id) }}" class="btn btn-ghost btn-xs">下载</a>
+                            {% endif %}
+                            {% if trash_mode %}
+                            <form method="post" action="{{ url_for('contract_restore', contract_id=c.id) }}" class="contents" onsubmit="return confirm('确定恢复此合同？')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-success btn-xs">恢复</button>
+                            </form>
+                            <form method="post" action="{{ url_for('contract_permanent_delete', contract_id=c.id) }}" class="contents" onsubmit="return confirm('永久删除后不可恢复，确定？')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-error btn-xs">永久删除</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="{{ 10 if not trash_mode else 9 }}" class="text-center py-12 text-base-content/40">
+                        <i data-lucide="{{ 'trash-2' if trash_mode else 'inbox' }}" class="w-10 h-10 mx-auto mb-2 text-base-content/20"></i>
+                        {{ '回收站为空' if trash_mode else '还没有合同记录。生成一份合同后会自动进入台账。' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if pages > 1 %}
+    <div class="flex items-center justify-between p-4 border-t border-base-200">
+        <span class="text-xs text-base-content/50">第 {{ page }} / {{ pages }} 页</span>
+        <div class="join">
+            {% set list_url = url_for('contract_trash') if trash_mode else url_for('contract_ledger') %}
+            {% if page > 1 %}
+            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&page={{ page-1 }}" class="join-item btn btn-sm">上一页</a>
+            {% endif %}
+            {% for p in range(1, pages + 1) %}
+            {% if p >= page - 2 and p <= page + 2 %}
+            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&page={{ p }}"
+               class="join-item btn btn-sm {{ 'btn-active' if p == page else '' }}">{{ p }}</a>
+            {% endif %}
+            {% endfor %}
+            {% if page < pages %}
+            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&page={{ page+1 }}" class="join-item btn btn-sm">下一页</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function batchSelect() {
+    return {
+        selected: [],
+        toggleAll(el, contracts) {
+            this.selected = el.checked ? contracts.map(c => c.id) : [];
+        }
+    }
+}
+</script>
+{% endblock %}
