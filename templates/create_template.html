@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}编制模板 - 合同管理工具{% endblock %}
+{% block breadcrumb %}create_template{% endblock %}
 {% block content %}
 
 <div class="flex items-center justify-between mb-6">
@@ -162,6 +163,7 @@
                     <select name="field_type_${idx}" class="config-input field-type-select select select-bordered select-xs"
                             onchange="onTypeChange(this, ${idx})">
                         <option value="text" ${data.field_type === 'text' ? 'selected' : ''}>文本 (单行)</option>
+                        <option value="number" ${data.field_type === 'number' ? 'selected' : ''}>数字</option>
                         <option value="textarea" ${data.field_type === 'textarea' ? 'selected' : ''}>段落 (多行)</option>
                         <option value="select" ${data.field_type === 'select' ? 'selected' : ''}>下拉选择</option>
                         <option value="table" ${data.field_type === 'table' ? 'selected' : ''}>表格</option>
@@ -170,7 +172,7 @@
                 </div>
                 <div class="config-row mb-3">
                     <label class="checkbox-wrap-inline inline-flex items-center gap-2 text-sm cursor-pointer">
-                        <input type="checkbox" name="field_required_${idx}" class="checkbox checkbox-xs" checked> 必填
+                        <input type="checkbox" name="field_required_${idx}" class="checkbox checkbox-xs" ${data.required ? 'checked' : ''}> 必填
                     </label>
                 </div>
 
@@ -189,6 +191,28 @@
                         <label class="text-xs text-base-content/60 w-12 pt-1">选项：</label>
                         <textarea name="field_options_${idx}" class="config-input options-input textarea textarea-bordered textarea-xs flex-1"
                                   rows="3" placeholder="每行一个选项">${data.options ? data.options.join('\n') : '选项1\n选项2\n选项3'}</textarea>
+                    </div>
+                </div>
+
+                <div class="type-config type-config-number" id="config_number_${idx}"
+                     style="display: ${data.field_type === 'number' ? 'block' : 'none'}">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                        <label class="form-control">
+                            <span class="label-text text-xs text-base-content/60 mb-1">最小值</span>
+                            <input type="number" step="any" name="field_number_min_${idx}" value="${v(data.min_value)}"
+                                   class="input input-bordered input-sm" placeholder="可选">
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs text-base-content/60 mb-1">最大值</span>
+                            <input type="number" step="any" name="field_number_max_${idx}" value="${v(data.max_value)}"
+                                   class="input input-bordered input-sm" placeholder="可选">
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs text-base-content/60 mb-1">小数位</span>
+                            <select name="field_number_decimal_${idx}" class="select select-bordered select-sm">
+                                ${[0,1,2,3,4,5,6].map(n => `<option value="${n}" ${Number(data.decimal_places ?? 2) === n ? 'selected' : ''}>${n}</option>`).join('')}
+                            </select>
+                        </label>
                     </div>
                 </div>
 
@@ -246,7 +270,7 @@
         if (data.field_type) {
             onTypeChange(div.querySelector('.field-type-select'), idx);
         }
-        lucide.createIcons();
+        // icons auto-rendered by icons.js
     }
 
     function renderTableColumns(columns, fieldIdx) {
@@ -269,6 +293,7 @@
                         <select name="col_type_${fieldIdx}_${ci}" class="col-type-select select select-bordered select-sm w-full"
                                 onchange="onColTypeChange(this)">
                             <option value="text" ${col.field_type === 'text' ? 'selected' : ''}>文本</option>
+                            <option value="number" ${col.field_type === 'number' ? 'selected' : ''}>数字</option>
                             <option value="textarea" ${col.field_type === 'textarea' ? 'selected' : ''}>段落</option>
                             <option value="select" ${col.field_type === 'select' ? 'selected' : ''}>选择</option>
                             <option value="calculated" ${col.field_type === 'calculated' ? 'selected' : ''}>自动计算</option>
@@ -283,6 +308,16 @@
                         <span class="label-text text-xs text-base-content/50 mb-1">计算公式</span>
                         <input type="text" name="col_formula_${fieldIdx}_${ci}" value="${escapeHtml(col.formula || '')}"
                                class="col-formula-input input input-bordered input-sm w-full font-mono" placeholder="例如：qty * unit_price">
+                    </label>
+                    <label class="form-control col-options-wrap md:col-span-3" style="display: ${col.field_type === 'select' ? 'block' : 'none'}">
+                        <span class="label-text text-xs text-base-content/50 mb-1">选择项（每行一个）</span>
+                        <textarea name="col_options_${fieldIdx}_${ci}" class="textarea textarea-bordered textarea-sm" rows="2">${escapeHtml((col.options || []).join('\n'))}</textarea>
+                    </label>
+                    <label class="form-control col-decimal-wrap" style="display: ${col.field_type === 'number' ? 'block' : 'none'}">
+                        <span class="label-text text-xs text-base-content/50 mb-1">小数位</span>
+                        <select name="col_decimal_${fieldIdx}_${ci}" class="select select-bordered select-sm">
+                            ${[0,1,2,3,4,5,6].map(n => `<option value="${n}" ${Number(col.decimal_places ?? 2) === n ? 'selected' : ''}>${n}</option>`).join('')}
+                        </select>
                     </label>
                 </div>
                 <div class="column-var-hint text-xs text-base-content/40 mt-2">
@@ -309,11 +344,11 @@
 
     function onTypeChange(select, idx) {
         const badge = document.getElementById('badge_' + idx);
-        const typeNames = {text:'文本', textarea:'段落', select:'选择', table:'表格', calculated:'计算'};
-        const typeColors = {text:'badge-primary', textarea:'badge-secondary', select:'badge-info', table:'badge-success', calculated:'badge-warning'};
+        const typeNames = {text:'文本', number:'数字', textarea:'段落', select:'选择', table:'表格', calculated:'计算'};
+        const typeColors = {text:'badge-primary', number:'badge-accent', textarea:'badge-secondary', select:'badge-info', table:'badge-success', calculated:'badge-warning'};
         badge.textContent = typeNames[select.value] || select.value;
         badge.className = 'field-type-badge badge badge-sm ' + (typeColors[select.value] || 'badge-primary');
-        ['select', 'calculated', 'table'].forEach(t => {
+        ['number', 'select', 'calculated', 'table'].forEach(t => {
             const el = document.getElementById('config_' + t + '_' + idx);
             if (el) el.style.display = (t === select.value) ? 'block' : 'none';
         });
@@ -363,7 +398,7 @@
                     <span class="label-text text-xs text-base-content/50 mb-1">类型</span>
                     <select name="col_type_${fieldIdx}_${ci}" class="col-type-select select select-bordered select-sm w-full" onchange="onColTypeChange(this)">
                         <option value="text" selected>文本</option><option value="textarea">段落</option>
-                        <option value="select">选择</option><option value="calculated">自动计算</option>
+                        <option value="number">数字</option><option value="select">选择</option><option value="calculated">自动计算</option>
                     </select>
                 </label>
                 <label class="form-control col-default-wrap">
@@ -374,6 +409,14 @@
                     <span class="label-text text-xs text-base-content/50 mb-1">计算公式</span>
                     <input type="text" name="col_formula_${fieldIdx}_${ci}" value="" class="col-formula-input input input-bordered input-sm w-full font-mono" placeholder="例如：qty * unit_price">
                 </label>
+                <label class="form-control col-options-wrap md:col-span-3" style="display:none">
+                    <span class="label-text text-xs text-base-content/50 mb-1">选择项（每行一个）</span>
+                    <textarea name="col_options_${fieldIdx}_${ci}" class="textarea textarea-bordered textarea-sm" rows="2"></textarea>
+                </label>
+                <label class="form-control col-decimal-wrap" style="display:none">
+                    <span class="label-text text-xs text-base-content/50 mb-1">小数位</span>
+                    <select name="col_decimal_${fieldIdx}_${ci}" class="select select-bordered select-sm"><option>0</option><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+                </label>
             </div>
             <div class="column-var-hint text-xs text-base-content/40 mt-2">
                 变量 <code class="badge badge-xs font-mono">col_${ci}</code>
@@ -382,7 +425,7 @@
         editor.appendChild(row);
         bindColumnLabelHints(editor);
         refreshColumnRemoveButtons(editor);
-        lucide.createIcons();
+        // icons auto-rendered by icons.js
     }
 
     function removeColumn(btn) {
@@ -399,9 +442,13 @@
         const row = select.closest('.column-row');
         const formulaWrap = row ? row.querySelector('.col-formula-wrap') : null;
         const defaultWrap = row ? row.querySelector('.col-default-wrap') : null;
+        const optionsWrap = row ? row.querySelector('.col-options-wrap') : null;
+        const decimalWrap = row ? row.querySelector('.col-decimal-wrap') : null;
         const isCalculated = select.value === 'calculated';
         if (formulaWrap) formulaWrap.style.display = isCalculated ? 'block' : 'none';
         if (defaultWrap) defaultWrap.style.display = isCalculated ? 'none' : 'block';
+        if (optionsWrap) optionsWrap.style.display = select.value === 'select' ? 'block' : 'none';
+        if (decimalWrap) decimalWrap.style.display = select.value === 'number' ? 'block' : 'none';
     }
 
     function escapeHtml(str) {
@@ -482,10 +529,11 @@
             item.dataset.fieldIndex = idx;
             const prefixes = ['field_label_','field_key_','field_body_index_','field_placeholder_',
                 'field_table_index_','field_row_index_','field_col_index_','field_template_row_index_',
-                'field_type_','field_required_','field_options_','field_formula_','field_decimal_','field_default_'];
+                'field_type_','field_required_','field_options_','field_formula_','field_decimal_','field_default_',
+                'field_number_min_','field_number_max_','field_number_decimal_'];
             prefixes.forEach(p => renameByPrefix(item, p, p + idx));
             item.querySelectorAll('.column-row').forEach((row, ci) => {
-                ['col_label_','col_type_','col_formula_','col_default_'].forEach(p =>
+                ['col_label_','col_type_','col_formula_','col_default_','col_options_','col_decimal_'].forEach(p =>
                     renameByPrefix(row, p, p + idx + '_' + ci));
             });
         });

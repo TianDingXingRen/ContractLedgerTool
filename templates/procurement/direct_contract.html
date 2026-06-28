@@ -1,0 +1,44 @@
+{% extends "base.html" %}{% block title %}直接生成合同{% endblock %}{% block breadcrumb %}采购前置 / 直接生成合同{% endblock %}{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="mb-5">
+    <h1 class="text-2xl font-bold">直接生成合同</h1>
+    <p class="text-sm text-base-content/50 mt-1">{{ project.project_no }} / {{ project.project_name }}</p>
+  </div>
+  {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
+  <div class="apple-alert-warning mb-4">
+    <div style="display:flex;align-items:flex-start;gap:10px">
+      <i data-lucide="git-branch" style="width:18px;height:18px;color:var(--apple-orange);margin-top:2px"></i>
+      <div>
+        <div style="font-weight:600;color:var(--apple-text);font-size:14px">已切入合同环节</div>
+        <div style="font-size:12px;color:var(--apple-text2);margin-top:3px">系统会用项目基础信息、候选供应商和采购明细预填合同。未经历报价或成交建议的内容，请在合同编辑器中复核补齐。</div>
+      </div>
+    </div>
+  </div>
+  <form method="post" class="apple-section">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="apple-section-header">
+      <span class="apple-section-title"><i data-lucide="file-text" style="width:18px;height:18px;color:var(--apple-blue)"></i> 选择合同模板</span>
+    </div>
+    <div class="apple-section-body">
+      <label class="form-control gap-2">
+        <span class="label-text text-xs text-base-content/60">合同模板 *</span>
+        <select class="select select-bordered" required name="template_filename">
+          <option value="">请选择</option>
+          {% for template in templates %}
+          <option value="{{ template.filename }}">{{ template.name }}（{{ template.field_count }} 字段）</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 text-sm">
+        <div><span class="text-base-content/50">采购明细</span><div class="font-semibold">{{ project.item_count }} 条</div></div>
+        <div><span class="text-base-content/50">候选供应商</span><div class="font-semibold">{{ project.supplier_count }} 家</div></div>
+        <div><span class="text-base-content/50">预算/目标价</span><div class="font-semibold">{{ project.budget_amount or project.target_price or '-' }}</div></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-5">
+        <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回项目</a>
+        <button class="apple-btn apple-btn-primary">进入合同编辑器</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

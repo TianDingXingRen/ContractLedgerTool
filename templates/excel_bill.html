@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+{% block title %}Excel 单据生成 - 合同管理工具{% endblock %}
+{% block breadcrumb %}excel_bill{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-bold">Excel 单据生成</h2>
+        <p class="text-base-content/50 text-sm mt-1">选择预置表头 -> 填写表头信息 -> 关联合同采购标的 -> 生成 Excel</p>
+    </div>
+</div>
+
+<form id="billForm" method="post" action="{{ url_for('excel_bill_generate') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="preset_key" id="presetKey" value="standard_pr">
+    <input type="hidden" name="header_data" id="headerData" value="{}">
+    <input type="hidden" name="detail_data" id="detailData" value="[]">
+    <input type="hidden" name="contract_id" id="contractId" value="">
+    <input type="hidden" name="column_mapping" id="columnMapping" value="{}">
+
+    <!-- Step 1: 选择预置表头 -->
+    <div class="card bg-base-100 shadow-sm mb-4">
+        <div class="card-body">
+            <h3 class="card-title text-base mb-3">
+                <span class="badge badge-primary">1</span> 选择单据表头预设
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" id="presetCards">
+                {% for p in presets %}
+                <div class="card bg-base-200 cursor-pointer hover:shadow-md transition-shadow border-2
+                            {% if p.key == 'standard_pr' %}border-primary{% else %}border-transparent{% endif %}"
+                     data-preset="{{ p.key }}"
+                     onclick="selectPreset('{{ p.key }}', this)">
+                    <div class="card-body p-4">
+                        <h4 class="font-semibold text-sm">{{ p.name }}</h4>
+                        <p class="text-xs text-base-content/50 mt-1">{{ p.description }}</p>
+                        <div class="flex gap-3 mt-2 text-xs text-base-content/40">
+                            <span>表头 {{ p.header_count }} 列</span>
+                            <span>明细 {{ p.detail_count }} 列</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 2: 填写表头信息 -->
+    <div class="card bg-base-100 shadow-sm mb-4">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="card-title text-base">
+                    <span class="badge badge-primary">2</span> 填写单据表头
+                </h3>
+                <div class="flex gap-2">
+                    <button type="button" class="btn btn-ghost btn-sm gap-1" onclick="showSaveDialog()">
+                        <i data-lucide="save" class="w-4 h-4"></i> 保存当前表头
+                    </button>
+                    <div class="dropdown dropdown-end">
+                        <button type="button" tabindex="0" class="btn btn-ghost btn-sm gap-1">
+                            <i data-lucide="folder-open" class="w-4 h-4"></i> 加载已保存
+                        </button>
+                        <ul tabindex="0" id="savedDefaultsMenu"
+                            class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-72 z-50 max-h-64 overflow-y-auto">
+                            <li class="menu-title"><span>已保存的表头</span></li>
+                            <li id="noSavedItem"><span class="text-base-content/40 text-xs px-2">加载中...</span></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div id="headerFields" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <p class="text-base-content/40 col-span-full text-sm">正在加载表头字段...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 3: 关联合同 (可选) -->
+    <div class="card bg-base-100 shadow-sm mb-4" id="contractSection">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="card-title text-base">
+                    <span class="badge badge-primary">3</span> 关联合同采购标的 <span class="text-xs font-normal text-base-content/40">(可选)</span>
+                </h3>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="toggleContractSection()">
+                    <span id="contractToggleText">展开</span>
+                </button>
+            </div>
+            <div id="contractContent" class="hidden space-y-4">
+                <!-- 合同选择 -->
+                <div>
+                    <label class="label-text text-xs text-base-content/60 pb-1 block">选择合同</label>
+                    <select id="contractSelect" class="select select-bordered select-sm w-full max-w-md"
+                            onchange="onContractChange()">
+                        <option value="">-- 不关联合同 --</option>
+                    </select>
+                    <span id="contractItemCount" class="text-xs text-base-content/40 ml-2"></span>
+                </div>
+
+                <!-- 列映射配置 -->
+                <div id="columnMappingSection" class="hidden">
+                    <label class="label-text text-xs text-base-content/60 pb-1 block">
+                        列映射配置 — 将合同采购标的列映射到单据明细列
+                    </label>
+                    <div id="mappingRows" class="space-y-2 max-h-64 overflow-y-auto"></div>
+                </div>
+
+                <!-- 默认值 -->
+                <div id="defaultValues" class="hidden grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label class="form-control">
+                        <span class="label-text text-xs">采购员</span>
+                        <input name="default_buyer" class="input input-bordered input-sm" placeholder="默认采购员">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-xs">需求日期</span>
+                        <input name="default_required_date" class="input input-bordered input-sm" placeholder="YYYY-MM-DD">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-xs">建议订货日期</span>
+                        <input name="default_suggested_order_date" class="input input-bordered input-sm" placeholder="YYYY-MM-DD">
+                    </label>
+                </div>
+
+                <!-- 预览 -->
+                <div id="previewSection" class="hidden">
+                    <label class="label-text text-xs text-base-content/60 pb-1 block">明细预览 (前10行)</label>
+                    <div class="overflow-x-auto border border-base-200 rounded-lg">
+                        <table class="table table-xs" id="previewTable">
+                            <thead id="previewHead"></thead>
+                            <tbody id="previewBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Dialog Modal -->
+    <dialog id="saveDialog" class="modal">
+        <div class="modal-box max-w-sm">
+            <h3 class="font-bold text-lg mb-4">保存当前表头</h3>
+            <label class="form-control mb-4">
+                <span class="label-text text-xs text-base-content/60 pb-1">保存名称</span>
+                <input id="saveName" class="input input-bordered input-sm" placeholder="例如：我的常用表头">
+            </label>
+            <p class="text-xs text-base-content/40 mb-4">
+                将保存当前预设下所有表头字段的填写值，以及列映射配置。
+            </p>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('saveDialog').close()">取消</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="saveDefaults()">保存</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Submit -->
+    <div class="flex justify-end gap-3">
+        <button type="button" class="btn btn-ghost" onclick="previewData()">
+            <i data-lucide="eye" class="w-4 h-4"></i> 预览数据
+        </button>
+        <button type="submit" class="btn btn-primary">
+            <i data-lucide="download" class="w-4 h-4"></i> 生成并下载 Excel
+        </button>
+    </div>
+</form>
+
+<!-- Toast -->
+<div id="toast" class="toast toast-top toast-end z-50 hidden">
+    <div class="alert" id="toastAlert">
+        <span id="toastMsg"></span>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── 全局状态 ──
+let currentPreset = null;
+let currentDetailColumns = [];
+let contracts = [];
+let selectedContractItems = [];
+
+// ── CSRF helper ──
+function getCSRF() {
+    const el = document.querySelector('input[name=\"csrf_token\"]');
+    return el ? el.value : '';
+}
+async function apiFetch(url, options = {}) {
+    const opts = { ...options };
+    if (!opts.headers) opts.headers = {};
+    opts.headers['X-CSRF-Token'] = getCSRF();
+    if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
+        opts.body = JSON.stringify(opts.body);
+        opts.headers['Content-Type'] = 'application/json';
+    }
+    return fetch(url, opts);
+}
+
+// ── JS 字符串转义（防止 XSS） ──
+function jsStrEscape(s) {
+    return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+}
+
+// ── 初始化 ──
+document.addEventListener('DOMContentLoaded', () => {
+    loadPreset('standard_pr');
+    loadContracts();
+    loadSavedDefaultsList();
+});
+
+// ── 预置选择 ──
+function selectPreset(key, el) {
+    document.getElementById('presetKey').value = key;
+    document.querySelectorAll('#presetCards > div').forEach(c => {
+        c.classList.remove('border-primary');
+        c.classList.add('border-transparent');
+    });
+    el.classList.remove('border-transparent');
+    el.classList.add('border-primary');
+    loadPreset(key);
+}
+
+async function loadPreset(key) {
+    try {
+        const resp = await fetch('/api/excel-bill/presets/' + key);
+        const preset = await resp.json();
+        if (preset.error) { showToast(preset.error, 'error'); return; }
+        currentPreset = preset;
+        currentDetailColumns = preset.detail_columns || [];
+        renderHeaderFields(preset.header_columns);
+        updateMappingUI();
+    } catch (e) {
+        showToast('加载预设失败: ' + e.message, 'error');
+    }
+}
+
+function renderHeaderFields(columns) {
+    const container = document.getElementById('headerFields');
+    container.innerHTML = columns.map(col => {
+        const isBillNo = col.key === 'bill_no';
+        const safeLabel = escapeHtml(col.label);
+        return '<label class="form-control">' +
+            '<span class="label-text text-xs text-base-content/60 pb-1">' + safeLabel + '</span>' +
+            '<input name="h_' + escapeHtml(col.key) + '" class="input input-bordered input-sm" ' +
+            'placeholder="' + safeLabel + '" ' +
+            (isBillNo ? 'id="billNoInput"' : '') + '>' +
+            '</label>';
+    }).join('');
+}
+
+// ── 合同列表 ──
+async function loadContracts() {
+    try {
+        const resp = await fetch('/api/excel-bill/contracts');
+        const data = await resp.json();
+        contracts = data.contracts || [];
+        const sel = document.getElementById('contractSelect');
+        contracts.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = (c.contract_no || '#' + c.id) + ' ' + c.title;
+            if (!c.has_table3) opt.textContent += ' (无采购标的)';
+            sel.appendChild(opt);
+        });
+    } catch (e) {
+        showToast('加载合同列表失败', 'error');
+    }
+}
+
+// ── 合同关联 ──
+function toggleContractSection() {
+    const content = document.getElementById('contractContent');
+    const btn = document.getElementById('contractToggleText');
+    content.classList.toggle('hidden');
+    btn.textContent = content.classList.contains('hidden') ? '展开' : '收起';
+}
+
+async function onContractChange() {
+    const cid = document.getElementById('contractSelect').value;
+    document.getElementById('contractId').value = cid;
+    document.getElementById('columnMappingSection').classList.toggle('hidden', !cid);
+    document.getElementById('defaultValues').classList.toggle('hidden', !cid);
+    document.getElementById('previewSection').classList.toggle('hidden', !cid);
+
+    if (!cid) {
+        selectedContractItems = [];
+        document.getElementById('contractItemCount').textContent = '';
+        document.getElementById('previewBody').innerHTML = '';
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/excel-bill/contracts/' + cid + '/items');
+        const data = await resp.json();
+        selectedContractItems = data.items || [];
+        document.getElementById('contractItemCount').textContent =
+            '共 ' + data.item_count + ' 行采购标的';
+        updateMappingUI();
+        // Apply pending column mapping from loaded defaults
+        if (window._pendingMapping) {
+            Object.entries(window._pendingMapping).forEach(([key, val]) => {
+                const sel = document.querySelector('[name=\"map_' + key + '\"]');
+                if (sel && val) sel.value = val;
+            });
+            window._pendingMapping = null;
+        }
+        renderPreview();
+    } catch (e) {
+        showToast('加载采购标的数据失败', 'error');
+    }
+}
+
+// ── 列映射 UI ──
+function updateMappingUI() {
+    const container = document.getElementById('mappingRows');
+    const cid = document.getElementById('contractSelect').value;
+    if (!cid || !currentDetailColumns || currentDetailColumns.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    // 找到选中合同的列信息
+    const contract = contracts.find(c => c.id == cid);
+    const srcCols = contract ? (contract.table3_columns || []) : [];
+
+    // 默认映射建议
+    const defaultMapping = {
+        'material_name': 'product_name',
+        'material_code': 'spec',
+        'total_qty': 'qty',
+        'unit_price_tax': 'unit_price',
+        'total_tax': 'subtotal',
+        'cooperation_content': 'remark',
+        'spec': 'spec',
+    };
+
+    container.innerHTML = currentDetailColumns.map(dc => {
+        const srcKey = defaultMapping[dc.key] || '';
+        const safeLabel = escapeHtml(dc.label);
+        let options = '<option value="">-- 不映射 --</option>';
+        srcCols.forEach(sc => {
+            const sel = sc.key === srcKey ? ' selected' : '';
+            options += '<option value="' + escapeHtml(sc.key) + '"' + sel + '>' + escapeHtml(sc.label) + '</option>';
+        });
+        return '<div class="flex items-center gap-2 text-sm">' +
+            '<span class="w-32 text-right text-base-content/50 truncate">' + safeLabel + '</span>' +
+            '<span class="text-base-content/30">←</span>' +
+            '<select name="map_' + escapeHtml(dc.key) + '" class="select select-bordered select-xs flex-1 max-w-xs">' +
+            options + '</select>' +
+            '</div>';
+    }).join('');
+}
+
+// ── 预览 ──
+function renderPreview() {
+    const thead = document.getElementById('previewHead');
+    const tbody = document.getElementById('previewBody');
+    if (selectedContractItems.length === 0) {
+        thead.innerHTML = '';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-base-content/40">无数据</td></tr>';
+        return;
+    }
+    // 显示采购标的原始列
+    const cols = Object.keys(selectedContractItems[0]);
+    thead.innerHTML = '<tr>' + cols.map(c => '<th class="text-xs">' + escapeHtml(c) + '</th>').join('') + '</tr>';
+    tbody.innerHTML = selectedContractItems.slice(0, 10).map(row =>
+        '<tr>' + cols.map(c => '<td class="text-xs">' + escapeHtml(row[c] || '') + '</td>').join('') + '</tr>'
+    ).join('');
+}
+
+// ── 表单提交前处理 ──
+document.getElementById('billForm').addEventListener('submit', function(e) {
+    // 收集表头数据
+    const headerData = {};
+    if (currentPreset && currentPreset.header_columns) {
+        currentPreset.header_columns.forEach(col => {
+            const input = document.querySelector('[name="h_' + col.key + '"]');
+            if (input) headerData[col.key] = input.value;
+        });
+    }
+    document.getElementById('headerData').value = JSON.stringify(headerData);
+
+    // 收集列映射
+    const cid = document.getElementById('contractSelect').value;
+    if (cid && currentDetailColumns.length > 0) {
+        const mapping = {};
+        currentDetailColumns.forEach(dc => {
+            const sel = document.querySelector('[name="map_' + dc.key + '"]');
+            if (sel && sel.value) mapping[dc.key] = sel.value;
+        });
+        document.getElementById('columnMapping').value = JSON.stringify(mapping);
+    }
+});
+
+// ── 预览数据 ──
+function previewData() {
+    const headerData = {};
+    if (currentPreset && currentPreset.header_columns) {
+        currentPreset.header_columns.forEach(col => {
+            const input = document.querySelector('[name="h_' + col.key + '"]');
+            if (input) headerData[col.key] = input.value || '(空)';
+        });
+    }
+    const msg = '表头数据:\n' + JSON.stringify(headerData, null, 2) +
+        '\n\n关联合同: ' + (document.getElementById('contractSelect').value || '无') +
+        '\n采购标的总行数: ' + selectedContractItems.length;
+    alert(msg);
+}
+
+// ── 保存/加载表头默认值 ──
+
+function getCurrentHeaderData() {
+    const data = {};
+    if (currentPreset && currentPreset.header_columns) {
+        currentPreset.header_columns.forEach(col => {
+            const input = document.querySelector('[name="h_' + col.key + '"]');
+            if (input) data[col.key] = input.value;
+        });
+    }
+    return data;
+}
+
+function getCurrentDetailDefaults() {
+    const data = {};
+    ['buyer', 'required_date', 'suggested_order_date'].forEach(k => {
+        const input = document.querySelector('[name="default_' + k + '"]');
+        if (input && input.value) data[k] = input.value;
+    });
+    return data;
+}
+
+function getCurrentMapping() {
+    const mapping = {};
+    if (currentDetailColumns.length > 0) {
+        currentDetailColumns.forEach(dc => {
+            const sel = document.querySelector('[name="map_' + dc.key + '"]');
+            if (sel && sel.value) mapping[dc.key] = sel.value;
+        });
+    }
+    return mapping;
+}
+
+function showSaveDialog() {
+    document.getElementById('saveDialog').showModal();
+    document.getElementById('saveName').focus();
+}
+
+async function saveDefaults() {
+    const name = document.getElementById('saveName').value.trim();
+    if (!name) { showToast('请输入保存名称', 'error'); return; }
+
+    const payload = {
+        preset_key: document.getElementById('presetKey').value,
+        name: name,
+        header_data: getCurrentHeaderData(),
+        detail_defaults: getCurrentDetailDefaults(),
+        column_mapping: getCurrentMapping(),
+    };
+
+    try {
+        const resp = await apiFetch('/api/excel-bill/defaults', {
+            method: 'POST',
+            body: payload,
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast(data.message || '保存成功');
+            document.getElementById('saveDialog').close();
+            document.getElementById('saveName').value = '';
+            loadSavedDefaultsList();
+        } else {
+            showToast(data.error || '保存失败', 'error');
+        }
+    } catch (e) {
+        showToast('保存失败: ' + e.message, 'error');
+    }
+}
+
+async function loadSavedDefaultsList() {
+    const pk = document.getElementById('presetKey').value;
+    try {
+        const resp = await fetch('/api/excel-bill/defaults?preset_key=' + pk);
+        const data = await resp.json();
+        const items = data.defaults || [];
+        const menu = document.getElementById('savedDefaultsMenu');
+        // Clear old items
+        menu.querySelectorAll('li:not(.menu-title)').forEach(li => li.remove());
+
+        if (items.length === 0) {
+            const li = document.createElement('li');
+            li.innerHTML = '<span class="text-base-content/40 text-xs px-2">暂无保存记录</span>';
+            menu.appendChild(li);
+        } else {
+            items.forEach(item => {
+                const li = document.createElement('li');
+                const safeFn = jsStrEscape(item.filename || '');
+                li.innerHTML = '<a class="flex justify-between items-center cursor-pointer" onclick="loadDefaults(\'' + safeFn + '\')">' +
+                    '<span class="text-sm truncate max-w-40">' + escapeHtml(item.name || '') + '</span>' +
+                    '<span class="text-xs text-base-content/30">' + (item.saved_at || '').substring(0, 10) + '</span>' +
+                    '</a>';
+                menu.appendChild(li);
+            });
+            // Add "manage" option
+            const li = document.createElement('li');
+            li.innerHTML = '<div class="divider my-0"></div><a class="text-xs text-base-content/40" onclick="loadAllDefaults()">显示全部预设的记录</a>';
+            menu.appendChild(li);
+        }
+    } catch (e) {
+        console.error('Load defaults list failed:', e);
+    }
+}
+
+async function loadDefaults(filename) {
+    try {
+        const resp = await fetch('/api/excel-bill/defaults/' + filename);
+        if (!resp.ok) { showToast('加载失败', 'error'); return; }
+        const record = await resp.json();
+
+        // 如果预设不同，先切换
+        if (record.preset_key && record.preset_key !== document.getElementById('presetKey').value) {
+            document.getElementById('presetKey').value = record.preset_key;
+            // 找到对应卡片并选中
+            document.querySelectorAll('#presetCards > div').forEach(card => {
+                const pkey = card.getAttribute('data-preset');
+                card.classList.toggle('border-primary', pkey === record.preset_key);
+                card.classList.toggle('border-transparent', pkey !== record.preset_key);
+            });
+            await loadPreset(record.preset_key);
+            // loadPreset 已同步渲染 DOM，直接填值
+            fillDefaultsData(record);
+        } else {
+            fillDefaultsData(record);
+        }
+    } catch (e) {
+        showToast('加载失败: ' + e.message, 'error');
+    }
+}
+
+function fillDefaultsData(record) {
+    // Fill header fields
+    if (record.header_data) {
+        Object.entries(record.header_data).forEach(([key, val]) => {
+            const input = document.querySelector('[name="h_' + key + '"]');
+            if (input) input.value = val;
+        });
+    }
+    // Fill detail defaults
+    if (record.detail_defaults) {
+        Object.entries(record.detail_defaults).forEach(([key, val]) => {
+            const input = document.querySelector('[name="default_' + key + '"]');
+            if (input) input.value = val;
+        });
+    }
+    // Fill column mapping (need contract to be selected first)
+    if (record.column_mapping && Object.keys(record.column_mapping).length > 0) {
+        window._pendingMapping = record.column_mapping;
+    }
+    showToast('已加载: ' + record.name);
+}
+
+async function loadAllDefaults() {
+    try {
+        const resp = await fetch('/api/excel-bill/defaults');
+        const data = await resp.json();
+        const items = data.defaults || [];
+        const menu = document.getElementById('savedDefaultsMenu');
+        menu.querySelectorAll('li:not(.menu-title)').forEach(li => li.remove());
+
+        if (items.length === 0) {
+            const li = document.createElement('li');
+            li.innerHTML = '<span class="text-base-content/40 text-xs px-2">暂无保存记录</span>';
+            menu.appendChild(li);
+        } else {
+            items.forEach(item => {
+                const li = document.createElement('li');
+                const presetName = (item.preset_key === 'standard_pr' ? '标准' :
+                    item.preset_key === 'rd_pr' ? '科研' :
+                    item.preset_key === 'simple_pr' ? '简易' : '服务');
+                const safeFn = jsStrEscape(item.filename || '');
+                li.innerHTML = '<a class="flex justify-between items-center cursor-pointer" onclick="loadDefaults(\'' + safeFn + '\')">' +
+                    '<span class="text-sm truncate max-w-40">' + escapeHtml(item.name || '') + '</span>' +
+                    '<span class="badge badge-xs badge-ghost">' + presetName + '</span>' +
+                    '</a>';
+                menu.appendChild(li);
+            });
+        }
+    } catch (e) {
+        console.error('Load all defaults failed:', e);
+    }
+}
+
+// Refresh saved list when preset changes
+const origSelectPreset = selectPreset;
+selectPreset = function(key, el) {
+    origSelectPreset(key, el);
+    loadSavedDefaultsList();
+};
+
+// ── Toast ──
+function showToast(msg, type) {
+    const toast = document.getElementById('toast');
+    const alert = document.getElementById('toastAlert');
+    const msgEl = document.getElementById('toastMsg');
+    alert.className = 'alert ' + (type === 'error' ? 'alert-error' : 'alert-success');
+    msgEl.textContent = msg;
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 3500);
+}
+</script>
+{% endblock %}

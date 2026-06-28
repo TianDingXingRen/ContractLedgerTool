@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}成交建议{% endblock %}
+{% block breadcrumb %}采购前置 / 成交建议{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold">成交建议</h1>
+  <p class="text-sm text-base-content/50 mb-5">{{ project.project_no }} / {{ project.project_name }}</p>
+  {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
+  {% if award %}<div class="flex justify-end mb-3"><a class="btn btn-sm" href="{{ url_for('procurement_award_document', project_id=project.id) }}">导出成交建议 Word</a></div>{% endif %}
+  {% if not quotes %}<div class="alert alert-warning">请先导入并确认供应商报价。</div>{% else %}
+  <form method="post" class="card bg-base-100 border border-base-300" x-data="{ mode: 'single' }">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="md:col-span-2 flex gap-5">
+        <label class="flex items-center gap-2"><input class="radio radio-sm" type="radio" name="award_mode" value="single" x-model="mode">整包成交</label>
+        <label class="flex items-center gap-2"><input class="radio radio-sm" type="radio" name="award_mode" value="split" x-model="mode">按明细拆分成交</label>
+      </div>
+      <label class="form-control md:col-span-2" x-show="mode === 'single'"><span class="label-text">推荐成交供应商</span><select class="select select-bordered" name="supplier_id"><option value="">请选择</option>{% for quote in quotes %}<option value="{{ quote.supplier_id }}">{{ quote.supplier_name }} - {{ money(quote.total_amount_minor) }} 元（第 {{ quote.quote_round }} 轮）</option>{% endfor %}</select></label>
+      <div class="md:col-span-2 overflow-x-auto" x-show="mode === 'split'">
+        <table class="table table-sm"><thead><tr><th>采购明细</th><th>选择成交报价</th></tr></thead><tbody>{% for row in split_rows %}<tr><td>{{ row.item.item_name }}<div class="text-xs text-base-content/50">{{ row.item.quantity_text }} {{ row.item.unit }}</div></td><td><div class="flex flex-wrap gap-2">{% for option in row.options %}<label class="border rounded-lg p-2 cursor-pointer"><input type="radio" name="selection_{{ row.item.id }}" value="{{ option.id }}"> {{ option.supplier_name }} / {{ money(option.unit_price_minor) }}</label>{% else %}<span class="text-error">无有效报价</span>{% endfor %}</div></td></tr>{% endfor %}</tbody></table>
+      </div>
+      <label class="form-control md:col-span-2"><span class="label-text">推荐理由</span><textarea class="textarea textarea-bordered" name="reason_summary" placeholder="留空时使用规则化初稿"></textarea></label>
+      <label class="form-control"><span class="label-text">价格合理性说明</span><textarea class="textarea textarea-bordered" name="price_reason"></textarea></label>
+      <label class="form-control"><span class="label-text">交付保障说明</span><textarea class="textarea textarea-bordered" name="delivery_reason"></textarea></label>
+      <label class="form-control"><span class="label-text">技术响应说明</span><textarea class="textarea textarea-bordered" name="technical_reason"></textarea></label>
+      <label class="form-control"><span class="label-text">商务响应说明</span><textarea class="textarea textarea-bordered" name="commercial_reason"></textarea></label>
+      <label class="form-control md:col-span-2"><span class="label-text">未选择最低价说明</span><textarea class="textarea textarea-bordered" name="lowest_price_not_selected_reason"></textarea></label>
+      <label class="form-control"><span class="label-text">风险提示</span><textarea class="textarea textarea-bordered" name="risk_note"></textarea></label>
+      <label class="form-control"><span class="label-text">合同签订注意事项</span><textarea class="textarea textarea-bordered" name="contract_notice"></textarea></label>
+      <div class="md:col-span-2 flex justify-end gap-2"><a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回</a><button class="btn btn-primary">确认成交建议</button></div>
+    </div>
+  </form>
+  {% endif %}
+  {% if award %}<div class="alert alert-success mt-4">当前已确认：{{ award.supplier_summary or award.supplier_name }}，{{ money(award.recommended_amount_minor) }} 元。</div>{% endif %}
+</div>
+{% endblock %}

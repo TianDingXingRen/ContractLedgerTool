@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ '编辑' if project else '新建' }}采购项目{% endblock %}
+{% block breadcrumb %}采购前置 / {{ '编辑项目' if project else '新建项目' }}{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <div class="mb-6"><h1 class="text-2xl font-bold">{{ '编辑采购项目' if project else '新建采购项目' }}</h1><p class="text-sm text-base-content/50 mt-1">项目编号留空时自动生成</p></div>
+  {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
+  <form method="post" class="card bg-base-100 border border-base-300"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body grid grid-cols-1 md:grid-cols-2 gap-4">
+      <label class="form-control"><span class="label-text">项目编号</span><input class="input input-bordered" name="project_no" value="{{ project.project_no if project else '' }}" {% if project %}readonly{% endif %} placeholder="自动生成"></label>
+      <label class="form-control"><span class="label-text">项目名称 *</span><input class="input input-bordered" required name="project_name" value="{{ project.project_name if project else '' }}"></label>
+      <label class="form-control"><span class="label-text">采购方式</span><select class="select select-bordered" name="purchase_method"><option value="competitive_negotiation" {% if not project or project.purchase_method == 'competitive_negotiation' %}selected{% endif %}>竞争性谈判</option><option value="inquiry" {% if project and project.purchase_method == 'inquiry' %}selected{% endif %}>询价</option><option value="comparison" {% if project and project.purchase_method == 'comparison' %}selected{% endif %}>比价</option></select></label>
+      <label class="form-control"><span class="label-text">需求部门</span><input class="input input-bordered" name="demand_department" value="{{ project.demand_department if project else '' }}"></label>
+      <label class="form-control"><span class="label-text">经办人</span><input class="input input-bordered" name="owner" value="{{ project.owner if project else '' }}"></label>
+      <label class="form-control"><span class="label-text">交付地点</span><input class="input input-bordered" name="delivery_place" value="{{ project.delivery_place if project else '' }}"></label>
+      <label class="form-control"><span class="label-text">预算金额（元）</span><input class="input input-bordered" type="number" min="0" step="0.01" name="budget_amount" value="{{ project.budget_amount if project else '' }}"></label>
+      <label class="form-control"><span class="label-text">目标价格（元）</span><input class="input input-bordered" type="number" min="0" step="0.01" name="target_price" value="{{ project.target_price if project else '' }}"></label>
+      <label class="form-control md:col-span-2"><span class="label-text">交付周期要求</span><input class="input input-bordered" name="delivery_requirement" value="{{ project.delivery_requirement if project else '' }}"></label>
+      <label class="form-control md:col-span-2"><span class="label-text">付款条件要求</span><textarea class="textarea textarea-bordered" name="payment_requirement">{{ project.payment_requirement if project else '' }}</textarea></label>
+      <label class="form-control md:col-span-2"><span class="label-text">备注</span><textarea class="textarea textarea-bordered" name="remark">{{ project.remark if project else '' }}</textarea></label>
+      <div class="md:col-span-2 flex justify-end gap-2 mt-2"><a class="btn btn-ghost" href="{{ url_for('procurement_projects') }}">取消</a><button class="btn btn-primary">保存项目</button></div>
+    </div>
+  </form>
+</div>
+{% endblock %}

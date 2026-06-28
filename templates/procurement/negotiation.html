@@ -1,0 +1,93 @@
+{% extends "base.html" %}{% block title %}多轮报价与谈判{% endblock %}{% block breadcrumb %}采购前置 / 谈判记录{% endblock %}{% block content %}
+<div class="flex flex-col md:flex-row justify-between gap-3 mb-5">
+  <div>
+    <h1 class="text-2xl font-bold">多轮报价与谈判</h1>
+    <p class="text-sm text-base-content/50">{{ view.project.project_no }} / {{ view.project.project_name }}</p>
+  </div>
+  <div class="flex gap-2">
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_detail', project_id=view.project.id) }}">返回项目</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation_minutes', project_id=view.project.id) }}">导出谈判纪要</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_final_commitments', project_id=view.project.id) }}">最终承诺表</a>
+  </div>
+</div>
+{% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
+
+<div class="apple-section">
+  <div class="apple-section-header">
+    <span class="apple-section-title"><i data-lucide="chart-no-axes-combined" style="width:18px;height:18px;color:var(--apple-blue)"></i> 供应商谈判概览</span>
+    <span style="font-size:12px;color:var(--apple-text3)">{{ view.suppliers|length }} 家供应商</span>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="apple-table">
+      <thead><tr><th>供应商</th><th>首轮报价</th><th>最新报价</th><th>降价</th><th>降幅</th><th>报价轮次</th></tr></thead>
+      <tbody>
+      {% for supplier in view.suppliers %}
+      <tr>
+        <td style="font-weight:600">{{ supplier.supplier_name }}</td>
+        <td>{{ money(supplier.first_amount_minor) if supplier.first_amount_minor is not none else '-' }}</td>
+        <td>{{ money(supplier.latest_amount_minor) if supplier.latest_amount_minor is not none else '-' }}</td>
+        <td>{{ money(supplier.reduction_minor) if supplier.first_amount_minor is not none else '-' }}</td>
+        <td>{{ supplier.reduction_percent if supplier.first_amount_minor is not none else '-' }}{% if supplier.first_amount_minor is not none %}%{% endif %}</td>
+        <td>
+          {% for quote in supplier.quotes %}
+          <span class="apple-badge gray">R{{ quote.quote_round }} {{ money(quote.total_amount_minor) }}</span>
+          {% else %}
+          <span class="apple-badge orange">无报价，可手工录入</span>
+          {% endfor %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" style="text-align:center;padding:36px 0;color:var(--apple-text3)">请先在项目详情中添加候选供应商。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<form method="post" class="apple-section">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="apple-section-header">
+    <span class="apple-section-title"><i data-lucide="message-square-text" style="width:18px;height:18px;color:var(--apple-green)"></i> 记录谈判轮次</span>
+  </div>
+  <div class="apple-section-body">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <label class="form-control gap-2"><span class="label-text text-xs">轮次</span><input class="input input-bordered input-sm" type="number" min="1" required name="round_no" value="{{ (view.rounds|length) + 1 }}"></label>
+      <label class="form-control gap-2"><span class="label-text text-xs">日期</span><input class="input input-bordered input-sm" type="date" name="meeting_date"></label>
+      <label class="form-control gap-2 md:col-span-3"><span class="label-text text-xs">过程摘要</span><textarea class="textarea textarea-bordered" name="summary" placeholder="记录议价过程、关键分歧或补充说明"></textarea></label>
+    </div>
+
+    {% for supplier in view.suppliers %}
+    {% set quote = supplier.latest_quote %}
+    <div class="border border-base-300 rounded-lg p-3 mt-3">
+      <div class="flex items-center justify-between gap-2 mb-2">
+        <div class="font-semibold">{{ supplier.supplier_name }}</div>
+        {% if quote %}<span class="apple-badge blue">沿用最新报价 {{ money(quote.total_amount_minor) }}</span>{% else %}<span class="apple-badge orange">手工记录</span>{% endif %}
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <label class="form-control gap-1"><span class="label-text text-xs">本轮金额</span><input class="input input-bordered input-sm" name="amount_{{ supplier.supplier_id }}" placeholder="未填则沿用报价"></label>
+        <label class="form-control gap-1"><span class="label-text text-xs">最终交期</span><input class="input input-bordered input-sm" name="delivery_{{ supplier.supplier_id }}" value="{{ quote.delivery_period if quote else '' }}"></label>
+        <label class="form-control gap-1"><span class="label-text text-xs">付款条件</span><input class="input input-bordered input-sm" name="payment_{{ supplier.supplier_id }}" value="{{ quote.payment_terms if quote else '' }}"></label>
+        <label class="form-control gap-1"><span class="label-text text-xs">供应商承诺</span><input class="input input-bordered input-sm" name="commitment_{{ supplier.supplier_id }}" placeholder="如降价、交期、质保承诺"></label>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="flex justify-end mt-4">
+      <button class="apple-btn apple-btn-primary" {% if not view.suppliers %}disabled{% endif %}>保存谈判记录</button>
+    </div>
+  </div>
+</form>
+
+{% for round in view.rounds %}
+<div class="apple-section">
+  <div class="apple-section-body">
+    <h3 class="font-semibold">第 {{ round.round_no }} 轮 - {{ round.meeting_date or '未填日期' }}</h3>
+    <p class="text-sm mt-1">{{ round.summary }}</p>
+    <div class="text-xs text-base-content/60 mt-2">
+      {% for item in round.commitments %}
+      <div>{{ item.supplier_name }}：{{ money(item.quote_amount_minor) if item.quote_amount_minor is not none else '-' }} / {{ item.delivery_period }} / {{ item.payment_terms }} / {{ item.commitment }}</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

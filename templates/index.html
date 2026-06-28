@@ -1,289 +1,334 @@
 {% extends "base.html" %}
 {% block title %}合同管理工具 - 首页{% endblock %}
+{% block breadcrumb %}工作台{% endblock %}
 {% block content %}
 
-<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
+<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
     <div>
-        <h2 class="text-2xl font-bold leading-tight">工作台</h2>
-        <p class="text-xs text-base-content/50 mt-1">{{ today.strftime('%Y-%m-%d') }} · 合同与付款计划概览</p>
+        <h2 class="text-2xl font-bold leading-tight" style="color:var(--apple-text);letter-spacing:-0.4px">工作台</h2>
+        <p style="color:var(--apple-text2);font-size:13px;margin-top:3px">{{ today.strftime('%Y年%m月%d日') }} · 合同与付款计划概览</p>
     </div>
     <div class="flex flex-wrap items-center gap-2 lg:justify-end">
-        <div class="inline-flex items-center gap-1.5 rounded-lg bg-base-100 border border-base-300 px-2 py-1 shadow-sm text-xs"
-             id="autostartControl">
-            <i data-lucide="power" class="w-3.5 h-3.5 text-accent"></i>
-            <span class="text-base-content/50">自启</span>
-            <span id="autostartBadge"
-                  class="badge badge-xs {{ 'badge-success' if autostart.enabled else 'badge-ghost' }}">
-                {% if not autostart.supported %}
-                    不支持
-                {% elif autostart.enabled %}
-                    开
-                {% else %}
-                    关
-                {% endif %}
-            </span>
-            <span id="autostartDetail" class="hidden sm:inline text-base-content/40 max-w-28 truncate"
-                  title="{{ autostart.description or '' }}">{{ autostart.description or '' }}</span>
-            {% if autostart.supported %}
-                {% if autostart.enabled %}
-                <form method="post" action="{{ url_for('autostart_disable') }}" class="contents autostart-form"
-                      data-next-action="{{ url_for('autostart_enable') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" id="autostartButton" class="btn btn-ghost btn-xs min-h-6 h-6 px-2">关闭</button>
-                </form>
-                {% else %}
-                <form method="post" action="{{ url_for('autostart_enable') }}" class="contents autostart-form"
-                      data-next-action="{{ url_for('autostart_disable') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" id="autostartButton" class="btn btn-primary btn-xs min-h-6 h-6 px-2">开启</button>
-                </form>
-                {% endif %}
-            {% endif %}
-            <span id="autostartError" class="hidden text-error max-w-40 truncate"></span>
+        <div class="apple-stat" style="padding:8px 14px;display:inline-flex;align-items:center;gap:8px;font-size:12px;border-radius:20px"
+             x-data="autostartToggle({{ autostart.enabled|tojson }}, {{ autostart.supported|tojson }}, '{{ csrf_token() }}')">
+            <i data-lucide="power" class="w-3.5 h-3.5" :style="on ? 'color:var(--apple-green)' : 'color:var(--apple-text3)'"></i>
+            <span style="color:var(--apple-text2);font-weight:500">开机自启</span>
+            <button x-show="supported" @click="toggle"
+                    :disabled="busy"
+                    class="apple-btn"
+                    style="padding:3px 12px;font-size:11px"
+                    :style="on ? 'background:var(--apple-green);color:#fff' : 'background:rgba(0,0,0,0.04);color:var(--apple-text2)'"
+                    x-text="busy ? '...' : (on ? '开' : '关')"></button>
+            <span class="text-error max-w-40 truncate" x-text="err" x-show="err"></span>
         </div>
     </div>
 </div>
 
-<!-- Stats Row -->
-<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2.5 mb-3">
-    <div class="stats bg-base-100 shadow-sm rounded-box">
-        <div class="stat py-2.5 px-4">
-            <div class="stat-title text-xs">合同总数</div>
-            <div class="stat-value text-2xl">{{ contract_stats.total }}</div>
-        </div>
+<!-- Stats Row — Apple style -->
+<div class="apple-stat-grid">
+    {% set stat_colors = {'draft':'orange','signed':'blue','active':'green','completed':'purple','void':'gray'} %}
+    <div class="apple-stat blue">
+        <div class="stat-num">{{ contract_stats.total }}</div>
+        <div class="stat-label">全部合同</div>
     </div>
     {% for status_key in ['draft','signed','active','completed','void'] %}
     {% set s = contract_stats.by_status.get(status_key, {}) %}
-    <div class="stats bg-base-100 shadow-sm rounded-box">
-        <div class="stat py-2.5 px-4">
-            <div class="stat-title text-xs">{{ status_labels.get(status_key, status_key) }}</div>
-            <div class="stat-value text-2xl {{ 'text-warning' if status_key == 'draft' else 'text-success' if status_key in ('signed','active') else 'text-info' if status_key == 'completed' else '' }}">
-                {{ s.get('count', 0) }}
-            </div>
-        </div>
+    {% set color = stat_colors.get(status_key, 'gray') %}
+    <div class="apple-stat {{ color }}">
+        <div class="stat-num">{{ s.get('count', 0) }}</div>
+        <div class="stat-label">{{ status_labels.get(status_key, status_key) }}</div>
     </div>
     {% endfor %}
 </div>
 
 {% if autostart_error %}
-<div class="alert alert-error shadow-sm mb-4">
-    <i data-lucide="alert-circle" class="w-4 h-4"></i>
-    <span>{{ autostart_error }}</span>
+<div class="apple-alert-warning mb-4" style="display:flex;align-items:center;gap:10px">
+    <i data-lucide="alert-circle" style="width:18px;height:18px;color:var(--apple-red)"></i>
+    <span style="color:var(--apple-text);font-size:13px;font-weight:500">{{ autostart_error }}</span>
 </div>
 {% endif %}
 
-<!-- Payment Overview -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-    <!-- Due/Paid/Unpaid -->
-    <div class="card bg-base-100 shadow-sm">
-        <div class="card-body p-4">
-            <h3 class="card-title text-sm mb-3">
-                <i data-lucide="banknote" class="w-4 h-4"></i> 付款概览
-            </h3>
-            <div class="space-y-2 text-sm">
-                <div class="flex justify-between">
-                    <span class="text-base-content/60">应付总额</span>
-                    <span class="font-semibold tabular-nums">{{ '%.2f'|format(payment_stats.total_due) }}</span>
+<!-- Payment Overview — Apple style -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+    {% set total_due_wan = (payment_stats.total_due / 10000)|round(1) %}
+    <div class="apple-section">
+        <div class="apple-section-header">
+            <span class="apple-section-title">
+                <i data-lucide="banknote" style="color:var(--apple-blue);width:18px;height:18px"></i> 付款概览
+            </span>
+            <span style="font-size:12px;color:var(--apple-text3);font-weight:500">{{ '%.1f'|format(total_due_wan) }} 万元</span>
+        </div>
+        <div class="apple-section-body">
+            <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;justify-content:space-between;font-size:13px">
+                    <span style="color:var(--apple-text2)">应付总额</span>
+                    <span style="font-weight:600;color:var(--apple-text)">{{ '%.2f'|format(payment_stats.total_due) }}</span>
                 </div>
-                <div class="flex justify-between">
-                    <span class="text-success/70">已付</span>
-                    <span class="font-semibold text-success tabular-nums">{{ '%.2f'|format(payment_stats.total_paid) }}</span>
+                <div style="display:flex;justify-content:space-between;font-size:13px">
+                    <span style="color:var(--apple-green)">已付</span>
+                    <span style="font-weight:600;color:var(--apple-green)">{{ '%.2f'|format(payment_stats.total_paid) }}</span>
                 </div>
-                <div class="flex justify-between">
-                    <span class="text-error/70">未付</span>
-                    <span class="font-semibold text-error tabular-nums">{{ '%.2f'|format(payment_stats.total_unpaid) }}</span>
+                <div style="display:flex;justify-content:space-between;font-size:13px">
+                    <span style="color:var(--apple-red)">未付</span>
+                    <span style="font-weight:600;color:var(--apple-red)">{{ '%.2f'|format(payment_stats.total_unpaid) }}</span>
                 </div>
             </div>
             {% if payment_stats.total_due > 0 %}
-            <progress class="progress progress-success w-full mt-2"
-                      value="{{ payment_stats.total_paid }}" max="{{ payment_stats.total_due }}"></progress>
+            <div class="apple-progress" style="margin-top:12px">
+                <div class="apple-progress-fill" style="width:{{ (payment_stats.total_paid / payment_stats.total_due * 100)|round(1) }}%"></div>
+            </div>
             {% endif %}
             {% if payment_stats.pending_count > 0 %}
-            <div class="mt-3 pt-3 border-t border-base-200 text-xs text-base-content/60">
-                <div class="flex justify-between">
+            <div style="margin-top:12px;padding-top:12px;border-top:0.5px solid var(--apple-sep);font-size:12px;color:var(--apple-text2)">
+                <div style="display:flex;justify-content:space-between">
                     <span>待确认付款</span>
-                    <span class="font-semibold tabular-nums">{{ payment_stats.pending_count }} 笔 / {{ '%.2f'|format(payment_stats.pending_amount) }}</span>
+                    <span style="font-weight:600;color:var(--apple-orange)">{{ payment_stats.pending_count }} 笔 / {{ '%.2f'|format(payment_stats.pending_amount) }}</span>
                 </div>
                 {% if payment_stats.pending_missing_date > 0 %}
-                <div class="text-warning mt-1">其中 {{ payment_stats.pending_missing_date }} 笔缺少预计付款日</div>
+                <div style="color:var(--apple-orange);margin-top:4px">其中 {{ payment_stats.pending_missing_date }} 笔缺少预计付款日</div>
                 {% endif %}
             </div>
             {% endif %}
         </div>
     </div>
 
-    <!-- This Month -->
-    <div class="card bg-base-100 shadow-sm">
-        <div class="card-body p-4">
-            <h3 class="card-title text-sm mb-3">
-                <i data-lucide="calendar" class="w-4 h-4"></i> 本月应付款（{{ today.month }}月）
-            </h3>
-            <div class="stat-value text-2xl {{ 'text-error' if this_month.count > 0 else '' }}">{{ this_month.count }}</div>
-            <div class="text-sm text-base-content/60 mt-2">
-                合计 <span class="font-semibold tabular-nums">{{ '%.2f'|format(this_month.amount) }}</span> 元
+    {% set this_month_wan = (this_month.amount / 10000)|round(1) %}
+    <div class="apple-section">
+        <div class="apple-section-header">
+            <span class="apple-section-title">
+                <i data-lucide="calendar" style="color:var(--apple-orange);width:18px;height:18px"></i> 本月应付款
+            </span>
+            <span style="font-size:12px;color:var(--apple-text3)">{{ today.month }}月</span>
+        </div>
+        <div class="apple-section-body">
+            <div style="font-size:28px;font-weight:700;color:var(--apple-text);letter-spacing:-0.5px">
+                {{ this_month.count }}<span style="font-size:14px;font-weight:400;color:var(--apple-text3);margin-left:4px">笔</span>
+            </div>
+            <div style="font-size:13px;color:var(--apple-text2);margin-top:8px">
+                <span style="font-weight:600;color:var(--apple-text)">{{ '%.2f'|format(this_month.amount) }}</span> 元
+                {% if this_month.amount > 0 %}<span style="color:var(--apple-text3)">（{{ '%.1f'|format(this_month_wan) }} 万）</span>{% endif %}
             </div>
         </div>
     </div>
 
-    <!-- Next Month -->
-    <div class="card bg-base-100 shadow-sm">
-        <div class="card-body p-4">
-            <h3 class="card-title text-sm mb-3">
-                <i data-lucide="calendar-days" class="w-4 h-4"></i> 下月应付款
-            </h3>
-            <div class="stat-value text-2xl">{{ next_month.count }}</div>
-            <div class="text-sm text-base-content/60 mt-2">
-                合计 <span class="font-semibold tabular-nums">{{ '%.2f'|format(next_month.amount) }}</span> 元
+    {% set next_month_wan = (next_month.amount / 10000)|round(1) %}
+    <div class="apple-section">
+        <div class="apple-section-header">
+            <span class="apple-section-title">
+                <i data-lucide="calendar-days" style="color:var(--apple-purple);width:18px;height:18px"></i> 下月应付款
+            </span>
+        </div>
+        <div class="apple-section-body">
+            <div style="font-size:28px;font-weight:700;color:var(--apple-text);letter-spacing:-0.5px">
+                {{ next_month.count }}<span style="font-size:14px;font-weight:400;color:var(--apple-text3);margin-left:4px">笔</span>
+            </div>
+            <div style="font-size:13px;color:var(--apple-text2);margin-top:8px">
+                <span style="font-weight:600;color:var(--apple-text)">{{ '%.2f'|format(next_month.amount) }}</span> 元
+                {% if next_month.amount > 0 %}<span style="color:var(--apple-text3)">（{{ '%.1f'|format(next_month_wan) }} 万）</span>{% endif %}
             </div>
         </div>
     </div>
 </div>
 
-<!-- Expiring Contracts -->
+<!-- Project Progress — Apple style -->
+<section class="apple-section" data-testid="project-progress">
+    <div class="apple-section-header">
+        <div>
+            <div class="apple-section-title">
+                <i data-lucide="milestone" style="color:var(--apple-blue);width:18px;height:18px"></i>
+                项目签署与付款进度
+            </div>
+            <div class="apple-section-subtitle">按合同归类号段汇总；草稿和作废合同不计入签署进度</div>
+        </div>
+        <a href="{{ url_for('contract_ledger') }}" class="apple-btn apple-btn-ghost">查看合同台账</a>
+    </div>
+    {% if project_progress %}
+    <div class="overflow-x-auto">
+        <table class="apple-table">
+            <thead>
+                <tr>
+                    <th>所属项目</th><th>合同签署</th><th>付款计划关联</th><th>实际付款</th><th style="text-align:right">合同数</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for project in project_progress %}
+                <tr>
+                    <td style="font-weight:600">{{ project.project_name }}</td>
+                    <td>
+                        {% if project.signed_to is not none %}
+                        <div style="font-weight:600;color:var(--apple-green)">已签至 {{ project.signed_to }} 号</div>
+                        <div style="font-size:11px;color:var(--apple-text3)">
+                            {% if project.signed_from is not none %}覆盖 {{ project.signed_from }}–{{ project.signed_to }} 号 · {% endif %}
+                            {{ project.signed_contract_count }} 份
+                        </div>
+                        {% else %}
+                        <span style="color:var(--apple-text3)">尚无已签合同</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if project.planned_to is not none %}
+                        <span style="font-weight:500">计划关联至 {{ project.planned_to }} 号</span>
+                        {% else %}
+                        <span style="color:var(--apple-text3)">尚无付款计划</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if project.paid_to is not none %}
+                        <span class="apple-badge green">付款已涉及至 {{ project.paid_to }} 号</span>
+                        {% else %}
+                        <span style="color:var(--apple-text3)">尚未付款</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">{{ project.contract_count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="padding:32px 20px;text-align:center">
+        <i data-lucide="folder-tree" style="width:36px;height:36px;margin:0 auto 12px;color:var(--apple-text3)"></i>
+        <p style="color:var(--apple-text2);font-size:13px">还没有项目归类数据</p>
+        <p style="color:var(--apple-text3);font-size:12px;margin-top:4px">生成合同时填写所属项目和覆盖号段后，这里会自动形成统计。</p>
+    </div>
+    {% endif %}
+</section>
+
+<!-- Expiring Contracts — Apple style -->
 {% if expiring_contracts %}
-<div class="card bg-info/10 border border-info/30 shadow-sm mb-3">
-    <div class="card-body p-3">
-        <div class="flex items-center gap-2 mb-2">
-            <i data-lucide="clock" class="w-5 h-5 text-info"></i>
-            <h3 class="font-semibold text-sm">合同到期提醒（30天内）</h3>
-            <span class="badge badge-info badge-sm">{{ expiring_contracts|length }} 份</span>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-xs">
-                <thead>
-                    <tr class="text-info/70">
-                        <th>到期日期</th><th>合同编号</th><th>合同名称</th><th>对方单位</th><th>状态</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for c in expiring_contracts %}
-                    <tr>
-                        <td class="font-mono text-xs {{ 'text-error font-semibold' if c.expiry_date <= today.strftime('%Y-%m-%d') else '' }}">
-                            {{ c.expiry_date }}
-                        </td>
-                        <td class="text-xs">{{ c.contract_no or '-' }}</td>
-                        <td>
-                            <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
-                               class="link link-hover text-sm">{{ c.title }}</a>
-                        </td>
-                        <td class="text-sm">{{ c.counterparty or '-' }}</td>
-                        <td>
-                            <span class="badge badge-xs {{ 'badge-success' if c.status == 'active' else 'badge-info' }}">
-                                {{ status_labels.get(c.status, c.status) }}
-                            </span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+<div class="apple-alert-info mb-3">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <i data-lucide="clock" style="width:18px;height:18px;color:var(--apple-blue)"></i>
+        <h3 style="font-size:14px;font-weight:600;color:var(--apple-text)">合同到期提醒（30天内）</h3>
+        <span class="apple-badge blue">{{ expiring_contracts|length }} 份</span>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="apple-table">
+            <thead>
+                <tr><th>到期日期</th><th>合同编号</th><th>合同名称</th><th>对方单位</th><th>状态</th></tr>
+            </thead>
+            <tbody>
+                {% for c in expiring_contracts %}
+                <tr>
+                    <td style="font-weight:{{ '700' if c.expiry_date <= today.strftime('%Y-%m-%d') else '500' }};color:{{ 'var(--apple-red)' if c.expiry_date <= today.strftime('%Y-%m-%d') else 'var(--apple-text)' }}">
+                        {{ c.expiry_date }}
+                    </td>
+                    <td>{{ c.contract_no or '-' }}</td>
+                    <td>
+                        <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                           style="color:var(--apple-blue);text-decoration:none;font-weight:500"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">{{ c.title }}</a>
+                    </td>
+                    <td>{{ c.counterparty or '-' }}</td>
+                    <td><span class="apple-badge {{ 'green' if c.status == 'active' else 'blue' }}">{{ status_labels.get(c.status, c.status) }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endif %}
 
-<!-- Due Soon Alerts -->
+<!-- Due Soon Alerts — Apple style -->
 {% if due_soon %}
-<div class="card bg-warning/10 border border-warning/30 shadow-sm mb-3">
-    <div class="card-body p-3">
-        <div class="flex items-center gap-2 mb-2">
-            <i data-lucide="alert-triangle" class="w-5 h-5 text-warning"></i>
-            <h3 class="font-semibold text-sm">即将到期提醒</h3>
-            <span class="badge badge-warning badge-sm">{{ due_soon|length }} 笔</span>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-xs">
-                <thead>
-                    <tr class="text-warning/70">
-                        <th>应付日期</th><th>合同</th><th>款项</th><th>金额</th><th>对方</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for p in due_soon %}
-                    <tr>
-                        <td class="font-mono text-xs {{ 'text-error font-semibold' if p.due_date <= today.strftime('%Y-%m-%d') else '' }}">
-                            {{ p.due_date }}
-                        </td>
-                        <td>
-                            <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
-                               class="link link-hover text-sm">{{ p.contract_title }}</a>
-                        </td>
-                        <td class="text-sm">{{ p.phase_name or '-' }}</td>
-                        <td class="text-sm tabular-nums font-medium">
-                            {{ '%.2f'|format((p.due_amount or 0) - (p.paid_amount or 0)) }}
-                        </td>
-                        <td class="text-xs text-base-content/50">{{ p.counterparty or '-' }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+<div class="apple-alert-warning mb-3">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <i data-lucide="alert-triangle" style="width:18px;height:18px;color:var(--apple-orange)"></i>
+        <h3 style="font-size:14px;font-weight:600;color:var(--apple-text)">即将到期提醒</h3>
+        <span class="apple-badge orange">{{ due_soon|length }} 笔</span>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="apple-table">
+            <thead>
+                <tr><th>应付日期</th><th>合同</th><th>款项</th><th>金额</th><th>对方</th></tr>
+            </thead>
+            <tbody>
+                {% for p in due_soon %}
+                <tr>
+                    <td style="font-weight:{{ '700' if p.due_date <= today.strftime('%Y-%m-%d') else '500' }};color:{{ 'var(--apple-red)' if p.due_date <= today.strftime('%Y-%m-%d') else 'var(--apple-text)' }}">
+                        {{ p.due_date }}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
+                           style="color:var(--apple-blue);text-decoration:none;font-weight:500"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">{{ p.contract_title }}</a>
+                    </td>
+                    <td>{{ p.phase_name or '-' }}</td>
+                    <td style="font-weight:600">{{ '%.2f'|format((p.due_amount or 0) - (p.paid_amount or 0)) }}</td>
+                    <td style="color:var(--apple-text2)">{{ p.counterparty or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endif %}
 
-<!-- Recent Contracts & Templates -->
+<!-- Recent Contracts & Templates — Apple style -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-    <!-- Recent Contracts -->
-    <div class="card bg-base-100 shadow-sm">
-        <div class="card-body p-4">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="card-title text-sm">
-                    <i data-lucide="book-open" class="w-4 h-4"></i> 最近合同
-                </h3>
-                <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-xs">全部</a>
-            </div>
+    <div class="apple-section">
+        <div class="apple-section-header">
+            <span class="apple-section-title">
+                <i data-lucide="book-open" style="color:var(--apple-blue);width:18px;height:18px"></i> 最近合同
+            </span>
+            <a href="{{ url_for('contract_ledger') }}" class="apple-btn apple-btn-ghost">全部</a>
+        </div>
+        <div class="apple-section-body">
             {% if recent_contracts %}
-            <div class="flex flex-col gap-2">
+            <div style="display:flex;flex-direction:column;gap:2px">
                 {% for c in recent_contracts %}
                 <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
-                   class="flex items-center gap-3 p-1.5 rounded-lg hover:bg-base-200 transition-colors">
-                    <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <i data-lucide="file-text" class="w-4 h-4 text-primary"></i>
+                   style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;transition:background 0.15s"
+                   onmouseover="this.style.background='rgba(0,0,0,0.02)'"
+                   onmouseout="this.style.background='transparent'">
+                    <div style="width:34px;height:34px;border-radius:8px;background:rgba(0,122,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                        <i data-lucide="file-text" style="width:16px;height:16px;color:var(--apple-blue)"></i>
                     </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-sm font-medium truncate">{{ c.title }}</div>
-                        <div class="text-xs text-base-content/40">{{ c.contract_no or '未编号' }} · {{ c.counterparty or '未知对方' }}</div>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:550;color:var(--apple-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.title }}</div>
+                        <div style="font-size:11px;color:var(--apple-text3);margin-top:1px">{{ c.contract_no or '未编号' }} · {{ c.counterparty or '未知对方' }}</div>
                     </div>
-                    <span class="badge badge-xs
-                        {{ 'badge-warning' if c.status == 'draft' else 'badge-success' if c.status in ('signed','active') else 'badge-info' if c.status == 'completed' else 'badge-ghost' }}">
-                        {{ status_labels.get(c.status, c.status) }}
-                    </span>
+                    {% set sc = 'blue' if c.status in ('signed','active') else 'orange' if c.status == 'draft' else 'green' if c.status == 'completed' else 'gray' %}
+                    <span class="apple-badge {{ sc }}">{{ status_labels.get(c.status, c.status) }}</span>
                 </a>
                 {% endfor %}
             </div>
             {% else %}
-            <p class="text-base-content/40 text-sm text-center py-6">暂无合同记录</p>
+            <p style="color:var(--apple-text3);text-align:center;padding:24px 0;font-size:13px">暂无合同记录</p>
             {% endif %}
         </div>
     </div>
 
-    <!-- Recent Templates -->
-    <div class="card bg-base-100 shadow-sm">
-        <div class="card-body p-4">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="card-title text-sm">
-                    <i data-lucide="pen-line" class="w-4 h-4"></i> 最近模板
-                </h3>
-                <a href="{{ url_for('list_templates') }}" class="btn btn-ghost btn-xs">全部</a>
-            </div>
+    <div class="apple-section">
+        <div class="apple-section-header">
+            <span class="apple-section-title">
+                <i data-lucide="pen-line" style="color:var(--apple-purple);width:18px;height:18px"></i> 最近模板
+            </span>
+            <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-ghost">全部</a>
+        </div>
+        <div class="apple-section-body">
             {% if recent_templates %}
-            <div class="flex flex-col gap-2">
+            <div style="display:flex;flex-direction:column;gap:2px">
                 {% for tpl in recent_templates %}
                 <a href="{{ url_for('template_editor', name=tpl.filename) }}"
-                   class="flex items-center gap-3 p-1.5 rounded-lg hover:bg-base-200 transition-colors group">
-                    <div class="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center flex-shrink-0">
-                        <i data-lucide="layout-grid" class="w-4 h-4 text-info"></i>
+                   style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;transition:background 0.15s"
+                   onmouseover="this.style.background='rgba(0,0,0,0.02)'"
+                   onmouseout="this.style.background='transparent'">
+                    <div style="width:34px;height:34px;border-radius:8px;background:rgba(175,82,222,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                        <i data-lucide="layout-grid" style="width:16px;height:16px;color:var(--apple-purple)"></i>
                     </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-sm font-medium truncate">{{ tpl.name }}</div>
-                        <div class="text-xs text-base-content/40">{{ tpl.field_count }} 个字段</div>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:550;color:var(--apple-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tpl.name }}</div>
+                        <div style="font-size:11px;color:var(--apple-text3);margin-top:1px">{{ tpl.field_count }} 个字段</div>
                     </div>
-                    <i data-lucide="chevron-right" class="w-4 h-4 text-base-content/20 group-hover:text-primary transition-colors"></i>
+                    <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--apple-text3)"></i>
                 </a>
                 {% endfor %}
             </div>
             {% else %}
-            <p class="text-base-content/40 text-sm text-center py-6">暂无模板</p>
+            <p style="color:var(--apple-text3);text-align:center;padding:24px 0;font-size:13px">暂无模板</p>
             {% endif %}
         </div>
     </div>
@@ -293,79 +338,45 @@
 
 {% block scripts %}
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.querySelector('.autostart-form');
-    if (!form) return;
-
-    const badge = document.getElementById('autostartBadge');
-    const button = document.getElementById('autostartButton');
-    const error = document.getElementById('autostartError');
-    const detail = document.getElementById('autostartDetail');
-    const tokenInput = form.querySelector('input[name="csrf_token"]');
-
-    function setError(message) {
-        if (!error) return;
-        error.textContent = message || '';
-        error.classList.toggle('hidden', !message);
-    }
-
-    function renderState(enabled, description) {
-        if (badge) {
-            badge.textContent = enabled ? '开' : '关';
-            badge.classList.toggle('badge-success', enabled);
-            badge.classList.toggle('badge-ghost', !enabled);
-        }
-        if (detail && description) {
-            detail.textContent = description;
-            detail.title = description;
-        }
-        if (button) {
-            button.textContent = enabled ? '关闭' : '开启';
-            button.classList.toggle('btn-primary', !enabled);
-            button.classList.toggle('btn-ghost', enabled);
-        }
-        form.action = enabled ? "{{ url_for('autostart_disable') }}" : "{{ url_for('autostart_enable') }}";
-    }
-
-    form.addEventListener('submit', function(event) {
-        event.preventDefault();
-        setError('');
-        if (button) {
-            button.disabled = true;
-            button.dataset.originalText = button.textContent;
-            button.textContent = '...';
-        }
-
-        fetch(form.action, {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRF-Token': tokenInput ? tokenInput.value : '',
-                'Accept': 'application/json'
-            },
-            body: new FormData(form)
-        })
-        .then(function(response) {
-            return response.json().then(function(data) {
-                if (!response.ok || !data.success) {
-                    throw new Error(data.message || '自启设置失败');
-                }
-                return data;
+document.addEventListener('alpine:init', () => {
+    Alpine.data('autostartToggle', (initialOn, supported, csrf) => ({
+        on: initialOn,
+        supported: supported,
+        csrf: csrf,
+        busy: false,
+        err: '',
+        toggle() {
+            if (this.busy || !this.supported) return;
+            clearTimeout(this._timer);
+            this.busy = true;
+            this.err = '';
+            const prev = this.on;
+            this.on = !this.on;
+            const url = this.on ? "{{ url_for('autostart_enable') }}" : "{{ url_for('autostart_disable') }}";
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this.csrf,
+                    'Accept': 'application/json'
+                },
+                body: new URLSearchParams({ csrf_token: this.csrf })
+            })
+            .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) throw new Error(data.message || '操作失败');
+                this.on = !!data.enabled;
+                this.err = '';
+            })
+            .catch(e => {
+                this.on = prev;
+                this.err = e.message;
+            })
+            .finally(() => {
+                this._timer = setTimeout(() => { this.busy = false; }, 300);
             });
-        })
-        .then(function(data) {
-            renderState(!!data.enabled, data.description || '');
-        })
-        .catch(function(err) {
-            setError(err.message || '自启设置失败');
-            if (button && button.dataset.originalText) {
-                button.textContent = button.dataset.originalText;
-            }
-        })
-        .finally(function() {
-            if (button) button.disabled = false;
-        });
-    });
+        }
+    }));
 });
 </script>
 {% endblock %}

@@ -1,110 +1,53 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="light" x-data="{ theme: localStorage.getItem('theme') || 'light' }" x-init="$el.dataset.theme = theme; $watch('theme', v => { $el.dataset.theme = v; localStorage.setItem('theme', v); })">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <title>{% block title %}合同管理工具{% endblock %}</title>
     <link href="{{ url_for('static', filename='vendor/daisyui-full.min.css') }}" rel="stylesheet">
     <script src="{{ url_for('static', filename='vendor/tailwindcss.js') }}"></script>
-    <script>
-      tailwind.config = {
-        theme: { extend: { fontFamily: { sans: ['-apple-system','Microsoft YaHei','PingFang SC','sans-serif'] } } }
-      }
-    </script>
+    <script src="{{ url_for('static', filename='js/base.js') }}"></script>
     <script defer src="{{ url_for('static', filename='vendor/alpine.min.js') }}"></script>
-    <script src="{{ url_for('static', filename='vendor/lucide.min.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/icons.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="min-h-screen bg-base-200">
-
-{% macro nav_links(desktop=true) %}
-    {% set cls = 'btn btn-ghost btn-sm' if desktop else '' %}
-    <li><a href="{{ url_for('create_template') }}" class="{{ cls }}">
-        <i data-lucide="pen-line" class="w-4 h-4"></i> 编制模板
-    </a></li>
-    <li><a href="{{ url_for('list_templates') }}" class="{{ cls }}">
-        <i data-lucide="layout-grid" class="w-4 h-4"></i> 生成合同
-    </a></li>
-    <li><a href="{{ url_for('contract_ledger') }}" class="{{ cls }}">
-        <i data-lucide="book-open" class="w-4 h-4"></i> 合同台账
-    </a></li>
-    <li><a href="{{ url_for('payment_plan_list') }}" class="{{ cls }}">
-        <i data-lucide="calendar-days" class="w-4 h-4"></i> 付款计划
-    </a></li>
-    <li><a href="{{ url_for('diagnostics') }}" class="{{ cls }}">
-        <i data-lucide="activity" class="w-4 h-4"></i> 诊断
-    </a></li>
-    <li><a href="{{ url_for('backups') }}" class="{{ cls }}">
-        <i data-lucide="database-backup" class="w-4 h-4"></i> 备份
-    </a></li>
-    <li><a href="{{ url_for('contract_trash') }}" class="{{ cls }}">
-        <i data-lucide="trash-2" class="w-4 h-4"></i> 回收站
-    </a></li>
-{% endmacro %}
-
-<!-- Navbar -->
-<div class="navbar bg-primary text-primary-content shadow-lg px-4 lg:px-8">
-    <div class="navbar-start">
-        <a href="{{ url_for('index') }}" class="btn btn-ghost text-xl font-bold gap-2">
-            <i data-lucide="file-text" class="w-6 h-6"></i>
-            合同管理工具
-        </a>
-    </div>
-    <div class="navbar-center hidden lg:flex">
-        <ul class="menu menu-horizontal gap-1 px-1">
-            {{ nav_links(desktop=true) }}
-        </ul>
-    </div>
-    <div class="navbar-end">
-        <!-- Mobile menu toggle -->
-        <div class="dropdown dropdown-end lg:hidden">
-            <label tabindex="0" class="btn btn-ghost btn-sm">
-                <i data-lucide="menu" class="w-5 h-5"></i>
-            </label>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 mt-3 z-50">
-                {{ nav_links(desktop=false) }}
-            </ul>
-        </div>
-    </div>
+<aside class="sp" id="sp"><div class="slw"><div class="sli">CT</div><a href="{{ url_for('index') }}" class="slt">合同生成工具</a></div>
+<nav class="snw">
+<div class="nsw"><div class="nst">主要功能</div>
+<a href="{{ url_for('index') }}" class="nl {{ 'act' if request.endpoint == 'index' }}"><i data-lucide="layout-grid"></i> 工作台</a>
+<a href="{{ url_for('procurement_projects') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('procurement_') }}"><i data-lucide="briefcase-business"></i> 采购前置</a>
+<a href="{{ url_for('procurement_history_prices') }}" class="nl {{ 'act' if request.endpoint == 'procurement_history_prices' }}"><i data-lucide="chart-no-axes-combined"></i> 历史价格</a>
+<a href="{{ url_for('list_templates') }}" class="nl {{ 'act' if request.endpoint in ('list_templates','editor','create_template','template_editor','template_versions') }}"><i data-lucide="pen-line"></i> 合同生成</a>
+<a href="{{ url_for('contract_ledger') }}" class="nl {{ 'act' if request.endpoint in ('contract_ledger','contract_detail') }}"><i data-lucide="book-open"></i> 合同台账</a>
+<a href="{{ url_for('payment_plan_list') }}" class="nl {{ 'act' if request.endpoint == 'payment_plan_list' }}"><i data-lucide="calendar-days"></i> 付款计划</a>
 </div>
-
-<!-- Toast -->
-<div x-data="toastCenter()" @toast.window="addToast($event.detail)"
-     class="fixed top-4 right-4 z-[9999] flex flex-col gap-2">
-    <template x-for="(t, i) in toasts" :key="i">
-        <div x-show="true" x-transition:enter="transition ease-out duration-300"
-             x-transition:enter-start="translate-x-full opacity-0"
-             x-transition:enter-end="translate-x-0 opacity-100"
-             :class="t.type === 'error' ? 'alert alert-error' : 'alert alert-success'"
-             class="shadow-lg max-w-sm">
-            <span x-text="t.msg"></span>
-        </div>
-    </template>
+<div class="nsw"><div class="nst">资源管理</div>
+<a href="{{ url_for('excel_bill_page') }}" class="nl {{ 'act' if request.endpoint == 'excel_bill_page' }}"><i data-lucide="file-spreadsheet"></i> Excel 单据</a>
 </div>
+<div class="nsw"><div class="nst">系统</div>
+<a href="{{ url_for('diagnostics') }}" class="nl {{ 'act' if request.endpoint == 'diagnostics' }}"><i data-lucide="activity"></i> 系统诊断</a>
+<a href="{{ url_for('backups') }}" class="nl {{ 'act' if request.endpoint == 'backups' }}"><i data-lucide="database-backup"></i> 备份管理</a>
+<a href="{{ url_for('contract_trash') }}" class="nl {{ 'act' if request.endpoint == 'contract_trash' }}"><i data-lucide="alert-triangle"></i> 回收站</a>
+</div>
+</nav>
+<div class="sf"><div style="display:flex;align-items:center;gap:7px;color:rgba(255,255,255,0.3);font-size:11px;font-weight:450"><div style="width:6px;height:6px;border-radius:3px;background:#34C759;box-shadow:0 0 6px rgba(52,199,89,0.4)"></div> 运行中</div></div>
+</aside>
+
+<div class="tf">
+<div style="display:flex;align-items:center;gap:12px"><button class="stb" onclick="document.getElementById('sp').classList.toggle('open')"><i data-lucide="menu" style="width:20px;height:20px"></i></button><div class="tbr">合同生成工具 / <strong>{% block breadcrumb %}工作台{% endblock %}</strong></div></div>
+<div style="display:flex;align-items:center;gap:8px"><button class="bgx" title="切换暗色模式" @click="theme = theme === 'light' ? 'dark' : 'light'"><i :data-lucide="theme === 'light' ? 'moon' : 'sun'" style="width:15px;height:15px"></i></button><a href="{{ url_for('diagnostics') }}" class="bgx"><i data-lucide="info" style="width:15px;height:15px"></i></a></div>
+</div>
+<div class="ma">
 
 <!-- Main Content -->
 <main class="max-w-7xl mx-auto px-4 lg:px-8 py-8">
     {% block content %}{% endblock %}
 </main>
 
-<script>
-function toastCenter() {
-    return {
-        toasts: [],
-        addToast(toast) {
-            this.toasts.push(toast);
-            setTimeout(() => this.toasts.shift(), 3500);
-        }
-    };
-}
-
-document.addEventListener('alpine:init', () => {
-    window.showToast = (msg, type) => {
-        window.dispatchEvent(new CustomEvent('toast', { detail: { msg, type: type || 'success' } }));
-    };
-});
-lucide.createIcons();
-</script>
 {% block scripts %}{% endblock %}
+</div>
+<!-- /main-area -->
 </body>
 </html>

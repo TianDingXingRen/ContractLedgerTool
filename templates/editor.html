@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}填写合同 - 合同管理工具{% endblock %}
+{% block breadcrumb %}editor{% endblock %}
 {% block content %}
 
 <div class="flex items-center justify-between mb-6">
@@ -23,8 +24,8 @@
                 <div class="editor-actions grid grid-cols-2 sm:flex sm:flex-wrap sm:justify-end gap-2 w-full md:w-auto">
                     <button type="button" class="btn btn-ghost btn-sm w-full sm:w-auto justify-center" id="saveDefaultsBtn">
                         <i data-lucide="save" class="w-4 h-4"></i>
-                        <span class="hidden sm:inline">保存为预制内容</span>
-                        <span class="sm:hidden">保存预制</span>
+                        <span class="hidden sm:inline">保存常用填写</span>
+                        <span class="sm:hidden">保存常用</span>
                     </button>
                     <label class="btn btn-ghost btn-sm w-full sm:w-auto justify-center gap-1.5 cursor-pointer whitespace-nowrap">
                         <input type="checkbox" name="generate_pdf" value="1" class="checkbox checkbox-xs">
@@ -41,6 +42,57 @@
             </div>
         </div>
     </div>
+
+    <!-- Contract Classification -->
+    <section class="card bg-base-100 border border-base-300 shadow-sm mb-4"
+             data-testid="contract-classification">
+        <div class="card-body p-4">
+            <div class="flex items-start gap-3 mb-4">
+                <div class="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                    <i data-lucide="folder-tree" class="w-4 h-4"></i>
+                </div>
+                <div>
+                    <h3 class="font-semibold text-sm">项目归类</h3>
+                    <p class="text-xs text-base-content/50 mt-0.5">用于汇总合同签署和付款覆盖到项目的具体号段，不写入合同正文。</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-4">
+                <label class="form-control gap-2">
+                    <span class="label-text text-xs text-base-content/60">所属项目</span>
+                    <input type="text" name="project_name" id="projectName"
+                           list="projectNameOptions" maxlength="120" autocomplete="off"
+                           class="input input-bordered input-sm w-full"
+                           value="{{ classification_project_name or '' }}"
+                           placeholder="输入或选择项目名称">
+                    <span class="text-xs text-base-content/40">相同名称会自动归入同一项目。</span>
+                </label>
+                <fieldset class="form-control gap-2">
+                    <legend class="label-text text-xs text-base-content/60 mb-2">覆盖范围</legend>
+                    <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+                        <label class="input input-bordered input-sm flex items-center gap-2">
+                            <input type="number" name="coverage_start" id="coverageStart"
+                                   min="1" max="1000000000" step="1" inputmode="numeric"
+                                   class="grow min-w-0" placeholder="起始">
+                            <span class="text-xs text-base-content/40">号</span>
+                        </label>
+                        <span class="text-xs text-base-content/40">至</span>
+                        <label class="input input-bordered input-sm flex items-center gap-2">
+                            <input type="number" name="coverage_end" id="coverageEnd"
+                                   min="1" max="1000000000" step="1" inputmode="numeric"
+                                   class="grow min-w-0" placeholder="结束">
+                            <span class="text-xs text-base-content/40">号</span>
+                        </label>
+                    </div>
+                    <span class="text-xs text-base-content/40">起止号需同时填写，且起始号不能大于结束号。</span>
+                </fieldset>
+            </div>
+            <datalist id="projectNameOptions">
+                {% for project_name in project_names %}
+                <option value="{{ project_name }}"></option>
+                {% endfor %}
+            </datalist>
+        </div>
+    </section>
 
     <!-- Batch Mode Toggle -->
     <div class="card bg-base-100 shadow-sm mb-4" x-data="{ batchMode: false, counterparties: '', batchFieldKey: '' }">
@@ -89,10 +141,10 @@
         <aside class="bg-base-100 border border-base-300 rounded-lg p-3 lg:sticky lg:top-4" data-testid="editor-sidebar">
             <div class="text-xs text-base-content/50 mb-2">字段导航</div>
             <div class="grid grid-cols-2 gap-1 mb-3">
-                <button type="button" class="btn btn-ghost btn-xs editor-filter active" data-filter="all">全部</button>
-                <button type="button" class="btn btn-ghost btn-xs editor-filter" data-filter="required">必填</button>
-                <button type="button" class="btn btn-ghost btn-xs editor-filter" data-filter="empty">未填</button>
-                <button type="button" class="btn btn-ghost btn-xs editor-filter" data-filter="calc">公式</button>
+                <button type="button" class="btn btn-ghost btn-xs editor-filter active" data-filter="all">全部 <span class="badge badge-xs ml-1" id="countAll">{{ field_count }}</span></button>
+                <button type="button" class="btn btn-ghost btn-xs editor-filter" data-filter="required">必填 <span class="badge badge-xs ml-1" id="countRequired">0</span></button>
+                <button type="button" class="btn btn-ghost btn-xs editor-filter" data-filter="empty">未填 <span class="badge badge-xs ml-1" id="countEmpty">0</span></button>
+                <button type="button" class="btn btn-ghost btn-xs editor-filter" data-filter="calc">公式 <span class="badge badge-xs ml-1" id="countCalc">0</span></button>
             </div>
             <div class="max-h-[55vh] overflow-auto divide-y divide-base-200" id="fieldNavigator">
                 {% for field in fields %}
@@ -109,7 +161,7 @@
         <div class="field-list flex flex-col gap-3 mb-8">
         {% for field in fields %}
         {% set ft = field.field_type %}
-        {% set fid = field.id %}
+        {% set fid = field.id if field.id is defined and field.id is not none else loop.index0 %}
         {% set fkey = field.key %}
 
         <div class="field-item card bg-base-100 shadow-sm {% if ft == 'calculated' %}field-calc{% endif %}"
@@ -124,11 +176,12 @@
                     {% if field.required %}<span class="text-error font-bold">*</span>{% endif %}
                     <span class="field-type-tag tag-{{ ft }} badge badge-sm ml-auto
                         {% if ft == 'text' %}badge-primary
+                        {% elif ft == 'number' %}badge-accent
                         {% elif ft == 'textarea' %}badge-secondary
                         {% elif ft == 'select' %}badge-info
                         {% elif ft == 'table' %}badge-success
                         {% elif ft == 'calculated' %}badge-warning{% endif %}">
-                        {{ {'text':'单行','textarea':'多行','select':'选择','table':'表格','calculated':'自动'}[ft] or ft }}
+                        {{ {'text':'单行','number':'数字','textarea':'多行','select':'选择','table':'表格','calculated':'自动'}[ft] or ft }}
                     </span>
                 </div>
 
@@ -149,6 +202,18 @@
                 <input type="text" name="field_{{ fid }}" class="field-input input input-bordered w-full"
                        placeholder="请输入{{ field.label }}…"
                        value="{{ field.default_value or '' }}"
+                       data-field-key="{{ fkey }}"
+                       oninput="onFieldChange({{ fid }}); triggerCalc({{ fid }})">
+
+                {# ── NUMBER ── #}
+                {% elif ft == 'number' %}
+                {% set number_decimals = field.get('decimal_places', 2) | int %}
+                <input type="number" name="field_{{ fid }}" class="field-input input input-bordered w-full"
+                       placeholder="请输入{{ field.label }}…"
+                       value="{{ field.default_value or '' }}"
+                       min="{{ field.get('min_value') if field.get('min_value') is not none else '' }}"
+                       max="{{ field.get('max_value') if field.get('max_value') is not none else '' }}"
+                       step="{{ '1' if number_decimals == 0 else '0.' ~ ('0' * (number_decimals - 1)) ~ '1' }}"
                        data-field-key="{{ fkey }}"
                        oninput="onFieldChange({{ fid }}); triggerCalc({{ fid }})">
 
@@ -279,6 +344,9 @@
     const progressFill = document.getElementById('progressFill');
     const columnsData = {};
     let currentGeneratedUrl = '';
+    // 这些 URL 必须在 Jinja 渲染阶段生成，再传给作为静态文件的 editor.js
+    window.CT_saveDefaultsUrl = '{{ url_for("save_template_defaults") }}';
+    window.CT_generateBatchUrl = '{{ url_for("generate_batch") }}';
 
     function escapeHtml(str) {
         const d = document.createElement('div');
@@ -297,503 +365,165 @@
         updateProgress();
         bindEditorFilters();
         setEditorFilter('all');
-        lucide.createIcons();
+        restoreDraft();
+        // icons auto-rendered by icons.js
     });
 
-    // ── Progress ──
-    function onFieldChange(id) {
-        const item = document.getElementById('field_' + id);
-        const input = item.querySelector('.field-input, .field-select, textarea');
-        if (input && input.value.trim()) {
-            item.classList.add('filled');
-            item.dataset.filled = '1';
-        } else {
-            item.classList.remove('filled');
-            item.dataset.filled = '0';
-        }
-        const nav = document.querySelector('[data-nav-field="' + id + '"]');
-        if (nav) nav.classList.toggle('text-success', item.dataset.filled === '1');
-        updateProgress();
-    }
-
-    function updateProgress() {
-        let filled = 0;
-        document.querySelectorAll('.field-item').forEach(item => {
-            if (item.classList.contains('field-calc')) return;
-            if (item.querySelector('.table-editor')) {
-                const tbody = item.querySelector('tbody');
-                const tableFilled = !!(tbody && tbody.querySelectorAll('tr').length > 0);
-                item.dataset.filled = tableFilled ? '1' : '0';
-                if (tableFilled) { filled++; return; }
-            }
-            const input = item.querySelector('.field-input, .field-select, textarea');
-            const isFilled = !!(input && input.value.trim());
-            item.dataset.filled = isFilled ? '1' : '0';
-            if (isFilled) filled++;
-        });
-        filledCount.textContent = filled;
-        const pct = totalFields > 0 ? Math.round((filled / totalFields) * 100) : 0;
-        progressFill.style.width = pct + '%';
-    }
-
-    function bindEditorFilters() {
-        document.querySelectorAll('.editor-filter').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                setEditorFilter(btn.dataset.filter || 'all');
-            });
-        });
-    }
-
-    function setEditorFilter(filter) {
-        document.querySelectorAll('.editor-filter').forEach(function(btn) {
-            btn.classList.toggle('btn-primary', btn.dataset.filter === filter);
-            btn.classList.toggle('btn-ghost', btn.dataset.filter !== filter);
-        });
-        document.querySelectorAll('.field-item').forEach(function(item) {
-            var visible = true;
-            if (filter === 'required') visible = item.dataset.required === '1';
-            if (filter === 'empty') visible = item.dataset.filled !== '1' && !item.classList.contains('field-calc');
-            if (filter === 'calc') visible = item.dataset.fieldType === 'calculated';
-            item.classList.toggle('hidden', !visible);
-            const nav = document.querySelector('[data-nav-field="' + item.id.replace('field_', '') + '"]');
-            if (nav) nav.classList.toggle('hidden', !visible);
-        });
-    }
-
-    // ── Table editor ──
-    function initTable(fid) {
-        initTableColumns(fid);
-        const defaultsRaw = document.getElementById('table_default_rows_' + fid).value;
-        let defaultRows = [];
-        try { defaultRows = JSON.parse(defaultsRaw || '[]'); } catch(e) {}
-        if (Array.isArray(defaultRows) && defaultRows.length > 0) {
-            defaultRows.forEach(row => addTableRow(fid, row));
-        } else {
-            addTableRow(fid);
-        }
-    }
-
-    function initTableColumns(fid) {
-        const raw = document.getElementById('table_columns_' + fid).value;
-        columnsData[fid] = JSON.parse(raw);
-        renderTableHeader(fid);
-    }
-
-    function renderTableHeader(fid) {
-        const cols = columnsData[fid] || [];
-        let html = '<tr><th class="row-num-col w-10 text-center">#</th>';
-        cols.forEach(function(col, ci) {
-            html += '<th class="bg-base-200">';
-            html += '<span class="th-wrap inline-flex items-center gap-1">';
-            html += '<input type="text" class="th-input input input-ghost input-xs w-20 font-semibold" value="' + escapeHtml(col.label) + '" onchange="updateColumnLabel(' + fid + ',' + ci + ',this.value)">';
-            html += '<code class="var-code table-var-code badge badge-xs font-mono">' + escapeHtml(col.key || ('col_' + ci)) + '</code>';
-            if (col.field_type === 'calculated') {
-                html += ' <span class="calc-tag badge badge-warning badge-xs">自动</span>';
-            }
-            html += '<button type="button" class="th-del-btn btn btn-ghost btn-xs px-1 text-base-content/30 hover:text-error" onclick="removeTableColumnAt(' + fid + ',' + ci + ')">&times;</button>';
-            html += '</span></th>';
-        });
-        html += '<th class="row-action-col w-10"></th></tr>';
-        document.getElementById('table_head_' + fid).innerHTML = html;
-        syncColumnsInput(fid);
-    }
-
-    function addTableColumn(fid) {
-        var cols = columnsData[fid];
-        var ci = cols.length;
-        var newKey = generateColumnKey(fid);
-        cols.push({key: newKey, label: '新列' + (ci + 1), field_type: 'text', formula: ''});
-        renderTableHeader(fid);
-        var colDef = cols[ci];
-        var tbody = document.getElementById('table_body_' + fid);
-        tbody.querySelectorAll('tr').forEach(function(tr) {
-            var rowIdx = parseInt(tr.dataset.rowIndex);
-            var td = document.createElement('td');
-            if (colDef.field_type === 'calculated') {
-                td.innerHTML = '<span class="calc-cell" id="tcalc_' + fid + '_' + rowIdx + '_' + ci + '">0</span>';
-                td.dataset.formula = colDef.formula || '';
-                td.dataset.colKey = newKey;
-                td.dataset.rowIdx = rowIdx;
-            } else {
-                var inp = document.createElement('input');
-                inp.type = 'text';
-                inp.className = 'table-cell-input input input-ghost input-xs w-full';
-                inp.dataset.colKey = newKey;
-                inp.dataset.rowIdx = rowIdx;
-                inp.placeholder = colDef.label;
-                inp.oninput = function() {
-                    recalcTableRow(fid, parseInt(this.dataset.rowIdx));
-                    updateTableData(fid);
-                    updateProgress();
-                };
-                td.appendChild(inp);
-            }
-            tr.insertBefore(td, tr.lastElementChild);
-        });
-        syncColumnsInput(fid);
-        updateTableData(fid);
-    }
-
-    function removeTableColumn(fid) {
-        var cols = columnsData[fid];
-        if (cols.length <= 1) return;
-        removeTableColumnAt(fid, cols.length - 1);
-    }
-
-    function removeTableColumnAt(fid, ci) {
-        var cols = columnsData[fid];
-        if (cols.length <= 1) return;
-        cols.splice(ci, 1);
-        renderTableHeader(fid);
-        var tbody = document.getElementById('table_body_' + fid);
-        tbody.querySelectorAll('tr').forEach(function(tr) {
-            var td = tr.children[ci + 1];
-            if (td) tr.removeChild(td);
-        });
-        syncColumnsInput(fid);
-        updateTableData(fid);
-    }
-
-    function updateColumnLabel(fid, ci, label) {
-        var cols = columnsData[fid];
-        if (cols[ci]) { cols[ci].label = label; }
-        var tbody = document.getElementById('table_body_' + fid);
-        tbody.querySelectorAll('tr').forEach(function(tr) {
-            var inp = tr.children[ci + 1] ? tr.children[ci + 1].querySelector('.table-cell-input') : null;
-            if (inp) inp.placeholder = label;
-        });
-        syncColumnsInput(fid);
-    }
-
-    function generateColumnKey(fid) {
-        var existing = {};
-        (columnsData[fid] || []).forEach(function(c) { existing[c.key] = true; });
-        var idx = 0;
-        while (existing['col_' + idx]) idx++;
-        return 'col_' + idx;
-    }
-
-    function syncColumnsInput(fid) {
-        document.getElementById('table_cols_input_' + fid).value = JSON.stringify(columnsData[fid]);
-    }
-
-    function addTableRow(fid, rowData) {
-        const tbody = document.getElementById('table_body_' + fid);
-        const columns = columnsData[fid] || [];
-        const rowIdx = tbody.querySelectorAll('tr').length;
-        rowData = rowData || {};
-        const tr = document.createElement('tr');
-        tr.dataset.rowIndex = rowIdx;
-        // Row number
-        const numTd = document.createElement('td');
-        numTd.className = 'row-num text-center text-xs text-base-content/40';
-        numTd.textContent = rowIdx + 1;
-        tr.appendChild(numTd);
-        // Data columns
-        columns.forEach((col, ci) => {
-            const td = document.createElement('td');
-            if (col.field_type === 'calculated') {
-                td.innerHTML = `<span class="calc-cell text-warning font-medium text-right block min-w-[60px] px-2" id="tcalc_${fid}_${rowIdx}_${ci}">0</span>`;
-                td.dataset.formula = col.formula || '';
-                td.dataset.colKey = col.key;
-                td.dataset.rowIdx = rowIdx;
-            } else {
-                const inp = document.createElement('input');
-                inp.type = 'text';
-                inp.className = 'table-cell-input input input-ghost input-xs w-full';
-                inp.dataset.colKey = col.key;
-                inp.dataset.rowIdx = rowIdx;
-                inp.placeholder = col.label;
-                inp.value = rowData[col.key] != null ? rowData[col.key] : (col.default_value || '');
-                inp.oninput = function() {
-                    recalcTableRow(fid, parseInt(this.dataset.rowIdx));
-                    updateTableData(fid);
-                    updateProgress();
-                };
-                td.appendChild(inp);
-            }
-            tr.appendChild(td);
-        });
-        // Delete button
-        const actionTd = document.createElement('td');
-        actionTd.innerHTML = '<button type="button" class="btn btn-ghost btn-xs text-error" onclick="removeThisRow(this)"><i data-lucide="x" class="w-3 h-3"></i></button>';
-        tr.appendChild(actionTd);
-        tbody.appendChild(tr);
-        lucide.createIcons();
-        recalcTableRow(fid, rowIdx);
-        updateTableData(fid);
-        updateProgress();
-    }
-
-    function removeTableRow(fid) {
-        const tbody = document.getElementById('table_body_' + fid);
-        if (tbody.querySelectorAll('tr').length <= 1) return;
-        tbody.removeChild(tbody.lastElementChild);
-        updateTableData(fid);
-        renumberRows(fid);
-        updateProgress();
-    }
-
-    function removeThisRow(btn) {
-        const tr = btn.closest('tr');
-        const tbody = tr.parentElement;
-        if (tbody.querySelectorAll('tr').length <= 1) return;
-        tbody.removeChild(tr);
-        const fid = parseInt(tbody.id.replace('table_body_', ''));
-        updateTableData(fid);
-        renumberRows(fid);
-        updateProgress();
-    }
-
-    function renumberRows(fid) {
-        const tbody = document.getElementById('table_body_' + fid);
-        tbody.querySelectorAll('tr').forEach((tr, i) => {
-            tr.querySelector('.row-num').textContent = i + 1;
-            tr.dataset.rowIndex = i;
-            tr.querySelectorAll('[data-row-idx]').forEach(el => el.dataset.rowIdx = i);
-        });
-    }
-
-    function recalcTableRow(fid, rowIdx) {
-        const tbody = document.getElementById('table_body_' + fid);
-        const tr = tbody.querySelector(`tr[data-row-index="${rowIdx}"]`);
-        if (!tr) return;
-        const columns = columnsData[fid] || [];
-        const context = {};
-        tr.querySelectorAll('.table-cell-input').forEach(inp => {
-            const val = parseFloat(inp.value) || 0;
-            context[inp.dataset.colKey] = val;
-        });
-        tr.querySelectorAll('[data-formula]').forEach(td => {
-            const formula = td.dataset.formula;
-            if (!formula) return;
-            try {
-                const result = safeEval(formula, context);
-                td.textContent = result.toFixed(2);
-            } catch(e) { td.textContent = '?'; }
-        });
-    }
-
-    function updateTableData(fid) {
-        const tbody = document.getElementById('table_body_' + fid);
-        const columns = columnsData[fid] || [];
-        const rows = [];
-        tbody.querySelectorAll('tr').forEach(tr => {
-            const row = {};
-            tr.querySelectorAll('.table-cell-input').forEach(inp => {
-                row[inp.dataset.colKey] = inp.value;
-            });
-            tr.querySelectorAll('[data-formula]').forEach(td => {
-                row[td.dataset.colKey] = td.textContent;
-            });
-            if (Object.keys(row).length > 0) rows.push(row);
-        });
-        document.getElementById('table_data_' + fid).value = JSON.stringify(rows);
-    }
-
-    // ── Calculated fields (from formula-engine.js) ──
-    var triggerCalc = window.CT_triggerCalc;
-    var recalcField = window.CT_recalcField;
-    var recalcAllFields = window.CT_recalcAllFields;
-
-    // ── Safe eval (from formula-engine.js) ──
-    var safeEval = window.CT_safeEval;
-
-    // ── Save defaults ──
-    document.getElementById('saveDefaultsBtn').addEventListener('click', function() {
-        var btn = this;
-        var originalText = btn.innerHTML;
-        Object.keys(columnsData).forEach(function(fid) {
-            try { syncColumnsInput(parseInt(fid)); updateTableData(parseInt(fid)); } catch(e) {}
-        });
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> 保存中…';
-        fetch('{{ url_for("save_template_defaults") }}', {
-            method: 'POST',
-            body: new FormData(document.getElementById('editorForm'))
-        })
-        .then(function(response) {
-            return response.json().then(function(data) {
-                if (!response.ok || !data.success) throw new Error(data.message || '保存失败');
-                return data;
-            });
-        })
-        .then(function(data) { showToast(data.message || '预制内容已保存', 'success'); })
-        .catch(function(err) { showToast(err.message || '保存失败', 'error'); console.error(err); })
-        .finally(function() { btn.disabled = false; btn.innerHTML = originalText; });
-    });
-
-    // ── Form submit ──
-    document.getElementById('editorForm').addEventListener('submit', function(e) {
-        e.preventDefault();
-        var overlay = document.getElementById('loadingOverlay');
-        var btn = document.getElementById('generateBtn');
-        var origText = btn.innerHTML;
-
-        const emptyFields = [];
-        const requiredEmpty = [];
-        document.querySelectorAll('.field-item').forEach(function(item) {
-            if (item.classList.contains('field-calc')) return;
-            if (item.querySelector('.table-editor')) {
-                var tbody = item.querySelector('tbody');
-                if (!tbody || tbody.querySelectorAll('tr').length === 0) {
-                    emptyFields.push(item.querySelector('.field-label').textContent.trim());
-                    if (item.dataset.required === '1') requiredEmpty.push(item.querySelector('.field-label').textContent.trim());
-                }
-                return;
-            }
-            var input = item.querySelector('.field-input, .field-select, textarea');
-            if (input && !input.value.trim()) {
-                emptyFields.push(item.querySelector('.field-label').textContent.trim());
-                if (item.dataset.required === '1') requiredEmpty.push(item.querySelector('.field-label').textContent.trim());
-            }
-        });
-        if (emptyFields.length > 0 && emptyFields.length === totalFields - document.querySelectorAll('.field-calc').length) {
-            showToast('请至少填写一个字段后再生成', 'error');
+    // ── Keyboard shortcuts ──
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+S / Cmd+S: 保存常用填写
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            document.getElementById('saveDefaultsBtn').click();
             return;
         }
-        if (requiredEmpty.length > 0) {
-            if (!confirm(requiredEmpty.length + ' 个必填字段未填写：' + requiredEmpty.slice(0, 5).join('、') + (requiredEmpty.length > 5 ? ' 等' : '') + '。\n\n确定继续生成？')) {
-                return;
+        // Ctrl+Enter: 生成合同
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            document.getElementById('generateBtn').click();
+            return;
+        }
+        // Escape: 关闭结果面板
+        if (e.key === 'Escape') {
+            var panel = document.getElementById('generationResultPanel');
+            if (panel && !panel.classList.contains('hidden')) {
+                panel.classList.add('hidden');
+                e.preventDefault();
             }
         }
+    });
 
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loading loading-spinner"></span> 生成中…';
-        overlay.classList.add('active');
+    // ── Auto-save draft ──
+    var draftKey = 'ct_draft_{{ template_filename or "unknown" }}';
+    var draftTimer;
 
-        Object.keys(columnsData).forEach(function(fid) {
-            try { syncColumnsInput(parseInt(fid)); } catch(e) {}
-        });
-
-        var form = e.target;
-        var formData = new FormData(form);
-
-        // Batch mode: POST to /generate-batch, handle zip
-        var isBatch = document.getElementById('batchToggle') && document.getElementById('batchToggle').checked;
-        var actionUrl = isBatch ? '{{ url_for("generate_batch") }}' : form.action;
-
-        fetch(actionUrl, { method: 'POST', body: formData })
-        .then(function(response) {
-            if (!response.ok) {
-                return response.text().then(function(text) {
-                    throw new Error(text.substring(0, 300) || '服务器错误');
-                });
-            }
-            var contentType = response.headers.get('Content-Type') || '';
-            var isDocx = contentType.indexOf('officedocument') !== -1 || contentType.indexOf('octet-stream') !== -1;
-            var isZip = contentType.indexOf('zip') !== -1;
-            if (!isDocx && !isZip) {
-                return response.text().then(function(text) {
-                    throw new Error('服务器返回了意外的响应类型，请刷新页面后重试');
-                });
-            }
-            var disposition = response.headers.get('Content-Disposition') || '';
-            var detailUrl = response.headers.get('X-Contract-Detail-Url') || '';
-            var pdfUrl = response.headers.get('X-PDF-Url') || '';
-            var genErrors = response.headers.get('X-Generation-Errors') || '';
-            var filename = isZip ? '批量合同.zip' : '合同.docx';
-            var match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s"']+)/i);
-            if (match) { try { filename = decodeURIComponent(match[1]); } catch(e) {} }
-            return response.blob().then(function(blob) {
-                return { blob: blob, filename: filename, detailUrl: detailUrl, pdfUrl: pdfUrl,
-                         isBatch: isZip, genErrors: genErrors };
+    function saveDraft() {
+        try {
+            var data = {};
+            document.querySelectorAll('.field-item').forEach(function(item) {
+                if (item.classList.contains('field-calc')) return;
+                var input = item.querySelector('.field-input, .field-select, textarea');
+                var key = item.dataset.fieldKey;
+                if (input && key) {
+                    data[key] = input.value;
+                }
             });
-        })
-        .then(function(result) {
-            var url = window.URL.createObjectURL(result.blob);
-            var a = document.createElement('a');
-            a.href = url; a.download = result.filename;
-            document.body.appendChild(a); a.click(); a.remove();
-            if (result.pdfUrl) {
-                var pdfFrame = document.createElement('iframe');
-                pdfFrame.style.display = 'none';
-                pdfFrame.src = result.pdfUrl;
-                document.body.appendChild(pdfFrame);
-                setTimeout(function() { document.body.removeChild(pdfFrame); }, 5000);
-            }
-            overlay.classList.remove('active');
-            btn.disabled = false; btn.innerHTML = origText;
-            if (result.genErrors) {
-                showToast('部分合同生成出错：' + result.genErrors, 'error');
-            } else {
-                showToast(result.isBatch ? '批量合同已生成' : '合同已生成', 'success');
-            }
-            showGenerationResult(result, url);
-        })
-        .catch(function(err) {
-            overlay.classList.remove('active');
-            btn.disabled = false; btn.innerHTML = origText;
-            showToast(err.message || '生成失败', 'error');
-            console.error(err);
-        });
-    });
+            // 保存表格数据
+            Object.keys(columnsData).forEach(function(fid) {
+                var dataEl = document.getElementById('table_data_' + fid);
+                if (dataEl) {
+                    data['_table_' + fid] = dataEl.value;
+                    var colsEl = document.getElementById('table_cols_input_' + fid);
+                    if (colsEl) data['_table_cols_' + fid] = colsEl.value;
+                }
+            });
+            // 保存项目归类
+            var pn = document.getElementById('projectName');
+            if (pn) data['_project_name'] = pn.value;
+            var cs = document.getElementById('coverageStart');
+            if (cs) data['_coverage_start'] = cs.value;
+            var ce = document.getElementById('coverageEnd');
+            if (ce) data['_coverage_end'] = ce.value;
 
-    function showGenerationResult(result, blobUrl) {
-        if (currentGeneratedUrl) {
-            window.URL.revokeObjectURL(currentGeneratedUrl);
-        }
-        currentGeneratedUrl = blobUrl;
-
-        const panel = document.getElementById('generationResultPanel');
-        const downloadLink = document.getElementById('resultDownloadLink');
-        const detailLink = document.getElementById('resultDetailLink');
-        const pdfLink = document.getElementById('resultPdfLink');
-        const resultText = document.getElementById('generationResultText');
-
-        downloadLink.href = blobUrl;
-        downloadLink.download = result.filename || (result.isBatch ? '批量合同.zip' : '合同.docx');
-        resultText.textContent = result.isBatch
-            ? '批量合同已开始下载，可在这里重新下载生成文件。'
-            : '合同已开始下载，可查看详情或继续填写。';
-
-        if (!result.isBatch && result.detailUrl) {
-            detailLink.href = result.detailUrl;
-            detailLink.classList.remove('hidden');
-        } else {
-            detailLink.classList.add('hidden');
-        }
-
-        if (result.pdfUrl) {
-            pdfLink.href = result.pdfUrl;
-            pdfLink.classList.remove('hidden');
-        } else {
-            pdfLink.classList.add('hidden');
-        }
-
-        panel.classList.remove('hidden');
-        panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        if (window.lucide) { lucide.createIcons(); }
+            data['_saved_at'] = new Date().toISOString();
+            localStorage.setItem(draftKey, JSON.stringify(data));
+        } catch(e) {}
     }
 
-    document.getElementById('resultContinueBtn').addEventListener('click', function() {
-        document.getElementById('generationResultPanel').classList.add('hidden');
-    });
+    function restoreDraft() {
+        try {
+            var raw = localStorage.getItem(draftKey);
+            if (!raw) return;
+            var data = JSON.parse(raw);
+            if (!data || !data['_saved_at']) return;
+            var savedAt = new Date(data['_saved_at']);
+            var hours = (Date.now() - savedAt.getTime()) / 3600000;
+            if (hours > 72) { localStorage.removeItem(draftKey); return; }
 
-    function showToast(msg, type) {
-        const toast = document.getElementById('toast');
-        toast.textContent = msg;
-        toast.className = 'toast fixed top-4 right-4 z-[2000] px-4 py-3 rounded-lg shadow-lg text-white text-sm show ' +
-            (type === 'error' ? 'bg-error' : 'bg-success');
-        setTimeout(() => toast.classList.remove('show'), 3000);
+            var hasContent = false;
+            document.querySelectorAll('.field-item').forEach(function(item) {
+                if (item.classList.contains('field-calc')) return;
+                var input = item.querySelector('.field-input, .field-select, textarea');
+                var key = item.dataset.fieldKey;
+                if (input && key && data[key] !== undefined && data[key] !== '') {
+                    input.value = data[key];
+                    hasContent = true;
+                }
+            });
+            // 恢复表格数据
+            Object.keys(columnsData).forEach(function(fid) {
+                if (data['_table_cols_' + fid]) {
+                    document.getElementById('table_cols_input_' + fid).value = data['_table_cols_' + fid];
+                    try {
+                        columnsData[fid] = JSON.parse(data['_table_cols_' + fid]);
+                        renderTableHeader(parseInt(fid));
+                    } catch(e) {}
+                }
+                var tableRaw = data['_table_' + fid] || data['_table_data_' + fid];
+                if (tableRaw) {
+                    document.getElementById('table_data_' + fid).value = tableRaw;
+                    try {
+                        var rows = JSON.parse(tableRaw || '[]');
+                        var tbody = document.getElementById('table_body_' + fid);
+                        if (tbody && Array.isArray(rows) && rows.length > 0) {
+                            tbody.innerHTML = '';
+                            rows.forEach(function(row) { addTableRow(parseInt(fid), row); });
+                            renumberRows(parseInt(fid));
+                            updateTableData(parseInt(fid));
+                            hasContent = true;
+                        }
+                    } catch(e) {}
+                }
+            });
+            // 恢复项目归类
+            var pn = document.getElementById('projectName');
+            if (pn && data['_project_name']) { pn.value = data['_project_name']; }
+            var cs = document.getElementById('coverageStart');
+            if (cs && data['_coverage_start']) { cs.value = data['_coverage_start']; }
+            var ce = document.getElementById('coverageEnd');
+            if (ce && data['_coverage_end']) { ce.value = data['_coverage_end']; }
+
+            if (hasContent) {
+                updateProgress();
+                recalcAllFields();
+            }
+        } catch(e) {}
     }
 
-    updateProgress();
+    // 自动保存：字段变更后 5 秒触发，且每 30 秒强制一次
+    var _draftDirty = false;
+    var _origOnFieldChange = typeof onFieldChange === 'function' ? onFieldChange : null;
+    onFieldChange = function(id) {
+        if (_origOnFieldChange) _origOnFieldChange(id);
+        _draftDirty = true;
+        clearTimeout(draftTimer);
+        draftTimer = setTimeout(function() { saveDraft(); _draftDirty = false; }, 5000);
+    };
+    setInterval(function() {
+        if (_draftDirty) { saveDraft(); _draftDirty = false; }
+    }, 30000);
+
+    // 生成成功后清除草稿（在 editor.js 的 showGenerationResult 中也会调用）
+    window.clearDraft = function() {
+        localStorage.removeItem(draftKey);
+    };
 
     function submitPreview() {
-        var templateName = "{{ template_name }}";
-        if (!templateName || templateName === 'None' || templateName === '未命名') {
+        var templateName = {{ (template_filename or '')|tojson }};
+        if (!templateName || templateName === 'None') {
             showToast('请先保存模板后再预览', 'error');
             return;
         }
         var form = document.getElementById('editorForm');
         var originalAction = form.action;
         var originalTarget = form.target;
-        form.action = '{{ url_for("template_preview", name=template_name) }}';
+        form.action = '{{ url_for("template_preview", name=template_filename or "") }}';
         form.target = '_blank';
         form.submit();
         form.action = originalAction;
         form.target = originalTarget;
     }
 </script>
+<!-- editor.js 必须在上方内联脚本之后加载：它依赖 columnsData/filledCount 等全局变量 -->
+<script src="{{ url_for('static', filename='js/editor.js') }}"></script>
 {% endblock %}

@@ -28,7 +28,7 @@
       while (true) {
         skipWs();
         var op = peek();
-        if (op === '*' || op === '/') { consume(); var right = parseFactor(); if (op === '/' && right === 0) throw new Error('Division by zero'); left = op === '*' ? left * right : left / right; }
+        if (op === '*' || op === '/') { consume(); var right = parseFactor(); if (op === '/' && right === 0) throw new Error('除以零'); left = op === '*' ? left * right : left / right; }
         else break;
       }
       return left;
@@ -67,15 +67,57 @@
       COUNT: function (arr) { return arr.length; }
     };
 
-    expr = expr.replace(/(SUM|AVG|MAX|MIN|COUNT)\(([^)]+)\)/g, function (match, func, args) {
-      var vals = args.split(',').map(function (s) {
-        s = s.trim();
-        if (context.hasOwnProperty(s)) return parseFloat(context[s]) || 0;
-        var num = parseFloat(s);
-        return isNaN(num) ? 0 : num;
-      });
-      return aggFuncs[func](vals);
-    });
+    // 使用括号层级计数提取函数参数，正确处理嵌套括号如 SUM(a * (b + c), d)
+    function _extractFuncCall(str, startIdx) {
+      // startIdx 指向函数名后的 '('
+      var depth = 0;
+      var i = startIdx;
+      for (; i < str.length; i++) {
+        if (str[i] === '(') depth++;
+        else if (str[i] === ')') { depth--; if (depth === 0) return str.substring(startIdx + 1, i); }
+      }
+      return str.substring(startIdx + 1); // 未闭合时尽力返回
+    }
+    function _splitArgs(argsStr) {
+      // 按顶层逗号分割，忽略括号内的逗号
+      var parts = []; var depth = 0; var start = 0;
+      for (var i = 0; i < argsStr.length; i++) {
+        if (argsStr[i] === '(') depth++;
+        else if (argsStr[i] === ')') depth--;
+        else if (argsStr[i] === ',' && depth === 0) { parts.push(argsStr.substring(start, i).trim()); start = i + 1; }
+      }
+      parts.push(argsStr.substring(start).trim());
+      return parts;
+    }
+    var funcPattern = /(SUM|AVG|MAX|MIN|COUNT)\(/g;
+    var funcMatch;
+    while ((funcMatch = funcPattern.exec(expr)) !== null) {
+      var funcName = funcMatch[1];
+      var openIdx = funcMatch.index + funcName.length;
+      var argsStr = _extractFuncCall(expr, openIdx);
+      var fullMatch = expr.substring(funcMatch.index, openIdx + argsStr.length + 2); // FUNC( ... )
+      var argNames = _splitArgs(argsStr);
+      var replacement;
+      if (argNames.length === 2 && context[argNames[0]] && context[argNames[0]].__tableRows) {
+        var tableContext = context[argNames[0]];
+        if (tableContext.__tableColumns.indexOf(argNames[1]) === -1) { replacement = '0'; }
+        else {
+          var columnValues = tableContext.__tableRows.map(function (row) {
+            return parseFloat(row[argNames[1]]) || 0;
+          });
+          replacement = aggFuncs[funcName](columnValues);
+        }
+      } else {
+        var vals = argNames.map(function (s) {
+          if (context.hasOwnProperty(s)) return parseFloat(context[s]) || 0;
+          var num = parseFloat(s);
+          return isNaN(num) ? 0 : num;
+        });
+        replacement = aggFuncs[funcName](vals);
+      }
+      expr = expr.substring(0, funcMatch.index) + replacement + expr.substring(openIdx + argsStr.length + 2);
+      funcPattern.lastIndex = 0; // 重置正则位置，处理替换后可能出现的新函数
+    }
 
     // 替换变量为数值：按 key 长度降序，避免短 key 误匹配长 key 的子串
     // 同时处理 ASCII 和 Unicode 字符的边界匹配
@@ -93,12 +135,13 @@
 
     // 安全求值：仅允许数字和基本运算符，不依赖 Function()/eval
     var sanitized = resolved.replace(/\s+/g, '');
-    if (!/^[0-9+\-*/().]+$/.test(sanitized)) return 0;
+    if (!/^[0-9+\-*/().]+$/.test(sanitized)) throw new Error('公式包含无效字符');
     // 使用受控表达式求值替代 Function() eval
-    try {
-      var result = _safeArithEval(sanitized);
-      return isNaN(result) || !isFinite(result) ? 0 : result;
-    } catch (e) { return 0; }
+    var result = _safeArithEval(sanitized);
+    if (isNaN(result) || !isFinite(result)) throw new Error('计算结果无效');
+    // 数值范围检查，与后端 MAX_ABS_NUMBER 一致
+    if (Math.abs(result) > 1000000000000) throw new Error('数值超出范围');
+    return result;
   }
 
   function buildCalcContext(fieldDefs) {
@@ -113,11 +156,10 @@
         try {
           var dataEl = document.getElementById('table_data_' + f.id);
           var data = JSON.parse((dataEl && dataEl.value) || '[]');
-          data.forEach(function (row) {
-            Object.keys(row).forEach(function (ck) {
-              context[key + '.' + ck] = parseFloat(row[ck]) || 0;
-            });
-          });
+          context[key] = {
+            __tableRows: data,
+            __tableColumns: (f.columns || []).map(function (col) { return col.key; })
+          };
         } catch (e) {}
       } else if (input) {
         var val = parseFloat(input.value);
