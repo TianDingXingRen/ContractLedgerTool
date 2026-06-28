@@ -2,27 +2,18 @@
 """Build a single-file Windows executable with PyInstaller."""
 
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+from _pyinstaller_common import (
+    ROOT, HIDDEN_IMPORTS, reset_dir, copy_file, copy_html_templates,
+    collect_contract_templates, write_version_file, build_pyinstaller_cmd,
+)
 
-ROOT = Path(__file__).resolve().parent
+
 RES_DIR = ROOT / 'build' / 'exe_resources'
-TEMPLATE_INCLUDE = set()  # include all templates
 EXE_NAME = 'ContractLedgerTool'
-
-
-def reset_dir(path):
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def copy_file(src, dst):
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
 
 
 def prepare_resources():
@@ -33,36 +24,21 @@ def prepare_resources():
     templates_out.mkdir(parents=True, exist_ok=True)
     uploads_out.mkdir(parents=True, exist_ok=True)
 
-    shutil.copytree(ROOT / 'static', static_out)
+    from _pyinstaller_common import copy_tree
+    copy_tree(ROOT / 'static', static_out)
 
-    # Copy version.txt for auto-update mechanism
     version_src = ROOT / 'version.txt'
     if version_src.is_file():
         copy_file(version_src, RES_DIR / 'version.txt')
 
-    for html in sorted((ROOT / 'templates').glob('*.html')):
-        copy_file(html, templates_out / html.name)
-
-    copied_uploads = set()
-    copied_templates = []
-    for tpl_path in sorted((ROOT / 'templates').glob('*.contract-template')):
-        if TEMPLATE_INCLUDE and tpl_path.name not in TEMPLATE_INCLUDE:
-            continue
-        with tpl_path.open('r', encoding='utf-8') as f:
-            data = json.load(f)
-        copy_file(tpl_path, templates_out / tpl_path.name)
-        copied_templates.append(tpl_path.name)
-        source_docx = data.get('source_docx')
-        if source_docx:
-            src = ROOT / 'uploads' / source_docx
-            if not src.exists():
-                raise FileNotFoundError(f'Missing source docx: {src}')
-            copy_file(src, uploads_out / source_docx)
-            copied_uploads.add(source_docx)
+    html_templates = copy_html_templates(templates_out)
+    copied_templates, copied_uploads, skipped = collect_contract_templates(templates_out, uploads_out)
 
     return {
+        'html_templates': html_templates,
         'templates': copied_templates,
-        'uploads': sorted(copied_uploads),
+        'uploads': copied_uploads,
+        'skipped': skipped,
     }
 
 
@@ -75,25 +51,9 @@ def main():
     work_path.mkdir(parents=True, exist_ok=True)
     spec_path.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        sys.executable, '-m', 'PyInstaller',
-        '--noconfirm',
-        '--clean',
-        '--onefile',
-        '--console',
-        '--name', EXE_NAME,
-        '--distpath', str(dist_path),
-        '--workpath', str(work_path),
-        '--specpath', str(spec_path),
-        '--hidden-import', 'pythoncom',
-        '--hidden-import', 'pywintypes',
-        '--hidden-import', 'win32com',
-        '--hidden-import', 'win32com.client',
-        '--add-data', f'{RES_DIR / "templates"};templates',
-        '--add-data', f'{RES_DIR / "static"};static',
-        '--add-data', f'{RES_DIR / "uploads"};uploads',
-        str(ROOT / 'app.py'),
-    ]
+    cmd = build_pyinstaller_cmd(
+        ROOT / 'app.py', EXE_NAME, dist_path, work_path, spec_path, RES_DIR,
+    )
     print(' '.join(cmd))
     subprocess.check_call(cmd, cwd=str(ROOT))
     exe_path = dist_path / f'{EXE_NAME}.exe'

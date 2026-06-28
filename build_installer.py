@@ -10,36 +10,23 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from _pyinstaller_common import (
+    ROOT, reset_dir, copy_file, copy_tree, copy_html_templates,
+    collect_contract_templates, write_version_file, build_pyinstaller_cmd,
+)
 
-ROOT = Path(__file__).resolve().parent
+
 DIST = ROOT / 'dist'
 ASSETS = ROOT / 'installer_assets'
 APP_RES_DIR = ROOT / 'build' / 'offline_app_resources'
 SIGN_SCRIPT = ROOT / 'scripts' / 'sign_installer.ps1'
+ICON_PATH = ROOT / 'design' / 'icon-options' / 'app-icon.ico'
 APP_EXE_NAME = 'ContractLedgerTool'
 INSTALLER_EXE_NAME = 'ContractLedgerTool_OfflineInstaller'
-TEMPLATE_INCLUDE = set()  # include all templates
-
-
-def reset_dir(path):
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def copy_file(src, dst):
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-
-
-def copy_tree(src, dst):
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
+DESKTOP = Path(os.environ.get('USERPROFILE', str(Path.home()))) / 'Desktop'
 
 
 def normalize_powershell_encoding(root):
@@ -75,27 +62,6 @@ def sign_file(path):
     subprocess.check_call(cmd, cwd=str(ROOT))
 
 
-def valid_templates():
-    result = []
-    for path in sorted((ROOT / 'templates').glob('*.contract-template')):
-        if TEMPLATE_INCLUDE and path.name not in TEMPLATE_INCLUDE:
-            continue
-        try:
-            with path.open('r', encoding='utf-8') as f:
-                data = json.load(f)
-            result.append((path, data))
-        except Exception:
-            print(f'SKIP invalid template: {path.name}')
-    return result
-
-
-def zip_dir(src_dir, zip_path):
-    with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in src_dir.rglob('*'):
-            if path.is_file():
-                zf.write(path, path.relative_to(src_dir))
-
-
 def prepare_app_resources():
     reset_dir(APP_RES_DIR)
     templates_dir = APP_RES_DIR / 'templates'
@@ -109,29 +75,16 @@ def prepare_app_resources():
     if version_src.is_file():
         copy_file(version_src, APP_RES_DIR / 'version.txt')
     else:
-        (APP_RES_DIR / 'version.txt').write_text(
-            datetime.now().strftime('%Y%m%d.%H%M%S'),
-            encoding='utf-8',
-        )
+        write_version_file(APP_RES_DIR)
 
-    for html_template in sorted((ROOT / 'templates').glob('*.html')):
-        copy_file(html_template, templates_dir / html_template.name)
-
-    copied_uploads = set()
-    copied_templates = []
-    for template_path, data in valid_templates():
-        copy_file(template_path, templates_dir / template_path.name)
-        copied_templates.append(template_path.name)
-        src_docx = data.get('source_docx')
-        if src_docx and src_docx not in copied_uploads:
-            src = ROOT / 'uploads' / src_docx
-            if src.exists():
-                copy_file(src, uploads_dir / src_docx)
-                copied_uploads.add(src_docx)
+    copied_html = copy_html_templates(templates_dir)
+    copied_templates, copied_uploads, skipped = collect_contract_templates(templates_dir, uploads_dir)
 
     return {
+        'html_templates': copied_html,
         'templates': copied_templates,
-        'uploads': sorted(copied_uploads),
+        'uploads': copied_uploads,
+        'skipped': skipped,
     }
 
 
@@ -143,30 +96,15 @@ def build_app_exe():
     reset_dir(work_path)
     reset_dir(spec_path)
 
-    cmd = [
-        sys.executable, '-m', 'PyInstaller',
-        '--noconfirm',
-        '--clean',
-        '--onefile',
-        '--console',
-        '--name', APP_EXE_NAME,
-        '--distpath', str(dist_path),
-        '--workpath', str(work_path),
-        '--specpath', str(spec_path),
-        '--hidden-import', 'pythoncom',
-        '--hidden-import', 'pywintypes',
-        '--hidden-import', 'win32com',
-        '--hidden-import', 'win32com.client',
-        '--hidden-import', 'jinja2.ext',
-        '--hidden-import', 'openpyxl.cell._writer',
-        '--add-data', f'{APP_RES_DIR / "templates"};templates',
-        '--add-data', f'{APP_RES_DIR / "static"};static',
-        '--add-data', f'{APP_RES_DIR / "uploads"};uploads',
-        '--add-data', f'{APP_RES_DIR / "version.txt"};.',
-        '--add-data', f'{ASSETS / "start.ps1"};.',
-        '--add-data', f'{ASSETS / "stop.ps1"};.',
-        str(ROOT / 'app.py'),
+    extra_data = [
+        (ASSETS / 'start.ps1', '.'),
+        (ASSETS / 'stop.ps1', '.'),
     ]
+
+    cmd = build_pyinstaller_cmd(
+        ROOT / 'app.py', APP_EXE_NAME, dist_path, work_path, spec_path,
+        APP_RES_DIR, extra_data=extra_data, icon_path=ICON_PATH,
+    )
     print(' '.join(cmd))
     subprocess.check_call(cmd, cwd=str(ROOT))
     exe_path = dist_path / f'{APP_EXE_NAME}.exe'
@@ -253,9 +191,15 @@ def build_installer_exe(stage):
         '--distpath', str(dist_path),
         '--workpath', str(work_path),
         '--specpath', str(spec_path),
+    ]
+
+    if ICON_PATH.is_file():
+        cmd.extend(['--icon', str(ICON_PATH)])
+
+    cmd.extend([
         '--add-data', f'{stage};installer_package',
         str(bootstrap),
-    ]
+    ])
     print(' '.join(cmd))
     subprocess.check_call(cmd, cwd=str(ROOT))
     exe_path = dist_path / f'{INSTALLER_EXE_NAME}.exe'
@@ -266,7 +210,6 @@ def build_installer_exe(stage):
 def main():
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     stage = DIST / f'ContractLedgerTool_OfflineInstaller_{stamp}'
-    zip_path = stage.with_suffix('.zip')
 
     app_manifest = prepare_app_resources()
     app_exe = build_app_exe()
@@ -278,16 +221,17 @@ def main():
     copy_file(ROOT / 'setup_autostart_remove.ps1', stage / 'setup_autostart_remove.ps1')
     normalize_powershell_encoding(stage)
 
-    zip_dir(stage, zip_path)
     exe_path = build_installer_exe(stage)
+    DESKTOP.mkdir(parents=True, exist_ok=True)
+    desktop_exe = DESKTOP / f'{INSTALLER_EXE_NAME}_{stamp}.exe'
+    copy_file(exe_path, desktop_exe)
 
     manifest = {
         'mode': 'offline',
-        'zip': str(zip_path),
         'exe': str(exe_path),
+        'desktop_exe': str(desktop_exe),
         'stage': str(stage),
         'app_exe': str(app_exe),
-        'size_mb': round(zip_path.stat().st_size / 1024 / 1024, 2),
         'exe_size_mb': round(exe_path.stat().st_size / 1024 / 1024, 2),
         'app_exe_size_mb': round(app_exe.stat().st_size / 1024 / 1024, 2),
         **app_manifest,

@@ -16,7 +16,7 @@ DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
 SKIP_FILES = {
     ".gitignore", ".secret_key", "README.md",
     "demo_flow_data.py",
-    "build_exe.py", "build_installer.py", "build_release.py", "build_package.py",
+    "build_exe.py", "build_desktop_exe.py", "build_installer.py", "build_package.py", "build_icons.py",
     "启动合同生成工具.bat", "启动合同生成工具_autostart.bat",
 }
 
@@ -116,9 +116,10 @@ def main():
     tmpl_dst = APP / "templates"
     tmpl_dst.mkdir(parents=True, exist_ok=True)
 
-    for html in sorted((ROOT / "templates").glob("*.html")):
-        copy_file(html, tmpl_dst / html.name)
-        print(f"  templates/{html.name}")
+    for html in sorted((ROOT / "templates").rglob("*.html")):
+        rel_path = html.relative_to(ROOT / "templates")
+        copy_file(html, tmpl_dst / rel_path)
+        print(f"  templates/{rel_path}")
 
     for ct in sorted((ROOT / "templates").glob("*.contract-template")):
         if ct.name in SKIP_TEMPLATE_FILES:

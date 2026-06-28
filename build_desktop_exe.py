@@ -11,32 +11,18 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
+from _pyinstaller_common import (
+    ROOT, reset_dir, copy_file, copy_tree, copy_html_templates,
+    collect_contract_templates, write_version_file, build_pyinstaller_cmd,
+)
 
-ROOT = Path(__file__).resolve().parent
+
 DESKTOP = Path(os.environ['USERPROFILE']) / 'Desktop'
 RES_DIR = ROOT / 'build' / 'desktop_exe_resources'
 EXE_NAME = 'ContractLedgerTool'
 OUTPUT_DIR = ROOT / 'dist' / 'desktop_exe'
-
-SKIP_TEMPLATE_NAMES = {
-    'test.contract-template',
-    'Template1_Test.contract-template',
-    'Template2_Test.contract-template',
-}
-
-
-def reset_dir(path: Path):
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def copy_file(src: Path, dst: Path):
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
 
 
 def prepare_resources():
@@ -47,57 +33,24 @@ def prepare_resources():
     templates_out.mkdir(parents=True, exist_ok=True)
     uploads_out.mkdir(parents=True, exist_ok=True)
 
-    shutil.copytree(ROOT / 'static', static_out)
+    copy_tree(ROOT / 'static', static_out)
     print('  static/')
 
-    for html in sorted((ROOT / 'templates').glob('*.html')):
-        copy_file(html, templates_out / html.name)
-    print(f'  templates/ ({len(list((ROOT / "templates").glob("*.html")))} html)')
+    html_templates = copy_html_templates(templates_out)
+    print(f'  templates/ ({len(html_templates)} html)')
 
-    copied_templates = []
-    copied_uploads = set()
-    skipped = []
-
-    for ct_path in sorted((ROOT / 'templates').glob('*.contract-template')):
-        if ct_path.name in SKIP_TEMPLATE_NAMES:
-            skipped.append(f'{ct_path.name} (test)')
-            continue
-
-        try:
-            with ct_path.open('r', encoding='utf-8') as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            skipped.append(f'{ct_path.name} (parse error: {e})')
-            continue
-
-        source_docx = data.get('source_docx', '')
-        if source_docx:
-            src = ROOT / 'uploads' / source_docx
-            if src.exists():
-                copy_file(ct_path, templates_out / ct_path.name)
-                copy_file(src, uploads_out / source_docx)
-                copied_templates.append(ct_path.name)
-                copied_uploads.add(source_docx)
-            else:
-                # source_docx 缺失但模板仍可用（generate_from_scratch 回退）
-                copy_file(ct_path, templates_out / ct_path.name)
-                copied_templates.append(ct_path.name)
-                print(f'  [warn] {ct_path.name}: source_docx not found, using generate_from_scratch')
-        else:
-            copy_file(ct_path, templates_out / ct_path.name)
-            copied_templates.append(ct_path.name)
-
+    copied_templates, copied_uploads, skipped = collect_contract_templates(templates_out, uploads_out)
     print(f'  templates/ ({len(copied_templates)} contract-templates, {len(copied_uploads)} source docx)')
     for s in skipped:
         print(f'  [skip] {s}')
 
-    version_stamp = datetime.now().strftime('%Y%m%d.%H%M%S')
-    (RES_DIR / 'version.txt').write_text(version_stamp, encoding='utf-8')
+    version_stamp = write_version_file(RES_DIR)
 
     return {
         'version': version_stamp,
+        'html_templates': html_templates,
         'templates': copied_templates,
-        'uploads': sorted(copied_uploads),
+        'uploads': copied_uploads,
         'skipped': skipped,
     }
 
@@ -111,28 +64,9 @@ def build_exe():
     reset_dir(work_path)
     reset_dir(spec_path)
 
-    cmd = [
-        sys.executable, '-m', 'PyInstaller',
-        '--noconfirm',
-        '--clean',
-        '--onefile',
-        '--console',
-        '--name', EXE_NAME,
-        '--distpath', str(dist_path),
-        '--workpath', str(work_path),
-        '--specpath', str(spec_path),
-        '--hidden-import', 'pythoncom',
-        '--hidden-import', 'pywintypes',
-        '--hidden-import', 'win32com',
-        '--hidden-import', 'win32com.client',
-        '--hidden-import', 'jinja2.ext',
-        '--hidden-import', 'openpyxl.cell._writer',
-        '--add-data', f'{RES_DIR / "templates"};templates',
-        '--add-data', f'{RES_DIR / "static"};static',
-        '--add-data', f'{RES_DIR / "uploads"};uploads',
-        '--add-data', f'{RES_DIR / "version.txt"};.',
-        str(ROOT / 'app.py'),
-    ]
+    cmd = build_pyinstaller_cmd(
+        ROOT / 'app.py', EXE_NAME, dist_path, work_path, spec_path, RES_DIR,
+    )
     print('\n[build] PyInstaller --onefile ...')
     subprocess.check_call(cmd, cwd=str(ROOT))
     exe_path = dist_path / f'{EXE_NAME}.exe'
@@ -141,7 +75,7 @@ def build_exe():
     return exe_path
 
 
-def copy_to_desktop(exe_path: Path, version: str):
+def copy_to_desktop(exe_path, version):
     dest_name = f'ContractLedgerTool_v{version[:8]}.exe'
     dest_path = DESKTOP / dest_name
     shutil.copy2(exe_path, dest_path)

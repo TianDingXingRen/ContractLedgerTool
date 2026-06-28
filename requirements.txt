@@ -1,4 +1,6 @@
 flask>=3.0,<4.0
 python-docx>=1.0,<2.0
 openpyxl>=3.1,<4.0
-pywin32>=300; sys_platform == "win32"
+pdfplumber>=0.11,<1.0
+pytesseract>=0.3.13,<1.0
+pywin32>=300,<400; sys_platform == "win32"
