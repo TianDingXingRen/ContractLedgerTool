@@ -59,6 +59,10 @@ class TemplateDef:
         """从文件加载模板定义"""
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        # 确保所有字段都有 id（兼容手动创建/旧版模板）
+        for i, field in enumerate(data.get('fields', [])):
+            if 'id' not in field:
+                field['id'] = i
         obj = cls(data)
         obj._path = path
         return obj
@@ -103,6 +107,11 @@ class TemplateDef:
                     errors.append(f'fields[{i}] 无效的 field_type: {f.get("field_type")}')
                 if f.get('field_type') == 'select' and not f.get('options'):
                     errors.append(f'fields[{i}] select 类型缺少 options')
+                if f.get('field_type') == 'number':
+                    min_value = f.get('min_value')
+                    max_value = f.get('max_value')
+                    if min_value is not None and max_value is not None and min_value > max_value:
+                        errors.append(f'fields[{i}] number 类型最小值不能大于最大值')
                 if f.get('field_type') == 'calculated':
                     if not f.get('formula'):
                         errors.append(f'fields[{i}] calculated 类型缺少 formula')
@@ -121,6 +130,10 @@ class TemplateDef:
                                 col_keys.add(col_key)
                             if not col.get('label'):
                                 errors.append(f'fields[{i}].columns[{ci}] 缺少 label')
+                            if col.get('field_type') not in {'text', 'number', 'textarea', 'select', 'calculated'}:
+                                errors.append(f'fields[{i}].columns[{ci}] 字段类型无效')
+                            if col.get('field_type') == 'select' and not col.get('options'):
+                                errors.append(f'fields[{i}].columns[{ci}] select 类型缺少 options')
                             if col.get('field_type') == 'calculated' and not col.get('formula'):
                                 errors.append(f'fields[{i}].columns[{ci}] calculated 类型缺少 formula')
                 loc = f.get('location', {})
@@ -220,8 +233,8 @@ def delete_template(filename):
     filename = os.path.basename(filename or '')
     if not filename.endswith('.contract-template'):
         return False
-    path = os.path.abspath(os.path.join(TEMPLATES_DIR, filename))
-    templates_root = os.path.abspath(TEMPLATES_DIR)
+    templates_root = os.path.realpath(TEMPLATES_DIR)
+    path = os.path.realpath(os.path.join(TEMPLATES_DIR, filename))
     if os.path.commonpath([templates_root, path]) != templates_root:
         return False
     if os.path.exists(path):
@@ -236,8 +249,8 @@ def copy_template(filename):
     filename = os.path.basename(filename or '')
     if not filename.endswith('.contract-template'):
         return False
-    path = os.path.abspath(os.path.join(TEMPLATES_DIR, filename))
-    templates_root = os.path.abspath(TEMPLATES_DIR)
+    templates_root = os.path.realpath(TEMPLATES_DIR)
+    path = os.path.realpath(os.path.join(TEMPLATES_DIR, filename))
     if os.path.commonpath([templates_root, path]) != templates_root:
         return False
     if not os.path.exists(path):
@@ -254,18 +267,24 @@ def copy_template(filename):
     existing_names = {e['name'] for e in existing}
     counter = 1
     base_name = new_name
+    MAX_NAME_RETRIES = 1000
     while new_name in existing_names:
         counter += 1
+        if counter > MAX_NAME_RETRIES:
+            raise RuntimeError('无法生成唯一模板名称')
         new_name = f'{base_name} {counter}'
     tpl.data['template_name'] = new_name
     # 保存为新文件
     new_filename = re.sub(r'[^\w一-鿿]', '_', new_name) + '.contract-template'
     new_path = os.path.join(TEMPLATES_DIR, new_filename)
     # 如果文件名冲突（尽管名称不同但文件名相同），加后缀
-    counter = 1
+    file_counter = 1
+    MAX_FILE_RETRIES = 1000
     while os.path.exists(new_path):
-        counter += 1
-        new_filename = re.sub(r'[^\w一-鿿]', '_', new_name) + f'_{counter}.contract-template'
+        file_counter += 1
+        if file_counter > MAX_FILE_RETRIES:
+            raise RuntimeError('无法生成唯一文件名')
+        new_filename = re.sub(r'[^\w一-鿿]', '_', new_name) + f'_{file_counter}.contract-template'
         new_path = os.path.join(TEMPLATES_DIR, new_filename)
     tpl.save(new_path)
     return os.path.basename(new_path)
@@ -299,7 +318,7 @@ def _backup_before_save(path):
         name = os.path.basename(path).replace('.contract-template', '')
         vdir = _versions_dir(name)
         os.makedirs(vdir, exist_ok=True)
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         backup = os.path.join(vdir, f'{ts}.contract-template')
         with open(backup, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -334,7 +353,10 @@ def list_versions(template_name):
         stat = os.stat(fpath)
         ts_str = fname.replace('.contract-template', '')
         try:
-            ts = datetime.strptime(ts_str, '%Y%m%d_%H%M%S')
+            try:
+                ts = datetime.strptime(ts_str, '%Y%m%d_%H%M%S_%f')
+            except ValueError:
+                ts = datetime.strptime(ts_str, '%Y%m%d_%H%M%S')
             display = ts.strftime('%Y-%m-%d %H:%M:%S')
         except ValueError:
             display = ts_str

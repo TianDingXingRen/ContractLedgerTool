@@ -231,9 +231,9 @@ def _apply_table_field_impl(doc, field_def, rows_data):
     use_template_as_data = template_row_has_marker
 
     if not rows_data:
-        # 无数据：删除占位符模板行，避免输出残留 {字段名}
-        if template_row_has_marker or _row_is_empty(template_row):
-            table._tbl.remove(tr_element)
+        # 无数据时保留模板行结构，避免后续固定 row_index 的字段定位漂移。
+        if template_row_has_marker:
+            _clear_markers_in_row(template_row)
         return
 
     # 克隆行数据（不包括模板行本身）
@@ -286,6 +286,13 @@ def _row_is_empty(row):
             if para.text.strip():
                 return False
     return True
+
+
+def _clear_markers_in_row(row):
+    """清空模板行中的 {xxx} 占位符，同时保留表格行和非占位文本。"""
+    for cell in row.cells:
+        while _replace_first_marker_in_cell(cell, ''):
+            pass
 
 
 def _get_para_text(para_elem):

@@ -82,6 +82,18 @@ class _EvalVisitor(ast.NodeVisitor):
                 raise FormulaError('函数不支持关键字参数')
             if len(node.args) > MAX_FUNC_ARGS:
                 raise FormulaError('函数参数过多')
+            if (len(node.args) == 2
+                    and isinstance(node.args[0], ast.Name)
+                    and isinstance(node.args[1], ast.Name)):
+                table_context = self.context.get(node.args[0].id)
+                if isinstance(table_context, dict) and '__table_rows__' in table_context:
+                    column_key = node.args[1].id
+                    columns = table_context.get('__table_columns__', set())
+                    if column_key not in columns:
+                        raise FormulaError(f'表格 {node.args[0].id} 中不存在列 {column_key}')
+                    return _checked_number(resolve_table_aggregate(
+                        table_context.get('__table_rows__', []), column_key, func_name
+                    ))
             args = [self.visit(a) for a in node.args]
 
             if func_name == 'SUM':
@@ -265,8 +277,14 @@ def sort_fields_by_dependency(fields):
 
     # 构建依赖图
     calc_by_key = {f['key']: f for f in fields if f.get('key')}
-    all_keys = set(calc_by_key)
+    table_column_keys = {
+        col.get('key')
+        for field in fields if field.get('field_type') == FieldType.TABLE
+        for col in field.get('columns', []) if col.get('key')
+    }
+    all_keys = set(calc_by_key) | table_column_keys
     resolved = {f['key'] for f in input_fields if f.get('key')}
+    resolved.update(table_column_keys)
     ordered_calcs = []
     remaining = list(calc_fields)
 

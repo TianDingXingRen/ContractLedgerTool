@@ -57,21 +57,24 @@ EVENT_LABELS = {
 
 def extract_docx_text(path):
     doc = Document(path)
-    parts = []
-    for para in doc.paragraphs:
-        text = (para.text or '').strip()
-        if text:
-            parts.append(text)
-    for table in doc.tables:
-        for row in table.rows:
-            cells = []
-            for cell in row.cells:
-                value = ''.join(p.text or '' for p in cell.paragraphs).strip()
-                if value:
-                    cells.append(value)
-            if cells:
-                parts.append(' | '.join(cells))
-    return '\n'.join(parts)
+    try:
+        parts = []
+        for para in doc.paragraphs:
+            text = (para.text or '').strip()
+            if text:
+                parts.append(text)
+        for table in doc.tables:
+            for row in table.rows:
+                cells = []
+                for cell in row.cells:
+                    value = ''.join(p.text or '' for p in cell.paragraphs).strip()
+                    if value:
+                        cells.append(value)
+                if cells:
+                    parts.append(' | '.join(cells))
+        return '\n'.join(parts)
+    finally:
+        del doc
 
 
 def extract_payment_plans(text, contract_amount=None, sign_date=''):

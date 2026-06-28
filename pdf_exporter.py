@@ -194,9 +194,9 @@ def _convert_via_word_com(docx_path, pdf_path):
             word.Visible = False
             word.DisplayAlerts = 0
 
-            doc = word.Documents.Open(abs_docx)
+            doc = word.Documents.Open(docx_path)
             try:
-                doc.SaveAs2(abs_pdf, FileFormat=17)  # wdFormatPDF = 17
+                doc.SaveAs2(pdf_path, FileFormat=17)  # wdFormatPDF = 17
             finally:
                 try:
                     doc.Close()
