@@ -67,7 +67,7 @@ class TableOperationTests(unittest.TestCase):
         self.assertEqual(len(self.doc.tables[0].rows), 4)  # header + template(as data) + clone + empty row
         self.assertIn('A', self.doc.tables[0].rows[1].cells[0].text)
 
-    def test_empty_data_removes_row(self):
+    def test_empty_data_clears_markers_without_removing_row(self):
         t = self._make_table()
         n = len(t.rows)
         fd = {'key': 'items', 'label': 'items', 'field_type': 'table',
@@ -76,7 +76,23 @@ class TableOperationTests(unittest.TestCase):
                           {'key': 'qty', 'label': 'qty'},
                           {'key': 'price', 'label': 'price'}]}
         docx_builder.apply_table_field(self.doc, fd, [])
-        self.assertEqual(len(self.doc.tables[0].rows), n - 1)
+        self.assertEqual(len(self.doc.tables[0].rows), n)
+        self.assertNotIn('{product}', self.doc.tables[0].rows[1].cells[0].text)
+
+    def test_empty_table_does_not_shift_following_table_cell_fields(self):
+        t = self._make_table()
+        t.rows[2].cells[2].text = 'total: {total}'
+        fd = {'key': 'items', 'label': 'items', 'field_type': 'table',
+              'location': {'type': 'table', 'table_index': 0, 'template_row_index': 1},
+              'columns': [{'key': 'product', 'label': 'product'},
+                          {'key': 'qty', 'label': 'qty'},
+                          {'key': 'price', 'label': 'price'}]}
+        docx_builder.apply_table_field(self.doc, fd, [])
+        docx_builder.apply_text_field(self.doc,
+            {'type': 'table_cell', 'table_index': 0, 'row_index': 2,
+             'col_index': 2, 'placeholder': '{total}'},
+            '100', 'total', 'total')
+        self.assertIn('total: 100', self.doc.tables[0].rows[2].cells[2].text)
 
     def test_table_index_oob_raises(self):
         with self.assertRaises(ValueError):

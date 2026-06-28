@@ -72,7 +72,7 @@ class T3(unittest.TestCase):
         cid,count=ledger_store.create_contract_with_plans({'title':'T2'},{},'/p2.docx',plans)
         self.assertEqual(count,2)
     def test_stats(self):
-        ledger_store.insert_payment_plan(self.cid,{'phase_name':'P1','due_amount':100,'paid_amount':30,'confirm_status':'confirmed','payment_status':'partial','due_date':'2026-06-15'})
+        ledger_store.insert_payment_plan(self.cid,{'phase_name':'P1','due_amount':100,'paid_amount':30,'paid_date':'2026-06-01','confirm_status':'confirmed','payment_status':'partial','due_date':'2026-06-15'})
         s=ledger_store.get_payment_stats()
         self.assertEqual(s['total_due'],100);self.assertEqual(s['total_unpaid'],70)
 if __name__=='__main__':unittest.main()

@@ -15,32 +15,22 @@ def app():
     """创建测试用 Flask app，使用临时目录隔离"""
     import app as app_module
 
-    # 保存原始值
-    orig_base_dir = getattr(app_module, 'BASE_DIR', None)
-    orig_upload = getattr(app_module, 'UPLOAD_FOLDER', None)
-    orig_output = getattr(app_module, 'OUTPUT_FOLDER', None)
-    orig_session = getattr(app_module, 'SESSION_FOLDER', None)
+    orig_base_dir = app_module.BASE_DIR
+    orig_resource_dir = app_module.RESOURCE_DIR
 
     with tempfile.TemporaryDirectory() as tmp:
-        app_module.BASE_DIR = tmp
-        app_module.UPLOAD_FOLDER = os.path.join(tmp, 'uploads')
-        app_module.OUTPUT_FOLDER = os.path.join(tmp, 'output')
-        app_module.SESSION_FOLDER = os.path.join(tmp, 'sessions')
-        app_module._runtime_initialized = False
-        for d in (app_module.UPLOAD_FOLDER, app_module.OUTPUT_FOLDER,
-                  app_module.SESSION_FOLDER):
-            os.makedirs(d, exist_ok=True)
+        test_app = app_module.create_app(
+            runtime_base_dir=tmp,
+            resource_dir=orig_resource_dir,
+            run_maintenance=False,
+            testing=True,
+        )
+        try:
+            yield test_app
+        finally:
+            app_module.reset_runtime()
 
-        test_app = app_module.create_app()
-        test_app.config['TESTING'] = True
-        yield test_app
-
-    # 恢复原始值
-    if orig_base_dir is not None:
-        app_module.BASE_DIR = orig_base_dir
-        app_module.UPLOAD_FOLDER = orig_upload
-        app_module.OUTPUT_FOLDER = orig_output
-        app_module.SESSION_FOLDER = orig_session
+    app_module.configure_runtime_paths(orig_base_dir, orig_resource_dir)
 
 
 @pytest.fixture
@@ -55,12 +45,15 @@ def tmp_db():
 
     old_data_dir = ledger_store.DATA_DIR
     old_db_path = ledger_store.DB_PATH
+    old_backup_dir = ledger_store.BACKUP_DIR
 
     with tempfile.TemporaryDirectory() as tmp:
         ledger_store.DATA_DIR = tmp
         ledger_store.DB_PATH = os.path.join(tmp, 'contracts.db')
+        ledger_store.BACKUP_DIR = os.path.join(tmp, 'backups')
         ledger_store.init_db()
         yield tmp
 
     ledger_store.DATA_DIR = old_data_dir
     ledger_store.DB_PATH = old_db_path
+    ledger_store.BACKUP_DIR = old_backup_dir

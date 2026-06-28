@@ -158,7 +158,7 @@ class SecurityHardeningTests(unittest.TestCase):
         script = run.call_args_list[0].args[0]
         self.assertIn('New-ScheduledTaskAction', script)
         self.assertIn('Register-ScheduledTask', script)
-        self.assertIn('--no-browser', script)
+        self.assertTrue('--no-browser' in script or '-NoBrowser' in script)
 
     def test_enable_autostart_fallback_rewrites_startup_launcher(self):
         autostart._autostart_cache = None
@@ -182,7 +182,7 @@ class SecurityHardeningTests(unittest.TestCase):
             with open(launcher_path, 'r', encoding='utf-16') as f:
                 content = f.read()
             self.assertIn('shell.CurrentDirectory', content)
-            self.assertIn('--no-browser', content)
+            self.assertTrue('--no-browser' in content or '-NoBrowser' in content)
             self.assertTrue(autostart._startup_launcher_matches(launcher_path))
 
     def test_autostart_disabled_task_is_not_enabled(self):

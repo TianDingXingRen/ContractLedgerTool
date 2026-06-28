@@ -182,7 +182,14 @@ class OperationsUiTests(unittest.TestCase):
         self.assertIn('data-filter="required"', html)
         self.assertIn('data-filter="calc"', html)
         self.assertIn('data-testid="generation-result"', html)
-        self.assertIn('function showGenerationResult', html)
+        self.assertIn('/static/js/editor.js', html)
+        editor_script = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js')
+        with open(editor_script, 'r', encoding='utf-8') as f:
+            self.assertIn('function showGenerationResult', f.read())
+        with open(os.path.join(app.RESOURCE_DIR, 'templates', 'editor.html'), 'r', encoding='utf-8') as f:
+            editor_html_source = f.read()
+        self.assertIn("data['_table_' + fid]", editor_html_source)
+        self.assertIn("data['_table_' + fid] || data['_table_data_' + fid]", editor_html_source)
         self.assertNotIn('window.location.href = result.detailUrl', html)
 
     def test_create_template_table_editor_uses_stacked_column_cards(self):
