@@ -65,6 +65,22 @@ def setup_logging(log_dir=None, level=logging.INFO):
 
 def get_logger():
     with _logger_lock:
+        logger = _logger
+    if logger is None:
+        return setup_logging()
+    return logger
+
+
+def close_logging():
+    """关闭文件处理器，供测试重建应用或进程退出时释放 Windows 文件句柄。"""
+    global _logger
+    with _logger_lock:
         if _logger is None:
-            return setup_logging()
-        return _logger
+            return
+        for handler in list(_logger.handlers):
+            try:
+                handler.flush()
+                handler.close()
+            finally:
+                _logger.removeHandler(handler)
+        _logger = None

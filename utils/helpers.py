@@ -31,21 +31,31 @@ from utils.labels import (
     CONFIRM_STATUS_LABELS,
     PAYMENT_STATUS_LABELS,
     CONFIDENCE_LABELS,
+    PROCUREMENT_STATUS_LABELS,
+    PROCUREMENT_METHOD_LABELS,
+    PROCUREMENT_STAGE_ORDER,
+    PROCUREMENT_STAGE_LABELS,
+    PROCUREMENT_STAGE_STATUS_LABELS,
+    CLARIFICATION_STATUS_LABELS,
+    QUOTE_STATUS_LABELS,
+    QUOTE_IMPORT_STATUS_LABELS,
 )
 # ── Re-export from sub-modules for backward compatibility ──
 from utils.field_utils import (
     field_key_from_label, unique_key, safe_col_key,
     safe_filename_part, parse_number, normalize_date,
-    to_calc_number, float_or_none, int_or_none,
+    to_calc_number, float_or_none, int_or_none, normalize_number_field_value,
     detect_markers, filter_table_rows,
     normalize_table_columns, apply_submitted_table_columns,
     parse_submitted_field_values,
 )
 from utils.generation_utils import (
     calc_context, recalculate_scalar_fields, recalculate_table_fields,
-    infer_contract_summary, create_ledger_record, docx_write_order,
+    prepare_generation_values,
+    infer_contract_summary, parse_contract_classification,
+    create_ledger_record, docx_write_order,
     generate_docx_document,
-    counterparty_batch_keys, next_month_ym, next_month_range,
+    counterparty_batch_keys, contract_number_keys, next_month_ym, next_month_range,
     has_payment_content, can_bulk_confirm_payment,
     validate_template_source_bindings,
 )

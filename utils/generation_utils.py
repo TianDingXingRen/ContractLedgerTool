@@ -10,11 +10,15 @@ import docx_builder
 import field_eval
 import ledger_store
 import payment_extractor
-from utils.field_utils import to_calc_number, parse_number, normalize_date
+from utils.field_utils import (
+    to_calc_number, parse_number, normalize_date,
+    apply_submitted_table_columns, parse_submitted_field_values,
+)
 from utils.logger import get_logger
 from utils.security import (
     MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, MAX_BATCH_CONTRACTS,
-    MAX_PLAN_ROWS, MAX_COUNTERPARTY_LENGTH, limit_text,
+    MAX_PLAN_ROWS, MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH,
+    bounded_int, limit_text,
 )
 from utils.constants import FieldType
 
@@ -82,9 +86,17 @@ def calc_context(fields, field_values):
     context = {}
     for field in fields:
         key = field.get('key')
-        if not key or field.get('field_type') == FieldType.TABLE:
+        if not key:
             continue
-        context[key] = to_calc_number(field_values.get(key, ''))
+        if field.get('field_type') == FieldType.TABLE:
+            context[key] = {
+                '__table_rows__': field_values.get(key, []) or [],
+                '__table_columns__': {
+                    col.get('key') for col in field.get('columns', []) if col.get('key')
+                },
+            }
+        else:
+            context[key] = to_calc_number(field_values.get(key, ''))
     return context
 
 
@@ -139,6 +151,20 @@ def recalculate_table_fields(fields, field_values):
                     row[col_key] = '?'
 
 
+def prepare_generation_values(fields, form, allow_empty_keys=None):
+    """统一执行生成/预览前的表单解析、校验和公式计算。"""
+    errors = apply_submitted_table_columns(fields, form)
+    field_values, parse_errors = parse_submitted_field_values(
+        fields, form, allow_empty_keys=allow_empty_keys
+    )
+    errors.extend(parse_errors)
+    if errors:
+        return field_values, errors
+    recalculate_table_fields(fields, field_values)
+    errors.extend(recalculate_scalar_fields(fields, field_values))
+    return field_values, errors
+
+
 # ═══════════════════════════════════════════════════════
 #  Contract generation helpers
 # ═══════════════════════════════════════════════════════
@@ -187,7 +213,7 @@ def infer_contract_summary(tpl, fields, field_values):
         '负责人', '经办人', '业务员', 'owner'
     ])
     if not contract_no:
-        contract_no = 'HT' + datetime.now().strftime('%Y%m%d%H%M%S') + secrets.token_hex(2)  # 加随机后缀防碰撞
+        contract_no = 'HT' + datetime.now().strftime('%Y%m%d%H%M%S') + secrets.token_hex(4)  # 8位随机后缀防碰撞
     return {
         'contract_no': contract_no,
         'title': title or tpl.name or '未命名合同',
@@ -200,13 +226,51 @@ def infer_contract_summary(tpl, fields, field_values):
     }
 
 
-def create_ledger_record(tpl, fields, field_values, output_path):
+def parse_contract_classification(form):
+    """Parse and validate the optional project/range classification fields."""
+    project_name = limit_text(
+        str(form.get('project_name', '') or '').strip(),
+        MAX_PROJECT_NAME_LENGTH,
+    )
+    start_raw = str(form.get('coverage_start', '') or '').strip()
+    end_raw = str(form.get('coverage_end', '') or '').strip()
+
+    if bool(start_raw) != bool(end_raw):
+        raise ValueError('覆盖范围的起始号和结束号需要同时填写')
+    if (start_raw or end_raw) and not project_name:
+        raise ValueError('填写覆盖范围前，请先填写所属项目')
+
+    coverage_start = coverage_end = None
+    if start_raw and end_raw:
+        coverage_start = bounded_int(
+            start_raw, min_value=1, max_value=1_000_000_000, label='覆盖范围起始号'
+        )
+        coverage_end = bounded_int(
+            end_raw, min_value=1, max_value=1_000_000_000, label='覆盖范围结束号'
+        )
+        if coverage_start > coverage_end:
+            raise ValueError('覆盖范围起始号不能大于结束号')
+
+    return {
+        'project_name': project_name,
+        'coverage_start': coverage_start,
+        'coverage_end': coverage_end,
+    }
+
+
+def create_ledger_record(tpl, fields, field_values, output_path, classification=None):
     """创建合同台账记录（合同 + 付款计划在同一事务中完成）。
 
     先提取付款计划文本（DOCX 读取在事务外完成），
     然后在单个数据库事务中创建合同记录和付款计划。
     """
     summary = infer_contract_summary(tpl, fields, field_values)
+    if classification:
+        summary.update({
+            'project_name': classification.get('project_name') or '',
+            'coverage_start': classification.get('coverage_start'),
+            'coverage_end': classification.get('coverage_end'),
+        })
     # 付款计划提取在事务外完成（需要读取 DOCX 文件）
     try:
         doc_text = payment_extractor.extract_docx_text(output_path)
@@ -267,10 +331,18 @@ def generate_docx_document(tpl_data, fields, field_values, source_docx, output_p
                     get_logger().error('Text field write failed: %s', e, exc_info=True)
         if not errors:
             try:
-                doc.save(output_path)
+                tmp_path = output_path + '.tmp'
+                doc.save(tmp_path)
+                os.replace(tmp_path, output_path)
             except Exception as e:
                 errors.append(f'文档保存失败：{e}')
                 get_logger().error('doc.save failed: %s', e, exc_info=True)
+                # 清理可能残留的临时文件
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except OSError:
+                    pass
     else:
         docx_builder.generate_from_scratch(tpl_data, field_values, output_path)
     return errors, output_path
@@ -307,6 +379,19 @@ def counterparty_batch_keys(fields, submitted_key=''):
             if key:
                 keys.append(key)
     return list(dict.fromkeys(keys))
+
+
+def contract_number_keys(fields):
+    """识别批量生成时需要追加序号的合同编号字段。"""
+    keys = []
+    for field in fields:
+        if field.get('field_type') == 'table':
+            continue
+        haystack = f'{field.get("label", "")} {field.get("key", "")}'.lower()
+        if any(keyword in haystack for keyword in ('合同编号', '合同号', 'contract_no')):
+            if field.get('key'):
+                keys.append(field['key'])
+    return keys
 
 
 # ═══════════════════════════════════════════════════════

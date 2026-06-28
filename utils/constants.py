@@ -6,6 +6,7 @@ from enum import Enum
 class FieldType(str, Enum):
     """模板字段类型"""
     TEXT = 'text'
+    NUMBER = 'number'
     TEXTAREA = 'textarea'
     SELECT = 'select'
     TABLE = 'table'
@@ -68,4 +69,83 @@ CONFIDENCE_LABELS = {
     ConfidenceLevel.HIGH: '高',
     ConfidenceLevel.MEDIUM: '中',
     ConfidenceLevel.LOW: '低',
+}
+
+
+# ── 采购流程标签与阶段配置 ──
+
+PROCUREMENT_STATUS_LABELS = {
+    'draft': '草稿',
+    'documents_ready': '询价文件已准备',
+    'inquiry_sent': '已发询价',
+    'quotes_received': '已收报价',
+    'clarifying': '澄清中',
+    'negotiating': '谈判中',
+    'award_draft': '成交建议中',
+    'award_confirmed': '成交已确认',
+    'contract_draft': '合同数据单',
+    'contract_created': '合同已生成',
+    'archived': '已归档',
+}
+
+PROCUREMENT_METHOD_LABELS = {
+    'competitive_negotiation': '竞争性谈判',
+    'inquiry': '询价',
+    'comparison': '比价',
+}
+
+PROCUREMENT_STAGE_ORDER = [
+    'project',
+    'items',
+    'suppliers',
+    'quotes',
+    'comparison',
+    'negotiation',
+    'award',
+    'contract',
+    'archive',
+]
+
+PROCUREMENT_STAGE_LABELS = {
+    'project': '项目基础信息',
+    'items': '采购明细',
+    'suppliers': '候选供应商',
+    'quotes': '供应商报价',
+    'comparison': '比价与澄清',
+    'negotiation': '谈判记录',
+    'award': '成交建议',
+    'contract': '合同生成',
+    'archive': '项目归档',
+}
+
+PROCUREMENT_STAGE_STATUS_LABELS = {
+    'done': '已完成',
+    'active': '推荐下一步',
+    'skipped': '已跳过',
+    'available': '可切入',
+    'blocked': '待补录',
+}
+
+CLARIFICATION_STATUS_LABELS = {
+    'pending': '待处理',
+    'confirmed': '已确认',
+    'sent': '已发出',
+    'replied': '已回复',
+    'closed': '已关闭',
+}
+
+QUOTE_STATUS_LABELS = {
+    'pending': '待报价',
+    'received': '已收报价',
+    'confirmed': '已确认',
+    'superseded': '已被覆盖',
+    'rejected': '已拒绝',
+}
+
+QUOTE_IMPORT_STATUS_LABELS = {
+    'mapping': '待映射',
+    'parsed': '已解析',
+    'invalid': '解析异常',
+    'confirmed': '已导入',
+    'cancelled': '已取消',
 }

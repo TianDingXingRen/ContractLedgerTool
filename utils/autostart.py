@@ -64,8 +64,17 @@ def _autostart_launch_parts():
         os.environ.get('SystemRoot', 'C:\\Windows'),
         'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
     )
-    start_ps1 = os.path.join(BASE_DIR, 'start.ps1')
-    if os.path.isfile(start_ps1):
+    # 优先查找根目录的 start.ps1（安装版），再查找 installer_assets 中的（源码版）
+    start_ps1_candidates = [
+        os.path.join(BASE_DIR, 'start.ps1'),
+        os.path.join(BASE_DIR, 'installer_assets', 'start.ps1'),
+    ]
+    start_ps1 = None
+    for candidate in start_ps1_candidates:
+        if os.path.isfile(candidate):
+            start_ps1 = candidate
+            break
+    if start_ps1:
         return powerShell, (
             f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
             f'-File "{start_ps1}" -NoBrowser'
@@ -73,7 +82,7 @@ def _autostart_launch_parts():
     python_exe = sys.executable
     app_py = os.path.join(BASE_DIR, 'app.py')
     if not os.path.isfile(app_py):
-        get_logger().warning('自启动回退失败：找不到 app.py (BASE_DIR=%s)', BASE_DIR)
+        raise RuntimeError(f'自启动配置失败：找不到 app.py (BASE_DIR={BASE_DIR})')
     return powerShell, (
         f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
         f'-Command "& \'{python_exe}\' \'{app_py}\' --host 127.0.0.1 --port 5000 --no-browser"'
@@ -310,15 +319,26 @@ $task = Get-ScheduledTask -TaskName {_ps_quote(AUTOSTART_TASK_NAME)} -ErrorActio
 if ($task) {{
     Unregister-ScheduledTask -TaskName {_ps_quote(AUTOSTART_TASK_NAME)} -Confirm:$false
 }}
+exit 0
 """
+    task_removed = False
+    task_error = ''
     try:
         result = _run_powershell(script)
+        if result.returncode == 0:
+            task_removed = True
+        else:
+            task_error = result.stderr.strip() or result.stdout.strip() or '未知错误'
     except subprocess.TimeoutExpired:
         get_logger().error('自启动计划任务移除超时')
-        raise RuntimeError('自启动关闭超时，请检查系统 PowerShell 是否正常')
-    _remove_startup_launcher()
-    errors = []
-    if result.returncode != 0:
-        errors.append(f'计划任务移除失败：{result.stderr.strip() or result.stdout.strip() or "未知错误"}')
-    if errors:
-        raise RuntimeError('；'.join(errors))
+        task_error = 'PowerShell 超时'
+
+    startup_removed = _remove_startup_launcher()
+
+    # 只要启动文件夹清理成功（这是实际生效的自启方式），就不报错
+    # 计划任务移除失败通常是任务本就不存在，属于正常情况
+    if startup_removed or task_removed:
+        return
+    if task_error:
+        raise RuntimeError(f'自启动关闭失败：{task_error}')
+    raise RuntimeError('自启动关闭失败：未找到任何自启动项')

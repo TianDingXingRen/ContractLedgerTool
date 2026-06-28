@@ -2,6 +2,7 @@
 
 import re
 import json
+import math
 from typing import Any, Optional
 from datetime import datetime
 
@@ -138,6 +139,33 @@ def to_calc_number(value):
 def float_or_none(value) -> Optional[float]:
     parsed = parse_number(value)
     return parsed if parsed is not None else None
+
+
+def normalize_number_field_value(value, field=None) -> str:
+    """严格解析数字字段，并按字段精度和范围返回规范字符串。"""
+    text = str(value or '').strip().replace(',', '').replace('，', '')
+    if not text:
+        return ''
+    try:
+        number = float(text)
+    except (TypeError, ValueError):
+        raise ValueError('必须是有效数字')
+    if not math.isfinite(number):
+        raise ValueError('必须是有限数字')
+
+    definition = field or {}
+    min_value = definition.get('min_value')
+    max_value = definition.get('max_value')
+    if min_value is not None and number < float(min_value):
+        raise ValueError(f'不能小于 {min_value}')
+    if max_value is not None and number > float(max_value):
+        raise ValueError(f'不能大于 {max_value}')
+
+    decimal_places = definition.get('decimal_places')
+    if decimal_places is None:
+        return str(int(number)) if number.is_integer() else format(number, '.15g')
+    decimals = bounded_decimal_places(decimal_places)
+    return f'{number:.{decimals}f}'
 
 
 def int_or_none(value) -> Optional[int]:
@@ -317,10 +345,29 @@ def filter_table_rows(field, rows_data):
             raise ValueError(f'{field.get("label", field.get("key"))} 的表格行数据必须是对象')
         keys_to_check = editable_keys or set(row.keys())
         if any(str(row.get(key, '')).strip() for key in keys_to_check):
-            filtered.append({
+            normalized_row = {
                 str(key)[:80]: limit_text(value)
                 for key, value in row.items()
-            })
+            }
+            for col in columns:
+                col_key = col.get('key')
+                if not col_key or col.get('field_type') == FieldType.CALCULATED:
+                    continue
+                raw_value = normalized_row.get(col_key, '')
+                if col.get('required') and not str(raw_value).strip():
+                    raise ValueError(f'{field.get("label", field.get("key"))} 的 {col.get("label", col_key)} 不能为空')
+                if not str(raw_value).strip():
+                    continue
+                if col.get('field_type') == FieldType.NUMBER:
+                    try:
+                        normalized_row[col_key] = normalize_number_field_value(raw_value, col)
+                    except ValueError as e:
+                        raise ValueError(f'{field.get("label", field.get("key"))} 的 {col.get("label", col_key)}{e}')
+                elif col.get('field_type') == FieldType.SELECT:
+                    options = [str(option) for option in col.get('options', [])]
+                    if options and str(raw_value) not in options:
+                        raise ValueError(f'{field.get("label", field.get("key"))} 的 {col.get("label", col_key)}选项无效')
+            filtered.append(normalized_row)
     return filtered
 
 
@@ -341,7 +388,7 @@ def normalize_table_columns(field, submitted_cols):
             key = safe_col_key(label, idx, existing)
         else:
             existing.add(key)
-        field_type = col.get('field_type') if col.get('field_type') in {'text', 'textarea', 'select', 'calculated'} else 'text'
+        field_type = col.get('field_type') if col.get('field_type') in {'text', 'number', 'textarea', 'select', 'calculated'} else 'text'
         formula = ''
         decimal_places = 2
         if field_type == 'calculated':
@@ -358,6 +405,18 @@ def normalize_table_columns(field, submitted_cols):
             'formula': formula if field_type == 'calculated' else '',
             'default_value': '' if field_type == 'calculated' else limit_text(col.get('default_value'), 2000),
         }
+        if field_type == 'select':
+            raw_options = col.get('options', [])
+            if isinstance(raw_options, str):
+                raw_options = raw_options.splitlines()
+            normalized_col['options'] = [
+                limit_text(option, 200) for option in raw_options
+                if str(option).strip()
+            ][:100]
+        if field_type == 'number':
+            normalized_col['decimal_places'] = bounded_decimal_places(col.get('decimal_places', 2))
+            normalized_col['min_value'] = col.get('min_value')
+            normalized_col['max_value'] = col.get('max_value')
         if field_type == 'calculated':
             normalized_col['decimal_places'] = decimal_places
         normalized.append(normalized_col)
@@ -390,9 +449,10 @@ def apply_submitted_table_columns(fields, form):
     return errors
 
 
-def parse_submitted_field_values(fields, form):
+def parse_submitted_field_values(fields, form, allow_empty_keys=None):
     field_values = {}
     input_errors = []
+    allow_empty_keys = set(allow_empty_keys or [])
     for i, field in enumerate(fields):
         key = field['key']
         fid = field.get('id', i)
@@ -418,10 +478,24 @@ def parse_submitted_field_values(fields, form):
             except ValueError as e:
                 input_errors.append(str(e))
                 rows_data = []
+            if field.get('required') and not rows_data:
+                input_errors.append(f'{field.get("label", key)}不能为空')
             field_values[key] = rows_data
         else:
             if len(raw_val) > MAX_TEXT_VALUE_LENGTH:
                 from utils.logger import get_logger
                 get_logger().warning('字段 %s(%s) 的值超过 %d 字符，已截断', field.get('label', ''), key, MAX_TEXT_VALUE_LENGTH)
+            if (field.get('required') and key not in allow_empty_keys
+                    and field.get('field_type') != FieldType.CALCULATED and not raw_val):
+                input_errors.append(f'{field.get("label", key)}不能为空')
+            if field.get('field_type') == FieldType.NUMBER and raw_val:
+                try:
+                    raw_val = normalize_number_field_value(raw_val, field)
+                except ValueError as e:
+                    input_errors.append(f'{field.get("label", key)}{e}')
+            elif field.get('field_type') == FieldType.SELECT and raw_val:
+                options = [str(option) for option in field.get('options', [])]
+                if options and raw_val not in options:
+                    input_errors.append(f'{field.get("label", key)}选项无效')
             field_values[key] = limit_text(raw_val)
     return field_values, input_errors

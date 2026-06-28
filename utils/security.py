@@ -15,6 +15,7 @@ MAX_BATCH_CONTRACTS: int = 100
 MAX_PLAN_ROWS: int = 300
 MAX_TEXT_VALUE_LENGTH: int = 10000
 MAX_COUNTERPARTY_LENGTH: int = 120
+MAX_PROJECT_NAME_LENGTH: int = 120
 
 
 def hmac_compare(left: str, right: str) -> bool:
