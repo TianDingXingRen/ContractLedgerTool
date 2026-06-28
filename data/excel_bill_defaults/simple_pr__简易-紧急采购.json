@@ -1,0 +1,23 @@
+{
+  "preset_key": "simple_pr",
+  "name": "简易-紧急采购",
+  "header_data": {
+    "bill_no": "",
+    "is_executed": "Y",
+    "estimated_amount": "",
+    "dept": "供应链部",
+    "person": "佟翔宇",
+    "commander": "杨浩亮",
+    "remark": ""
+  },
+  "detail_defaults": {
+    "buyer": "佟翔宇"
+  },
+  "column_mapping": {
+    "material_name": "product_name",
+    "total_qty": "qty",
+    "unit_price_tax": "unit_price",
+    "total_tax": "subtotal"
+  },
+  "saved_at": "2026-06-22 11:18:22"
+}

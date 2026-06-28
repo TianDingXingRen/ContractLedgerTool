@@ -1,0 +1,34 @@
+{
+  "preset_key": "standard_pr",
+  "name": "111合同-常用表头",
+  "header_data": {
+    "bill_no": "",
+    "is_executed": "Y",
+    "budget_type": "预算内",
+    "estimated_amount": "",
+    "pr_type": "项目类",
+    "dept": "研发部",
+    "person": "佟翔宇",
+    "applicant_dept": "研发部",
+    "ops_category": "YYGL04",
+    "commander": "杨浩亮",
+    "commander_approval": "是",
+    "is_fixed_asset": "是",
+    "is_single_source": "否",
+    "remark": "",
+    "save_action": "none"
+  },
+  "detail_defaults": {
+    "buyer": "佟翔宇",
+    "required_date": "",
+    "suggested_order_date": ""
+  },
+  "column_mapping": {
+    "material_name": "product_name",
+    "material_code": "spec",
+    "total_qty": "qty",
+    "unit_price_tax": "unit_price",
+    "total_tax": "subtotal"
+  },
+  "saved_at": "2026-06-22 11:18:22"
+}
