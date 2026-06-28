@@ -1,4 +1,4 @@
-from app_startup import should_open_browser
+from core.app_startup import should_open_browser
 
 
 def test_should_not_open_browser_when_disabled():

@@ -10,15 +10,15 @@ from flask import Flask
 
 import ledger_store
 import procurement_store
-import runtime_maintenance
-from app_errors import register_error_handlers
-from app_hooks import register_security_hooks
-from app_secrets import load_or_create_secret_key
-from app_startup import open_browser_later, should_open_browser
-from app_template_context import csrf_token, register_template_context
+from runtime.maintenance import cleanup_old_files, seed_packaged_assets
+from core.app_errors import register_error_handlers
+from core.app_hooks import register_security_hooks
+from core.app_secrets import load_or_create_secret_key
+from core.app_startup import open_browser_later, should_open_browser
+from core.app_template_context import csrf_token, register_template_context
 from utils.logger import setup_logging, get_logger, close_logging
 from config import config as app_config
-from runtime_context import apply_runtime_context, create_runtime_context
+from runtime.context import apply_runtime_context, create_runtime_context
 
 # ── Path resolution ──
 
@@ -95,7 +95,7 @@ def _load_or_create_secret_key():
 
 def _cleanup_old_files(max_age_days=None):
     """Compatibility wrapper for runtime file cleanup."""
-    return runtime_maintenance.cleanup_old_files(
+    return cleanup_old_files(
         RUNTIME_PATHS, app_config, max_age_days=max_age_days
     )
 
@@ -168,7 +168,7 @@ def _csrf_token():
 
 def _seed_packaged_assets():
     """Compatibility wrapper for packaged runtime asset seeding."""
-    return runtime_maintenance.seed_packaged_assets(RUNTIME_PATHS)
+    return seed_packaged_assets(RUNTIME_PATHS)
 
 # ── Create app instance ──
 app = create_app()

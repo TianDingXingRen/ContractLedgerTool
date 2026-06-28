@@ -3,8 +3,8 @@ import os
 import time
 from types import SimpleNamespace
 
-from runtime_paths import RuntimePaths
-import runtime_maintenance
+from runtime.paths import RuntimePaths
+from runtime import maintenance as runtime_maintenance
 
 
 def _touch_old(path, days=10):

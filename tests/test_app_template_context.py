@@ -28,7 +28,7 @@ def test_template_csrf_token_is_stable_within_session(app):
 
 
 def test_csrf_token_reuses_existing_session_value(app):
-    from app_template_context import csrf_token
+    from core.app_template_context import csrf_token
 
     with app.test_request_context('/'):
         from flask import session

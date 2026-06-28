@@ -82,6 +82,13 @@ def main():
         copy_file(py_file, APP / py_file.name)
         print(f"  {py_file.name}")
 
+    # ── 复制子包目录（core/、runtime/） ──
+    for pkg in ("core", "runtime"):
+        src_pkg = ROOT / pkg
+        if src_pkg.is_dir():
+            copy_dir(src_pkg, APP / pkg)
+            print(f"  {pkg}/")
+
     # ── 复制 requirements.txt ──
     copy_file(ROOT / "requirements.txt", APP / "requirements.txt")
     print("  requirements.txt")

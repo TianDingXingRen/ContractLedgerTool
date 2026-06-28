@@ -1,5 +1,5 @@
 def test_secret_key_env_var_takes_precedence(tmp_path, monkeypatch):
-    from app_secrets import load_or_create_secret_key
+    from core.app_secrets import load_or_create_secret_key
 
     monkeypatch.setenv('CONTRACT_TOOL_SECRET_KEY', 'env-secret')
 
@@ -8,7 +8,7 @@ def test_secret_key_env_var_takes_precedence(tmp_path, monkeypatch):
 
 
 def test_secret_key_reuses_existing_file(tmp_path, monkeypatch):
-    from app_secrets import load_or_create_secret_key
+    from core.app_secrets import load_or_create_secret_key
 
     monkeypatch.delenv('CONTRACT_TOOL_SECRET_KEY', raising=False)
     (tmp_path / '.secret_key').write_text('persisted-secret\n', encoding='utf-8')
@@ -17,7 +17,7 @@ def test_secret_key_reuses_existing_file(tmp_path, monkeypatch):
 
 
 def test_secret_key_is_created_when_missing(tmp_path, monkeypatch):
-    from app_secrets import load_or_create_secret_key
+    from core.app_secrets import load_or_create_secret_key
 
     monkeypatch.delenv('CONTRACT_TOOL_SECRET_KEY', raising=False)
 
