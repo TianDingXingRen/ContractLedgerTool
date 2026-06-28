@@ -14,8 +14,8 @@ from datetime import datetime
 from pathlib import Path
 
 from _pyinstaller_common import (
-    ROOT, reset_dir, copy_file, copy_tree, copy_html_templates,
-    collect_contract_templates, write_version_file, build_pyinstaller_cmd,
+    ROOT, reset_dir, copy_file, copy_tree, build_pyinstaller_cmd,
+    prepare_app_resources as _prepare_resources,
 )
 
 
@@ -63,29 +63,7 @@ def sign_file(path):
 
 
 def prepare_app_resources():
-    reset_dir(APP_RES_DIR)
-    templates_dir = APP_RES_DIR / 'templates'
-    uploads_dir = APP_RES_DIR / 'uploads'
-    templates_dir.mkdir(parents=True, exist_ok=True)
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-
-    copy_tree(ROOT / 'static', APP_RES_DIR / 'static')
-
-    version_src = ROOT / 'version.txt'
-    if version_src.is_file():
-        copy_file(version_src, APP_RES_DIR / 'version.txt')
-    else:
-        write_version_file(APP_RES_DIR)
-
-    copied_html = copy_html_templates(templates_dir)
-    copied_templates, copied_uploads, skipped = collect_contract_templates(templates_dir, uploads_dir)
-
-    return {
-        'html_templates': copied_html,
-        'templates': copied_templates,
-        'uploads': copied_uploads,
-        'skipped': skipped,
-    }
+    return _prepare_resources(APP_RES_DIR, write_version=False)
 
 
 def build_app_exe():

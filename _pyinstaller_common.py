@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """PyInstaller 打包公共模块 — 统一 hidden-imports、资源准备、目录工具。
 
-build_exe / build_desktop_exe / build_installer 共用此模块，
-避免隐藏导入清单三份不一致的问题。
+build_desktop_exe / build_installer / build_package 共用此模块，
+避免隐藏导入清单和资源准备逻辑多份不一致的问题。
 """
 
 import json
@@ -55,6 +55,21 @@ def copy_tree(src, dst):
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
 
 
+def copy_dir(src, dst, skip_dirs=None, skip_exts=('.pyc', '.pyo')):
+    """递归复制目录，可排除指定子目录和文件扩展名。"""
+    skip_dirs = skip_dirs or set()
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name in skip_dirs:
+            continue
+        if any(item.name.endswith(ext) for ext in skip_exts):
+            continue
+        if item.is_file():
+            shutil.copy2(item, dst / item.name)
+        elif item.is_dir():
+            copy_dir(item, dst / item.name, skip_dirs, skip_exts)
+
+
 def collect_contract_templates(templates_dir, uploads_dir):
     """收集合同模板及其引用的 source_docx，返回 (copied_templates, copied_uploads, skipped)。"""
     copied_templates = []
@@ -102,6 +117,39 @@ def write_version_file(target_dir, version_str=None):
     version = version_str or datetime.now().strftime('%Y%m%d.%H%M%S')
     (target_dir / 'version.txt').write_text(version, encoding='utf-8')
     return version
+
+
+def prepare_app_resources(res_dir, write_version=True):
+    """准备 PyInstaller 打包所需的资源目录（static/templates/uploads/version）。
+
+    所有 build 脚本共用此函数，避免资源准备逻辑重复。
+    返回 manifest 字典，包含 html_templates/templates/uploads/skipped 及可选 version。
+    """
+    reset_dir(res_dir)
+    templates_out = res_dir / 'templates'
+    uploads_out = res_dir / 'uploads'
+    static_out = res_dir / 'static'
+    templates_out.mkdir(parents=True, exist_ok=True)
+    uploads_out.mkdir(parents=True, exist_ok=True)
+
+    copy_tree(ROOT / 'static', static_out)
+
+    version_src = ROOT / 'version.txt'
+    if version_src.is_file():
+        copy_file(version_src, res_dir / 'version.txt')
+
+    html_templates = copy_html_templates(templates_out)
+    copied_templates, copied_uploads, skipped = collect_contract_templates(templates_out, uploads_out)
+
+    manifest = {
+        'html_templates': html_templates,
+        'templates': copied_templates,
+        'uploads': copied_uploads,
+        'skipped': skipped,
+    }
+    if write_version:
+        manifest['version'] = write_version_file(res_dir)
+    return manifest
 
 
 def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,

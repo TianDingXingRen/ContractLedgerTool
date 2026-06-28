@@ -7,7 +7,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+from _pyinstaller_common import ROOT, reset_dir, copy_file, copy_dir
+
 STAGE = ROOT / "build" / "_installer_stage"
 APP = STAGE / "app"
 DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
@@ -16,7 +17,7 @@ DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
 SKIP_FILES = {
     ".gitignore", ".secret_key", "README.md",
     "demo_flow_data.py",
-    "build_exe.py", "build_desktop_exe.py", "build_installer.py", "build_package.py", "build_icons.py",
+    "build_desktop_exe.py", "build_installer.py", "build_package.py", "build_icons.py",
     "启动合同生成工具.bat", "启动合同生成工具_autostart.bat",
 }
 
@@ -33,31 +34,6 @@ SKIP_DIRS = {
     "__pycache__", ".git", "build", "dist", "logs", "output",
     "sessions", "data", "installer_assets", "scripts",
 }
-
-
-def reset_dir(path: Path):
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def copy_file(src: Path, dst: Path):
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-
-
-def copy_dir(src: Path, dst: Path):
-    """递归复制目录，排除 __pycache__ 和 .pyc"""
-    dst.mkdir(parents=True, exist_ok=True)
-    for item in src.iterdir():
-        if item.name in SKIP_DIRS:
-            continue
-        if item.name.endswith(".pyc") or item.name.endswith(".pyo"):
-            continue
-        if item.is_file():
-            shutil.copy2(item, dst / item.name)
-        elif item.is_dir():
-            copy_dir(item, dst / item.name)
 
 
 def main():
@@ -86,7 +62,7 @@ def main():
     for pkg in ("core", "runtime"):
         src_pkg = ROOT / pkg
         if src_pkg.is_dir():
-            copy_dir(src_pkg, APP / pkg)
+            copy_dir(src_pkg, APP / pkg, skip_dirs=SKIP_DIRS)
             print(f"  {pkg}/")
 
     # ── 复制 requirements.txt ──
@@ -108,15 +84,15 @@ def main():
             print(f"  {script}")
 
     # ── 复制 routes/ ──
-    copy_dir(ROOT / "routes", APP / "routes")
+    copy_dir(ROOT / "routes", APP / "routes", skip_dirs=SKIP_DIRS)
     print("  routes/")
 
     # ── 复制 utils/ ──
-    copy_dir(ROOT / "utils", APP / "utils")
+    copy_dir(ROOT / "utils", APP / "utils", skip_dirs=SKIP_DIRS)
     print("  utils/")
 
     # ── 复制 static/ ──
-    copy_dir(ROOT / "static", APP / "static")
+    copy_dir(ROOT / "static", APP / "static", skip_dirs=SKIP_DIRS)
     print("  static/")
 
     # ── 复制 templates/（HTML + 合同模板，排除测试/临时文件） ──

@@ -6,16 +6,13 @@ PyInstaller --onefile 打包：包含 Python + 全部依赖 + 模板 + 静态资
 双击 EXE 自动启动服务并打开浏览器。
 """
 
-import json
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from _pyinstaller_common import (
-    ROOT, reset_dir, copy_file, copy_tree, copy_html_templates,
-    collect_contract_templates, write_version_file, build_pyinstaller_cmd,
+    ROOT, reset_dir, build_pyinstaller_cmd, prepare_app_resources,
 )
 
 
@@ -23,36 +20,6 @@ DESKTOP = Path(os.environ['USERPROFILE']) / 'Desktop'
 RES_DIR = ROOT / 'build' / 'desktop_exe_resources'
 EXE_NAME = 'ContractLedgerTool'
 OUTPUT_DIR = ROOT / 'dist' / 'desktop_exe'
-
-
-def prepare_resources():
-    reset_dir(RES_DIR)
-    templates_out = RES_DIR / 'templates'
-    uploads_out = RES_DIR / 'uploads'
-    static_out = RES_DIR / 'static'
-    templates_out.mkdir(parents=True, exist_ok=True)
-    uploads_out.mkdir(parents=True, exist_ok=True)
-
-    copy_tree(ROOT / 'static', static_out)
-    print('  static/')
-
-    html_templates = copy_html_templates(templates_out)
-    print(f'  templates/ ({len(html_templates)} html)')
-
-    copied_templates, copied_uploads, skipped = collect_contract_templates(templates_out, uploads_out)
-    print(f'  templates/ ({len(copied_templates)} contract-templates, {len(copied_uploads)} source docx)')
-    for s in skipped:
-        print(f'  [skip] {s}')
-
-    version_stamp = write_version_file(RES_DIR)
-
-    return {
-        'version': version_stamp,
-        'html_templates': html_templates,
-        'templates': copied_templates,
-        'uploads': copied_uploads,
-        'skipped': skipped,
-    }
 
 
 def build_exe():
@@ -90,7 +57,11 @@ def main():
     print()
 
     print('[1/3] Preparing resources ...')
-    manifest = prepare_resources()
+    manifest = prepare_app_resources(RES_DIR)
+    print(f'  templates/ ({len(manifest["html_templates"])} html)')
+    print(f'  templates/ ({len(manifest["templates"])} contract-templates, {len(manifest["uploads"])} source docx)')
+    for s in manifest['skipped']:
+        print(f'  [skip] {s}')
 
     print(f'\n[2/3] Building with PyInstaller ...')
     exe_path = build_exe()
