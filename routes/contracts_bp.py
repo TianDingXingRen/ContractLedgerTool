@@ -4,6 +4,7 @@ import os
 import uuid
 import json
 import zipfile
+from copy import deepcopy
 from datetime import date
 
 from flask import render_template, request, redirect, url_for, send_file, session
@@ -16,6 +17,7 @@ from utils import helpers
 from utils.generation_utils import generate_docx_document
 from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH, limit_text
 from utils.logger import get_logger
+from utils.errors import safe_error, safe_file_error, GENERIC_ERROR, GENERIC_FILE_ERROR, GENERIC_GENERATE_ERROR
 
 
 def register(app):
@@ -30,6 +32,7 @@ def register(app):
         due_soon = ledger_store.get_due_soon_payments(days=7)
         expiring_contracts = ledger_store.get_expiring_contracts(days=30)
         recent_contracts = ledger_store.get_recent_contracts(5)
+        project_progress = ledger_store.get_project_progress_stats()
         recent_templates = template_def.list_templates()[:5]
         autostart = helpers.autostart_status()
 
@@ -43,6 +46,7 @@ def register(app):
             due_soon=due_soon,
             expiring_contracts=expiring_contracts,
             recent_contracts=recent_contracts,
+            project_progress=project_progress,
             recent_templates=recent_templates,
             status_labels=status_labels,
             today=today,
@@ -61,11 +65,20 @@ def register(app):
         except (FileNotFoundError, json.JSONDecodeError):
             return redirect(url_for('index'))
 
+        # 确保所有字段都有 id（兼容旧版模板）
+        fields = data.get('fields', [])
+        for i, f in enumerate(fields):
+            if 'id' not in f:
+                f['id'] = i
+
         return render_template(
             'editor.html',
-            fields=data.get('fields', []),
-            field_count=len(data.get('fields', [])),
+            fields=fields,
+            field_count=len(fields),
             template_name=data.get('template_name', '未命名'),
+            template_filename=data.get('template_filename', ''),
+            project_names=ledger_store.list_project_names(),
+            classification_project_name=data.get('project_name', ''),
         )
 
     @app.route('/generate', methods=['POST'])
@@ -87,17 +100,14 @@ def register(app):
         fields = tpl.data['fields']
         source_docx = tpl.data.get('source_docx', '')
 
-        input_errors = helpers.apply_submitted_table_columns(fields, request.form)
-        field_values, parse_errors = helpers.parse_submitted_field_values(fields, request.form)
-        input_errors.extend(parse_errors)
-
+        field_values, input_errors = helpers.prepare_generation_values(fields, request.form)
         if input_errors:
             return '\n'.join(input_errors), 400
 
-        helpers.recalculate_table_fields(fields, field_values)
-        calc_errors = helpers.recalculate_scalar_fields(fields, field_values)
-        if calc_errors:
-            return '\n'.join(calc_errors), 400
+        try:
+            classification = helpers.parse_contract_classification(request.form)
+        except ValueError as e:
+            return safe_error(e, '合同分类解析')
 
         raw_name = data.get('raw_name', data.get('template_name', '合同'))
         output_name = f'{os.path.splitext(raw_name)[0]}_已生成.docx'
@@ -108,21 +118,52 @@ def register(app):
             try:
                 template_path = helpers.safe_uploaded_docx_path(source_docx)
             except ValueError as e:
-                return str(e), 400
+                return safe_file_error(e, '获取DOCX路径失败')
 
         gen_errors, output_path = generate_docx_document(
             tpl.data, fields, field_values, template_path, output_path
         )
         if gen_errors:
-            return '合同生成失败：\n' + '\n'.join(gen_errors), 500
+            get_logger().error('合同生成失败: %s', gen_errors)
+            return GENERIC_GENERATE_ERROR, 500
 
         contract_id = None
         ledger_error = ''
         try:
-            contract_id = helpers.create_ledger_record(tpl, fields, field_values, output_path)
+            contract_id = helpers.create_ledger_record(
+                tpl, fields, field_values, output_path, classification
+            )
+        except ValueError as e:
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+            return safe_error(e, '台账保存失败')
         except Exception as e:
             get_logger().error('Ledger save failed: %s', e, exc_info=True)
-            ledger_error = str(e)
+
+        if contract_id and data.get('procurement_data_sheet_id'):
+            try:
+                import procurement_store
+                procurement_store.complete_contract_link(
+                    int(data['procurement_data_sheet_id']), contract_id
+                )
+            except Exception as e:
+                get_logger().error('Procurement contract link failed: %s', e, exc_info=True)
+                ledger_error = '采购项目关联失败'
+
+        if contract_id and data.get('source_project_id'):
+            try:
+                import procurement_store
+                source_type = data.get('source_type') or 'direct_contract'
+                source_id = data.get('procurement_data_sheet_id') or data.get('source_id')
+                procurement_store.add_contract_ref(
+                    int(data['source_project_id']), contract_id,
+                    source_type=source_type, source_id=int(source_id) if source_id else None,
+                )
+            except Exception as e:
+                get_logger().error('Procurement contract ref failed: %s', e, exc_info=True)
+                ledger_error = '采购项目关联失败'
 
         pdf_url = ''
         if request.form.get('generate_pdf') == '1':
@@ -172,16 +213,23 @@ def register(app):
         tpl_name = data.get('template_name', '') or tpl.name
         fields = tpl.data.get('fields', [])
 
-        input_errors = helpers.apply_submitted_table_columns(fields, request.form)
-        field_values, parse_errors = helpers.parse_submitted_field_values(fields, request.form)
-        input_errors.extend(parse_errors)
+        batch_field_keys = helpers.counterparty_batch_keys(
+            fields, request.form.get('batch_field_key', '').strip()
+        )
+        if not batch_field_keys:
+            return '未能识别对方单位字段，请在"字段变量名"中手动指定', 400
+
+        field_values, input_errors = helpers.prepare_generation_values(
+            fields, request.form, allow_empty_keys=batch_field_keys
+        )
         if input_errors:
             return '\n'.join(input_errors), 400
 
-        helpers.recalculate_table_fields(fields, field_values)
-        calc_errors = helpers.recalculate_scalar_fields(fields, field_values)
-        if calc_errors:
-            return '\n'.join(calc_errors), 400
+        try:
+            classification = helpers.parse_contract_classification(request.form)
+        except ValueError as e:
+            return safe_error(e, '批生成合同分类解析')
+
 
         counterparties_text = request.form.get('batch_counterparties', '').strip()
         counterparties = [c.strip() for c in counterparties_text.split('\n') if c.strip()]
@@ -192,24 +240,29 @@ def register(app):
         if any(len(c) > MAX_COUNTERPARTY_LENGTH for c in counterparties):
             return f'对方单位名称不能超过 {MAX_COUNTERPARTY_LENGTH} 个字符', 400
 
-        batch_field_keys = helpers.counterparty_batch_keys(fields, request.form.get('batch_field_key', '').strip())
-        if not batch_field_keys:
-            return '未能识别对方单位字段，请在"字段变量名"中手动指定', 400
-
         source_docx = tpl.data.get('source_docx', '')
         try:
             template_path = helpers.safe_uploaded_docx_path(source_docx) if source_docx else ''
         except ValueError as e:
-            return str(e), 400
+            return safe_file_error(e, '批生成获取DOCX路径失败')
 
         zip_path = os.path.join(helpers.OUTPUT_FOLDER, f'{sid}_{uuid.uuid4().hex[:8]}_batch.zip')
         gen_errors = []
-        batch_temp_files = []
+        success_count = 0
+        batch_contract_number_keys = helpers.contract_number_keys(fields)
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for idx, counterparty in enumerate(counterparties):
-                batch_values = dict(field_values)
+                batch_values = deepcopy(field_values)
                 for batch_field_key in batch_field_keys:
                     batch_values[batch_field_key] = counterparty
+                for number_key in batch_contract_number_keys:
+                    base_number = str(field_values.get(number_key) or '').strip()
+                    if base_number:
+                        batch_values[number_key] = f'{base_number}-{idx + 1:03d}'
+                batch_calc_errors = helpers.recalculate_scalar_fields(fields, batch_values)
+                if batch_calc_errors:
+                    gen_errors.extend(f'{counterparty}: {error}' for error in batch_calc_errors)
+                    continue
 
                 suffix = helpers.safe_filename_part(counterparty, f'contract_{idx + 1}')[:30]
                 out_path = os.path.join(helpers.OUTPUT_FOLDER, f'{sid}_batch_{idx}_{suffix}.docx')
@@ -217,26 +270,48 @@ def register(app):
                 doc_errors, out_path = generate_docx_document(
                     tpl.data, fields, batch_values, template_path, out_path
                 )
-                for doc_err in doc_errors:
-                    gen_errors.append(f'{counterparty}: {doc_err}')
+                if doc_errors:
+                    for doc_err in doc_errors:
+                        gen_errors.append(f'{counterparty}: {doc_err}')
+                    try:
+                        if os.path.isfile(out_path):
+                            os.remove(out_path)
+                    except OSError:
+                        pass
+                    continue
 
                 try:
-                    helpers.create_ledger_record(tpl, fields, batch_values, out_path)
+                    contract_id = helpers.create_ledger_record(
+                        tpl, fields, batch_values, out_path, classification
+                    )
                 except Exception as e:
                     get_logger().error('Batch ledger save failed for %s: %s', counterparty, e, exc_info=True)
-                    gen_errors.append(f'{counterparty}: 台账入账失败 - {e}')
+                    gen_errors.append(f'{counterparty}: 台账入账失败')
+                    try:
+                        os.remove(out_path)
+                    except OSError:
+                        pass
+                    continue
 
-                zf.write(out_path, f'{helpers.safe_filename_part(counterparty, f"contract_{idx + 1}")}_合同.docx')
-                batch_temp_files.append(out_path)
+                archive_name = (
+                    f'{idx + 1:03d}_'
+                    f'{helpers.safe_filename_part(counterparty, f"contract_{idx + 1}")}_合同.docx'
+                )
+                try:
+                    zf.write(out_path, archive_name)
+                    success_count += 1
+                except Exception as e:
+                    get_logger().error('Batch ZIP write failed for contract %s: %s', contract_id, e, exc_info=True)
+                    gen_errors.append(f'{counterparty}: ZIP 写入失败')
 
-        # 打包完成后即时清理中间 DOCX 文件
-        for tmp_path in batch_temp_files:
+        if success_count == 0:
             try:
-                os.remove(tmp_path)
+                os.remove(zip_path)
             except OSError:
                 pass
+            return '批量合同生成失败：\n' + '\n'.join(gen_errors[:20]), 500
 
-        download_name = f'{tpl_name}_批量合同_{len(counterparties)}份.zip' if tpl_name else f'批量合同_{len(counterparties)}份.zip'
+        download_name = f'{tpl_name}_批量合同_{success_count}份.zip' if tpl_name else f'批量合同_{success_count}份.zip'
         response = send_file(
             zip_path,
             as_attachment=True,
@@ -256,9 +331,14 @@ def register(app):
         except ValueError:
             page = 1
         result = ledger_store.list_contracts(q=q, status=status, page=page)
+
+        # 项目维度分组数据（仅查询有项目名称的合同，避免全量加载）
+        project_groups = ledger_store.list_project_grouped_contracts(q=q, status=status)
+
         return render_template(
             'contracts.html',
             contracts=result['rows'],
+            project_groups=project_groups,
             q=q,
             status=status,
             page=result['page'],
@@ -313,27 +393,20 @@ def register(app):
 
     @app.route('/contracts/trash')
     def contract_trash():
-        """回收站 — 查看已软删除的合同（分页检索全量已删除合同）"""
+        """回收站 — 已软删除合同（SQL 层分页，避免全量加载）"""
         try:
             page = max(1, int(request.args.get('page', 1)))
         except ValueError:
             page = 1
-        per_page = 20
-        # 拉取所有已删除合同（不做分页过滤，先获取全集再分页）
-        all_result = ledger_store.list_contracts(page=1, per_page=10000, include_deleted=True)
-        trashed_all = [r for r in all_result['rows'] if r.get('deleted_at')]
-        total = len(trashed_all)
-        pages = (total + per_page - 1) // per_page if total > 0 else 1
-        offset = (page - 1) * per_page
-        trashed_page = trashed_all[offset:offset + per_page]
+        result = ledger_store.list_contracts(page=page, per_page=20, deleted_only=True)
         return render_template(
             'contracts.html',
-            contracts=trashed_page,
+            contracts=result['rows'],
             q='',
             status='',
-            page=page,
-            pages=pages,
-            total=total,
+            page=result['page'],
+            pages=result['pages'],
+            total=result['total'],
             trash_mode=True,
         )
 
@@ -376,6 +449,7 @@ def register(app):
             contract=contract,
             plans=plans,
             history=history,
+            project_names=ledger_store.list_project_names(),
         )
 
     @app.route('/contracts/<int:contract_id>/download')
@@ -409,8 +483,15 @@ def register(app):
             return 'PDF 输出路径无效', 400
         try:
             pdf_exporter.convert_docx_to_pdf(docx_path, pdf_path)
+        except FileNotFoundError as e:
+            get_logger().warning('PDF 导出失败-文件未找到 (contract %d): %s', contract_id, e)
+            return 'PDF 导出失败。提示：安装 LibreOffice（免费）即可导出 PDF。\n下载地址：https://www.libreoffice.org', 400
+        except RuntimeError as e:
+            get_logger().warning('PDF 导出失败 (contract %d): %s', contract_id, e)
+            return 'PDF 导出失败。\n\n提示：安装 LibreOffice（免费）即可导出 PDF。\n下载地址：https://www.libreoffice.org', 400
         except Exception as e:
-            return f'PDF 导出失败：{e}', 500
+            get_logger().error('PDF 导出异常 (contract %d): %s', contract_id, e, exc_info=True)
+            return GENERIC_ERROR, 500
         return send_file(
             pdf_path,
             as_attachment=True,
@@ -426,16 +507,18 @@ def register(app):
         if new_status not in {'draft', 'signed', 'active', 'completed', 'void'}:
             return '无效的状态值', 400
         try:
+            classification = helpers.parse_contract_classification(request.form)
             ledger_store.update_contract(contract_id, {
-                'contract_no': request.form.get('contract_no', '').strip(),
-                'title': request.form.get('title', '').strip() or '未命名合同',
-                'counterparty': request.form.get('counterparty', '').strip(),
+                'contract_no': limit_text(request.form.get('contract_no', '').strip(), 80),
+                'title': limit_text(request.form.get('title', '').strip(), 200) or '未命名合同',
+                'counterparty': limit_text(request.form.get('counterparty', '').strip(), MAX_COUNTERPARTY_LENGTH),
                 'amount': helpers.float_or_none(request.form.get('amount')),
                 'sign_date': helpers.normalize_date(request.form.get('sign_date')) or '',
                 'expiry_date': helpers.normalize_date(request.form.get('expiry_date')) or '',
-                'owner': request.form.get('owner', '').strip(),
+                'owner': limit_text(request.form.get('owner', '').strip(), 60),
                 'status': new_status,
+                **classification,
             })
         except ValueError as e:
-            return str(e), 400
+            return safe_error(e, '合同更新失败')
         return redirect(url_for('contract_detail', contract_id=contract_id))

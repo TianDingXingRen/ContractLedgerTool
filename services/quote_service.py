@@ -1,0 +1,331 @@
+"""Standard quotation workbook generation and import."""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from pathlib import Path
+
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
+
+import procurement_store
+from services import procurement_file_service
+
+
+FORMAT_VERSION = '1.0'
+PARSER_VERSION = '1.0'
+
+_HEADER_FILL = PatternFill('solid', fgColor='1D4ED8')
+_HEADER_FONT = Font(color='FFFFFF', bold=True)
+_INPUT_FILL = PatternFill('solid', fgColor='FFF7D6')
+_LOCKED_FILL = PatternFill('solid', fgColor='E5E7EB')
+
+
+def _decimal(value, label, errors, row=None, allow_zero=True):
+    try:
+        result = Decimal(str(value if value is not None else '').strip())
+    except InvalidOperation:
+        errors.append(f'{label}{f"（第 {row} 行）" if row else ""}格式无效')
+        return None
+    if result < 0 or (not allow_zero and result == 0):
+        errors.append(f'{label}{f"（第 {row} 行）" if row else ""}必须大于 0')
+        return None
+    return result
+
+
+def _money_minor(value):
+    return int((value * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+
+def _date_text(value):
+    if isinstance(value, (date, datetime)):
+        return value.strftime('%Y-%m-%d')
+    return str(value or '').strip()
+
+
+def generate_quote_template(project_id, supplier_id):
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    items = procurement_store.list_project_items(project_id)
+    if not project:
+        raise ValueError('采购项目不存在')
+    if not supplier or supplier['project_id'] != project_id:
+        raise ValueError('候选供应商不存在')
+    if not items:
+        raise ValueError('请先录入采购明细')
+
+    workbook = Workbook()
+    info = workbook.active
+    info.title = '报价信息'
+    info.column_dimensions['A'].width = 22
+    info.column_dimensions['B'].width = 42
+    info.append(['字段', '请供应商填写'])
+    for cell in info[1]:
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = Alignment(horizontal='center')
+    info_rows = [
+        ('项目编号', project['project_no']),
+        ('项目名称', project['project_name']),
+        ('供应商名称', supplier['supplier_name']),
+        ('报价轮次', 1),
+        ('报价日期', ''),
+        ('报价有效期', ''),
+        ('税率(%)', 13),
+        ('价格口径', '含税'),
+        ('整体交付周期', ''),
+        ('付款条件', ''),
+        ('质保期', ''),
+        ('包装运输', ''),
+        ('整体技术偏离', ''),
+        ('整体商务偏离', ''),
+        ('报价总额', ''),
+    ]
+    for label, value in info_rows:
+        info.append([label, value])
+        info.cell(info.max_row, 2).fill = _INPUT_FILL if label not in {'项目编号', '项目名称', '供应商名称'} else _LOCKED_FILL
+    price_basis = DataValidation(type='list', formula1='"含税,不含税"', allow_blank=False)
+    info.add_data_validation(price_basis)
+    price_basis.add(info['B9'])
+
+    detail = workbook.create_sheet('报价明细')
+    headers = [
+        '项目明细ID', '行号', '物资名称', '规格型号', '图号/代号', '数量', '单位',
+        '单价', '金额', '分项交期', '技术偏离', '商务偏离', '备注',
+    ]
+    detail.append(headers)
+    for cell in detail[1]:
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = Alignment(horizontal='center')
+    widths = [14, 8, 24, 18, 16, 12, 10, 14, 16, 16, 24, 24, 24]
+    for index, width in enumerate(widths, start=1):
+        detail.column_dimensions[detail.cell(1, index).column_letter].width = width
+    for row_index, item in enumerate(items, start=2):
+        detail.append([
+            item['id'], item['line_no'], item['item_name'], item.get('spec_model') or '',
+            item.get('drawing_no') or '', Decimal(item['quantity_text']), item['unit'], '',
+            f'=ROUND(F{row_index}*H{row_index},2)', item.get('required_delivery_date') or '',
+            '', '', '',
+        ])
+        for col in range(1, 8):
+            detail.cell(row_index, col).fill = _LOCKED_FILL
+        for col in range(8, 14):
+            detail.cell(row_index, col).fill = _INPUT_FILL
+        detail.cell(row_index, 8).number_format = '0.00'
+        detail.cell(row_index, 9).number_format = '0.00'
+    detail.column_dimensions['A'].hidden = True
+    detail.freeze_panes = 'A2'
+    detail.auto_filter.ref = detail.dimensions
+
+    readme = workbook.create_sheet('填报说明', 0)
+    readme.column_dimensions['A'].width = 100
+    readme.append(['供应商标准报价模板'])
+    readme['A1'].font = Font(size=16, bold=True)
+    instructions = [
+        '1. 请勿删除或新增“报价明细”行，不得修改灰色字段。',
+        '2. 黄色字段为供应商填写项；单价和总额统一按“价格口径”填写。',
+        '3. 金额公式仅供填报核对，系统导入时会重新计算。',
+        '4. 如存在技术或商务偏离，请在对应列明确填写。',
+        f'5. 模板格式版本：{FORMAT_VERSION}',
+    ]
+    for line in instructions:
+        readme.append([line])
+
+    meta = workbook.create_sheet('_meta')
+    meta.sheet_state = 'hidden'
+    for key, value in [
+        ('format_version', FORMAT_VERSION), ('project_id', project_id),
+        ('project_no', project['project_no']), ('supplier_id', supplier_id),
+    ]:
+        meta.append([key, value])
+
+    filename = f"{project['project_no']}_{supplier['supplier_name']}_标准报价模板.xlsx"
+    path = procurement_file_service.target_path(project, 'quote_template', filename)
+    workbook.save(path)
+    relative = procurement_file_service.relative_path(path)
+    procurement_store.register_project_file(
+        project_id, 'quote_template', relative, filename,
+        procurement_file_service.sha256_file(path), path.stat().st_size,
+    )
+    if project['status'] == 'draft':
+        procurement_store.transition_project_status(project_id, 'documents_ready', '已生成标准报价模板')
+    return str(path)
+
+
+def _sheet_pairs(sheet):
+    values = {}
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        key = str(row[0] or '').strip()
+        if key:
+            values[key] = row[1]
+    return values
+
+
+def parse_standard_quote(path, project_id, supplier_id, expected_round):
+    errors = []
+    warnings = []
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    expected_items = {item['id']: item for item in procurement_store.list_project_items(project_id)}
+    if not project or not supplier or supplier['project_id'] != project_id:
+        return {}, ['采购项目或候选供应商不存在'], []
+    try:
+        workbook = load_workbook(path, data_only=False, read_only=False)
+    except Exception as exc:
+        return {}, [f'Excel 文件无法读取：{exc}'], []
+    required_sheets = {'_meta', '报价信息', '报价明细'}
+    missing = required_sheets - set(workbook.sheetnames)
+    if missing:
+        return {}, [f'缺少工作表：{"、".join(sorted(missing))}'], []
+
+    meta = {str(row[0].value): row[1].value for row in workbook['_meta'].iter_rows(min_row=1, max_col=2) if row[0].value}
+    if str(meta.get('format_version') or '') != FORMAT_VERSION:
+        errors.append(f'模板版本不匹配，要求 {FORMAT_VERSION}')
+    if str(meta.get('project_id')) != str(project_id) or str(meta.get('project_no')) != project['project_no']:
+        errors.append('报价模板不属于当前采购项目')
+    if str(meta.get('supplier_id')) != str(supplier_id):
+        errors.append('报价模板供应商与当前选择不一致')
+
+    info = _sheet_pairs(workbook['报价信息'])
+    if str(info.get('供应商名称') or '').strip() != supplier['supplier_name']:
+        errors.append('报价信息中的供应商名称不匹配')
+    try:
+        quote_round = int(info.get('报价轮次') or expected_round)
+    except (TypeError, ValueError):
+        quote_round = expected_round
+        errors.append('报价轮次必须为整数')
+    if quote_round != int(expected_round):
+        errors.append('报价文件轮次与本次导入轮次不一致')
+
+    tax_raw = info.get('税率(%)')
+    tax_rate_bps = None
+    if tax_raw not in (None, ''):
+        tax = _decimal(tax_raw, '税率', errors)
+        if tax is not None:
+            if tax > 100:
+                errors.append('税率不能超过 100%')
+            else:
+                tax_rate_bps = int((tax * 100).quantize(Decimal('1')))
+    price_basis = 'tax_inclusive' if str(info.get('价格口径') or '含税').strip() == '含税' else 'tax_exclusive'
+
+    parsed_items = []
+    seen = set()
+    detail = workbook['报价明细']
+    for excel_row, row in enumerate(detail.iter_rows(min_row=2, values_only=False), start=2):
+        if all(cell.value in (None, '') for cell in row):
+            continue
+        try:
+            item_id = int(row[0].value)
+        except (TypeError, ValueError):
+            errors.append(f'第 {excel_row} 行项目明细 ID 无效')
+            continue
+        expected = expected_items.get(item_id)
+        if not expected:
+            errors.append(f'第 {excel_row} 行项目明细不属于当前项目')
+            continue
+        if item_id in seen:
+            errors.append(f'第 {excel_row} 行项目明细重复')
+            continue
+        seen.add(item_id)
+        quantity = _decimal(row[5].value, '数量', errors, excel_row, allow_zero=False)
+        unit_price = _decimal(row[7].value, '单价', errors, excel_row)
+        if quantity is None or unit_price is None:
+            continue
+        if format(quantity.normalize(), 'f') != expected['quantity_text']:
+            warnings.append(f'第 {excel_row} 行数量与项目需求不一致')
+        if str(row[6].value or '').strip() != expected['unit']:
+            warnings.append(f'第 {excel_row} 行单位与项目需求不一致')
+        if unit_price == 0:
+            warnings.append(f'第 {excel_row} 行单价为 0')
+        amount = quantity * unit_price
+        parsed_items.append({
+            'project_item_id': item_id,
+            'line_no': expected['line_no'],
+            'item_name': expected['item_name'],
+            'spec_model': expected.get('spec_model') or '',
+            'drawing_no': expected.get('drawing_no') or '',
+            'quantity_text': format(quantity.normalize(), 'f'),
+            'unit': str(row[6].value or expected['unit']).strip(),
+            'unit_price_minor': _money_minor(unit_price),
+            'amount_minor': _money_minor(amount),
+            'delivery_period': str(row[9].value or '').strip(),
+            'technical_deviation': str(row[10].value or '').strip(),
+            'commercial_deviation': str(row[11].value or '').strip(),
+            'remark': str(row[12].value or '').strip(),
+        })
+    missing_items = sorted(set(expected_items) - seen)
+    if missing_items:
+        warnings.append(f'缺少 {len(missing_items)} 项项目明细')
+    if not parsed_items:
+        errors.append('报价明细为空')
+    computed_total = sum((item['amount_minor'] for item in parsed_items), 0)
+    stated_total = info.get('报价总额')
+    if stated_total not in (None, ''):
+        total_decimal = _decimal(stated_total, '报价总额', errors)
+        if total_decimal is not None and _money_minor(total_decimal) != computed_total:
+            errors.append('报价总额与明细重新计算结果不一致')
+
+    payload = {
+        'header': {
+            'quote_round': quote_round,
+            'quote_date': _date_text(info.get('报价日期')),
+            'quote_valid_until': _date_text(info.get('报价有效期')),
+            'total_amount_minor': computed_total,
+            'currency': 'CNY',
+            'tax_rate_bps': tax_rate_bps,
+            'price_basis': price_basis,
+            'delivery_period': str(info.get('整体交付周期') or '').strip(),
+            'payment_terms': str(info.get('付款条件') or '').strip(),
+            'warranty_period': str(info.get('质保期') or '').strip(),
+            'package_transport': str(info.get('包装运输') or '').strip(),
+            'technical_deviation': str(info.get('整体技术偏离') or '').strip(),
+            'commercial_deviation': str(info.get('整体商务偏离') or '').strip(),
+        },
+        'items': parsed_items,
+        'missing_project_item_ids': missing_items,
+        'size_bytes': Path(path).stat().st_size,
+    }
+    return payload, errors, warnings
+
+
+def create_import_job(project_id, supplier_id, quote_round, file_storage):
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    if not project or not supplier or supplier['project_id'] != project_id:
+        raise ValueError('采购项目或候选供应商不存在')
+    filename = str(file_storage.filename or '')
+    if not filename.lower().endswith('.xlsx'):
+        raise ValueError('首版只支持标准 .xlsx 报价文件')
+    if int(quote_round) < 1:
+        raise ValueError('报价轮次必须大于等于 1')
+    saved = procurement_file_service.save_upload(project, 'supplier_quote', file_storage)
+    payload, errors, warnings = parse_standard_quote(
+        saved['absolute_path'], project_id, supplier_id, int(quote_round)
+    )
+    payload['size_bytes'] = saved['size_bytes']
+    try:
+        return procurement_store.create_import_job({
+            'project_id': project_id,
+            'supplier_id': supplier_id,
+            'quote_round': int(quote_round),
+            'original_name': saved['original_name'],
+            'relative_path': saved['relative_path'],
+            'file_sha256': saved['sha256'],
+            'parser_version': PARSER_VERSION,
+            'payload': payload,
+            'errors': errors,
+            'warnings': warnings,
+        })
+    except Exception:
+        try:
+            Path(saved['absolute_path']).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def confirm_import(job_id):
+    return procurement_store.confirm_import_job(job_id)

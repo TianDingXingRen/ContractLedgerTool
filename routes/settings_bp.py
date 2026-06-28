@@ -11,7 +11,7 @@ import pdf_exporter
 import template_def
 from config import config as app_config
 from utils import helpers
-from utils.errors import wants_json
+from utils.errors import wants_json, GENERIC_ERROR
 from utils.logger import get_logger
 
 
@@ -79,7 +79,6 @@ def _diagnostics_payload():
         },
         'autostart': autostart,
         'pdf': pdf_exporter.diagnose_environment(),
-        'recent_logs': _tail_lines(log_path),
     }
 
 
@@ -113,9 +112,10 @@ def register(app):
                 return _autostart_json(enabled=True)
             return redirect(url_for('index'))
         except Exception as e:
+            get_logger().error('开启自启动失败: %s', e, exc_info=True)
             if wants_json():
-                return _autostart_json(error=f'开启自启动失败：{e}')
-            return redirect(url_for('index', autostart_error=f'开启自启动失败：{e}'))
+                return _autostart_json(error='开启自启动失败')
+            return redirect(url_for('index', autostart_error='开启自启动失败'))
 
     @app.route('/autostart/disable', methods=['POST'])
     def autostart_disable():
@@ -125,9 +125,10 @@ def register(app):
                 return _autostart_json(enabled=False)
             return redirect(url_for('index'))
         except Exception as e:
+            get_logger().error('关闭自启动失败: %s', e, exc_info=True)
             if wants_json():
-                return _autostart_json(error=f'关闭自启动失败：{e}')
-            return redirect(url_for('index', autostart_error=f'关闭自启动失败：{e}'))
+                return _autostart_json(error='关闭自启动失败')
+            return redirect(url_for('index', autostart_error='关闭自启动失败'))
 
     @app.route('/diagnostics')
     def diagnostics():
@@ -145,7 +146,8 @@ def register(app):
             _open_folder(path)
             return jsonify({'success': True, 'path': path})
         except Exception as e:
-            return jsonify({'success': False, 'message': str(e)}), 400
+            get_logger().error('打开文件夹失败: %s', e, exc_info=True)
+            return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
 
     @app.route('/backups')
     def backups():
@@ -159,9 +161,10 @@ def register(app):
                 return jsonify({'success': True, 'backup': backup})
             return redirect(url_for('backups'))
         except Exception as e:
+            get_logger().error('备份操作失败: %s', e, exc_info=True)
             if wants_json():
-                return jsonify({'success': False, 'message': str(e)}), 400
-            return redirect(url_for('backups', error=str(e)))
+                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
+            return redirect(url_for('backups', error=GENERIC_ERROR))
 
     @app.route('/backups/<filename>/restore', methods=['POST'])
     def backup_restore(filename):
@@ -171,9 +174,10 @@ def register(app):
                 return jsonify({'success': True})
             return redirect(url_for('backups'))
         except Exception as e:
+            get_logger().error('备份操作失败: %s', e, exc_info=True)
             if wants_json():
-                return jsonify({'success': False, 'message': str(e)}), 400
-            return redirect(url_for('backups', error=str(e)))
+                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
+            return redirect(url_for('backups', error=GENERIC_ERROR))
 
     @app.route('/backups/<filename>/download')
     def backup_download(filename):
@@ -188,7 +192,7 @@ def register(app):
             mimetype='application/octet-stream',
         )
 
-    @app.route('/reset')
+    @app.route('/reset', methods=['POST'])
     def reset():
         session.pop('sid', None)
         return redirect(url_for('index'))

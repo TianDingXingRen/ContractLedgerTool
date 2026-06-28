@@ -3,18 +3,21 @@
 import os
 import uuid
 import json
+import shutil
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from flask import render_template, request, redirect, url_for, session, jsonify, send_file
 
 import template_def
 import field_eval
-import docx_builder
-from docx import Document
 from utils import helpers
 from utils.logger import get_logger
 from utils.security import MAX_TEMPLATE_FIELDS, MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, bounded_int, bounded_decimal_places, limit_text
+from utils.errors import safe_error, safe_file_error, safe_parse_error, GENERIC_ERROR, GENERIC_PARSE_ERROR, GENERIC_TEMPLATE_ERROR
 
-ALLOWED_EXTENSIONS = {'docx'}
+ALLOWED_EXTENSIONS = {'docx', 'doc'}
+
+_DOC_CONVERT_TIMEOUT = 30  # 秒
 
 
 def _is_valid_docx(filepath):
@@ -27,7 +30,239 @@ def _is_valid_docx(filepath):
         return False
 
 
+def _try_convert_doc_to_docx(doc_path):
+    """尝试将 .doc 转换为 .docx，返回转换后的路径或 None。
+
+    COM 操作在线程中执行，最多等待 _DOC_CONVERT_TIMEOUT 秒，
+    超时后终止本工具启动的 Word/WPS 进程。
+    """
+    target = doc_path.rsplit('.', 1)[0] + '.docx'
+    _state = {'proc': None}
+
+    def _convert():
+        # 方法1: 使用 pythoncom + Word
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+            from win32com import client
+            word = client.Dispatch('Word.Application')
+            word.Visible = False
+            word.DisplayAlerts = 0
+            doc = word.Documents.Open(os.path.abspath(doc_path))
+            doc.SaveAs2(os.path.abspath(target), FileFormat=16)  # wdFormatXMLDocument
+            doc.Close()
+            word.Quit()
+            pythoncom.CoUninitialize()
+            if os.path.exists(target) and os.path.getsize(target) > 0:
+                return True
+        except Exception:
+            pass
+
+        # 方法2: 使用 WPS COM
+        for progid in ['WPS.Application', 'KWPS.Application', 'Ket.Application']:
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+                from win32com import client
+                app = client.Dispatch(progid)
+                app.Visible = False
+                doc = app.Documents.Open(os.path.abspath(doc_path))
+                doc.SaveAs2(os.path.abspath(target), FileFormat=16)
+                doc.Close()
+                app.Quit()
+                pythoncom.CoUninitialize()
+                if os.path.exists(target) and os.path.getsize(target) > 0:
+                    return True
+            except Exception:
+                pass
+
+        return False
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_convert)
+            try:
+                result = future.result(timeout=_DOC_CONVERT_TIMEOUT)
+            except FutureTimeoutError:
+                get_logger().warning('.doc 转换超时（%d 秒）', _DOC_CONVERT_TIMEOUT)
+                return None
+            if result:
+                return target
+    except Exception:
+        get_logger().warning('.doc 转换过程异常', exc_info=True)
+    return None
+
+
 def register(app):
+    # ── 模板保存的辅助函数（从 template_manual_save 提取）──
+
+    def _parse_field_location(idx, field_type):
+        """解析字段在源文档中的位置信息。返回 (location_dict, error_string)。"""
+        if field_type == 'table':
+            table_idx = request.form.get(f'field_table_index_{idx}', '')
+            try:
+                return {
+                    'type': 'table',
+                    'table_index': bounded_int(table_idx, default=0, label='表格位置'),
+                    'template_row_index': bounded_int(
+                        request.form.get(f'field_template_row_index_{idx}', 1), default=1, label='表格模板行',
+                    ),
+                }, ''
+            except ValueError as e:
+                return None, str(e)
+
+        table_cell_idx = request.form.get(f'field_table_index_{idx}', '')
+        if table_cell_idx:
+            try:
+                return {
+                    'type': 'table_cell',
+                    'table_index': bounded_int(table_cell_idx, label='表格位置'),
+                    'row_index': bounded_int(request.form.get(f'field_row_index_{idx}', 0), label='行位置'),
+                    'col_index': bounded_int(request.form.get(f'field_col_index_{idx}', 0), label='列位置'),
+                    'placeholder': limit_text(request.form.get(f'field_placeholder_{idx}', ''), 200),
+                }, ''
+            except ValueError as e:
+                return None, str(e)
+
+        body_index = request.form.get(f'field_body_index_{idx}', '')
+        if body_index:
+            try:
+                return {
+                    'type': 'paragraph',
+                    'body_index': bounded_int(body_index, label='段落位置'),
+                    'placeholder': limit_text(request.form.get(f'field_placeholder_{idx}', ''), 200),
+                }, ''
+            except ValueError as e:
+                return None, str(e)
+
+        return {'type': 'paragraph', 'body_index': 0, 'placeholder': ''}, ''
+
+    def _parse_table_columns(idx, label):
+        """解析表格字段的列定义。返回 (columns_list, error_string)。"""
+        columns = []
+        col_idx = 0
+        while True:
+            if col_idx >= MAX_TABLE_COLUMNS:
+                return None, f'{label} 的列数不能超过 {MAX_TABLE_COLUMNS}'
+            col_label = request.form.get(f'col_label_{idx}_{col_idx}')
+            if col_label is None:
+                break
+            col_label = col_label.strip()
+            if not col_label:
+                col_idx += 1
+                continue
+            col_type = request.form.get(f'col_type_{idx}_{col_idx}', 'text')
+            if col_type not in {'text', 'number', 'textarea', 'select', 'calculated'}:
+                col_type = 'text'
+            col_formula = request.form.get(f'col_formula_{idx}_{col_idx}', '').strip()
+            if col_type == 'calculated' and not col_formula:
+                col_type = 'text'
+            if col_type == 'calculated':
+                try:
+                    field_eval.validate_formula(col_formula)
+                except field_eval.FormulaError as e:
+                    return None, f'{col_label} 公式无效：{e}'
+            col_default = limit_text(request.form.get(f'col_default_{idx}_{col_idx}', ''), 2000)
+            col_key = helpers.safe_col_key(col_label, col_idx, {c['key'] for c in columns})
+            column = {
+                'key': col_key, 'label': col_label, 'field_type': col_type,
+                'formula': col_formula if col_type == 'calculated' else '',
+                'default_value': col_default if col_type != 'calculated' else '',
+            }
+            if col_type == 'select':
+                options_text = request.form.get(f'col_options_{idx}_{col_idx}', '')
+                column['options'] = [
+                    limit_text(option.strip(), 200)
+                    for option in options_text.splitlines() if option.strip()
+                ][:100]
+            if col_type == 'number':
+                try:
+                    column['decimal_places'] = bounded_decimal_places(
+                        request.form.get(f'col_decimal_{idx}_{col_idx}', 2)
+                    )
+                    if col_default:
+                        column['default_value'] = helpers.normalize_number_field_value(
+                            col_default, column
+                        )
+                except ValueError as e:
+                    return None, f'{col_label}{e}'
+            columns.append(column)
+            col_idx += 1
+        return columns or [{'key': 'col_0', 'label': '内容', 'field_type': 'text', 'formula': ''}], ''
+
+    def _parse_single_field(idx, fields_so_far):
+        """从 request.form 解析单个字段定义。返回 (field_dict, error_string)。"""
+        label = request.form.get(f'field_label_{idx}', '').strip()
+        if not label:
+            return None, ''
+
+        field_type = request.form.get(f'field_type_{idx}', 'text')
+        if field_type not in {'text', 'number', 'textarea', 'select', 'table', 'calculated'}:
+            field_type = 'text'
+        field_formula = request.form.get(f'field_formula_{idx}', '').strip()
+        if field_type == 'calculated' and not field_formula:
+            field_type = 'text'
+        if field_type == 'calculated':
+            try:
+                field_eval.validate_formula(field_formula)
+            except field_eval.FormulaError as e:
+                return None, f'{label} 公式无效：{e}'
+
+        submitted_key = request.form.get(f'field_key_{idx}', '').strip()
+        key = helpers.unique_key(helpers.field_key_from_label(submitted_key or label, f'field_{idx}'), fields_so_far)
+
+        location, loc_err = _parse_field_location(idx, field_type)
+        if loc_err:
+            return None, loc_err
+
+        field = {
+            'id': idx, 'key': key, 'label': label,
+            'field_type': field_type,
+            'required': bool(request.form.get(f'field_required_{idx}')),
+            'location': location,
+        }
+
+        if field_type not in ('table', 'calculated'):
+            field['default_value'] = limit_text(request.form.get(f'field_default_{idx}', ''))
+
+        if field_type == 'select':
+            options_text = request.form.get(f'field_options_{idx}', '')
+            field['options'] = [limit_text(o.strip(), 200) for o in options_text.split('\n') if o.strip()][:100]
+        elif field_type == 'number':
+            try:
+                field['decimal_places'] = bounded_decimal_places(
+                    request.form.get(f'field_number_decimal_{idx}', 2)
+                )
+                min_raw = request.form.get(f'field_number_min_{idx}', '').strip()
+                max_raw = request.form.get(f'field_number_max_{idx}', '').strip()
+                field['min_value'] = float(min_raw) if min_raw else None
+                field['max_value'] = float(max_raw) if max_raw else None
+                if (field['min_value'] is not None and field['max_value'] is not None
+                        and field['min_value'] > field['max_value']):
+                    return None, f'{label} 的最小值不能大于最大值'
+                if field.get('default_value'):
+                    field['default_value'] = helpers.normalize_number_field_value(
+                        field['default_value'], field
+                    )
+            except ValueError as e:
+                return None, f'{label} 数字配置无效：{e}'
+        elif field_type == 'calculated':
+            field['formula'] = field_formula
+            try:
+                field['decimal_places'] = bounded_decimal_places(request.form.get(f'field_decimal_{idx}', 2))
+            except ValueError as e:
+                return None, str(e)
+            field['depends_on'] = list(field_eval.get_calc_deps(field))
+        elif field_type == 'table':
+            columns, col_err = _parse_table_columns(idx, label)
+            if col_err:
+                return None, col_err
+            field['columns'] = columns
+
+        return field, ''
+
+    # ── 路由定义 ──
+
     @app.route('/create-template')
     def create_template():
         style_sid = request.args.get('style_sid')
@@ -62,15 +297,31 @@ def register(app):
 
         raw_name = file.filename
         if '.' not in raw_name:
-            return '请上传 .docx 格式的文档', 400
+            return '请上传 .docx 或 .doc 格式的文档', 400
         ext = raw_name.rsplit('.', 1)[1].lower()
         if ext not in ALLOWED_EXTENSIONS:
-            return '请上传 .docx 格式的文档', 400
+            return '仅支持 .docx 和 .doc 格式', 400
 
         session_id = str(uuid.uuid4())
         stored_name = f'{session_id}.{ext}'
         filepath = os.path.join(helpers.UPLOAD_FOLDER, stored_name)
         file.save(filepath)
+
+        # .doc 文件自动转换为 .docx
+        if ext == 'doc':
+            converted = _try_convert_doc_to_docx(filepath)
+            if converted and _is_valid_docx(converted):
+                # 替换为转换后的 .docx 文件
+                os.remove(filepath)
+                new_stored = f'{session_id}.docx'
+                new_path = os.path.join(helpers.UPLOAD_FOLDER, new_stored)
+                shutil.move(converted, new_path)
+                filepath = new_path
+                stored_name = new_stored
+                get_logger().info('DOC converted: %s -> %s', raw_name, new_stored)
+            else:
+                os.remove(filepath)
+                return '无法将 .doc 转换为 .docx，请用 Word/WPS 打开文件后另存为 .docx 格式再上传', 400
 
         if not _is_valid_docx(filepath):
             os.remove(filepath)
@@ -79,7 +330,7 @@ def register(app):
         try:
             detected_fields = helpers.detect_markers(filepath)
         except Exception as e:
-            return f'解析文档失败：{str(e)}', 500
+            return safe_parse_error(e, 'DOCX占位符解析失败', 500)
 
         helpers.save_session_data(session_id, {
             'raw_name': raw_name,
@@ -95,6 +346,9 @@ def register(app):
         template_name = request.form.get('template_name', '').strip()
         if not template_name:
             return '模板名称不能为空', 400
+        if len(template_name) > 120:
+            return '模板名称不能超过120个字符', 400
+        template_name = limit_text(template_name, 120)
         category = limit_text(request.form.get('template_category', '').strip(), 50)
 
         try:
@@ -103,137 +357,14 @@ def register(app):
             return str(e), 400
 
         fields = []
-        idx = 0
-
-        while True:
-            if idx >= MAX_TEMPLATE_FIELDS:
-                return f'字段数量不能超过 {MAX_TEMPLATE_FIELDS}', 400
-            label_key = f'field_label_{idx}'
-            if label_key not in request.form:
+        for idx in range(MAX_TEMPLATE_FIELDS):
+            if f'field_label_{idx}' not in request.form:
                 break
-
-            label = request.form.get(label_key, '').strip()
-            if not label:
-                idx += 1
-                continue
-
-            field_type = request.form.get(f'field_type_{idx}', 'text')
-            field_formula = request.form.get(f'field_formula_{idx}', '').strip()
-            if field_type == 'calculated' and not field_formula:
-                field_type = 'text'
-            if field_type == 'calculated':
-                try:
-                    field_eval.validate_formula(field_formula)
-                except field_eval.FormulaError as e:
-                    return f'{label} 公式无效：{e}', 400
-            required = bool(request.form.get(f'field_required_{idx}'))
-
-            submitted_key = request.form.get(f'field_key_{idx}', '').strip()
-            key_source = submitted_key or label
-            key = helpers.unique_key(helpers.field_key_from_label(key_source, f'field_{idx}'), fields)
-
-            location = {'type': 'paragraph', 'body_index': 0, 'placeholder': ''}
-            if field_type == 'table':
-                table_idx = request.form.get(f'field_table_index_{idx}', '')
-                try:
-                    location = {
-                        'type': 'table',
-                        'table_index': bounded_int(table_idx, default=0, label='表格位置'),
-                        'template_row_index': bounded_int(
-                            request.form.get(f'field_template_row_index_{idx}', 1),
-                            default=1,
-                            label='表格模板行',
-                        ),
-                    }
-                except ValueError as e:
-                    return str(e), 400
-            else:
-                table_cell_idx = request.form.get(f'field_table_index_{idx}', '')
-                if table_cell_idx:
-                    try:
-                        location = {
-                            'type': 'table_cell',
-                            'table_index': bounded_int(table_cell_idx, label='表格位置'),
-                            'row_index': bounded_int(request.form.get(f'field_row_index_{idx}', 0), label='行位置'),
-                            'col_index': bounded_int(request.form.get(f'field_col_index_{idx}', 0), label='列位置'),
-                            'placeholder': limit_text(request.form.get(f'field_placeholder_{idx}', ''), 200),
-                        }
-                    except ValueError as e:
-                        return str(e), 400
-                else:
-                    body_index = request.form.get(f'field_body_index_{idx}', '')
-                    if body_index:
-                        try:
-                            location = {
-                                'type': 'paragraph',
-                                'body_index': bounded_int(body_index, label='段落位置'),
-                                'placeholder': limit_text(request.form.get(f'field_placeholder_{idx}', ''), 200),
-                            }
-                        except ValueError as e:
-                            return str(e), 400
-
-            field = {
-                'id': idx,
-                'key': key,
-                'label': label,
-                'field_type': field_type,
-                'required': required,
-                'location': location,
-            }
-
-            if field_type not in ('table', 'calculated'):
-                field['default_value'] = limit_text(request.form.get(f'field_default_{idx}', ''))
-
-            if field_type == 'select':
-                options_text = request.form.get(f'field_options_{idx}', '')
-                field['options'] = [limit_text(o.strip(), 200) for o in options_text.split('\n') if o.strip()][:100]
-
-            elif field_type == 'calculated':
-                field['formula'] = field_formula
-                try:
-                    field['decimal_places'] = bounded_decimal_places(
-                        request.form.get(f'field_decimal_{idx}', 2)
-                    )
-                except ValueError as e:
-                    return str(e), 400
-                field['depends_on'] = list(field_eval.get_calc_deps(field))
-
-            elif field_type == 'table':
-                columns = []
-                col_idx = 0
-                while True:
-                    if col_idx >= MAX_TABLE_COLUMNS:
-                        return f'{label} 的列数不能超过 {MAX_TABLE_COLUMNS}', 400
-                    col_label = request.form.get(f'col_label_{idx}_{col_idx}')
-                    if col_label is None:
-                        break
-                    col_label = col_label.strip()
-                    if not col_label:
-                        col_idx += 1
-                        continue
-                    col_type = request.form.get(f'col_type_{idx}_{col_idx}', 'text')
-                    col_formula = request.form.get(f'col_formula_{idx}_{col_idx}', '').strip()
-                    if col_type == 'calculated' and not col_formula:
-                        col_type = 'text'
-                    if col_type == 'calculated':
-                        try:
-                            field_eval.validate_formula(col_formula)
-                        except field_eval.FormulaError as e:
-                            return f'{col_label} 公式无效：{e}', 400
-                    col_default = limit_text(request.form.get(f'col_default_{idx}_{col_idx}', ''), 2000)
-                    col_key = helpers.safe_col_key(col_label, col_idx, {c['key'] for c in columns})
-                    columns.append({
-                        'key': col_key,
-                        'label': col_label,
-                        'field_type': col_type,
-                        'formula': col_formula if col_type == 'calculated' else '',
-                        'default_value': col_default if col_type != 'calculated' else '',
-                    })
-                    col_idx += 1
-                field['columns'] = columns or [{'key': 'col_0', 'label': '内容', 'field_type': 'text', 'formula': ''}]
-
-            fields.append(field)
-            idx += 1
+            field, err = _parse_single_field(idx, fields)
+            if err:
+                return err, 400
+            if field:
+                fields.append(field)
 
         if not fields:
             return '请至少添加一个字段', 400
@@ -289,7 +420,7 @@ def register(app):
         try:
             tpl = template_def.TemplateDef.load(path)
         except Exception as e:
-            return f'加载模板失败：{str(e)}', 500
+            return safe_error(e, '加载模板失败', 500)
 
         sid = str(uuid.uuid4())
         helpers.save_session_data(sid, {
@@ -301,11 +432,18 @@ def register(app):
         })
         session['sid'] = sid
 
+        # 确保所有字段都有 id（兼容手动创建/旧版模板）
+        fields = tpl.data['fields']
+        for i, f in enumerate(fields):
+            if 'id' not in f:
+                f['id'] = i
+
         return render_template(
             'editor.html',
-            fields=tpl.data['fields'],
-            field_count=tpl.field_count,
+            fields=fields,
+            field_count=len(fields),
             template_name=tpl.name,
+            template_filename=os.path.basename(path),
         )
 
     @app.route('/template/<name>/preview', methods=['POST'])
@@ -321,45 +459,27 @@ def register(app):
         try:
             tpl = template_def.TemplateDef.load(path)
         except Exception as e:
-            return f'加载模板失败：{e}', 500
+            return safe_error(e, '加载模板失败', 500)
 
         fields = tpl.data.get('fields', [])
-        field_values = {}
-        for f in fields:
-            key = f['key']
-            if f.get('field_type') == 'table':
-                columns = f.get('columns', [])
-                rows = []
-                for _ in range(2):
-                    row = {col['key']: f'[{col["label"]}]' for col in columns}
-                    rows.append(row)
-                field_values[key] = rows
-            else:
-                field_values[key] = f.get('default_value', '') or f.get('label', key)
+        field_values, input_errors = helpers.prepare_generation_values(fields, request.form)
+        if input_errors:
+            return '\n'.join(input_errors), 400
 
         source_docx = tpl.data.get('source_docx', '')
         output_path = os.path.join(helpers.OUTPUT_FOLDER, f'preview_{uuid.uuid4().hex[:8]}.docx')
 
+        template_path = ''
         if source_docx:
             try:
                 template_path = helpers.safe_uploaded_docx_path(source_docx)
             except ValueError as e:
-                return str(e), 400
-            if not os.path.exists(template_path):
-                return '模板源文件不存在', 404
-            doc = Document(template_path)
-            ordered_fields = helpers.docx_write_order(fields)
-            for field in ordered_fields:
-                ftype = field.get('field_type')
-                key = field.get('key')
-                location = field.get('location', {})
-                if ftype == 'table':
-                    docx_builder.apply_table_field(doc, field, field_values.get(key, []))
-                else:
-                    docx_builder.apply_text_field(doc, location, field_values.get(key, ''), field.get('label', ''), key)
-            doc.save(output_path)
-        else:
-            docx_builder.generate_from_scratch(tpl.data, field_values, output_path)
+                return safe_error(e, '模板路径无效')
+        gen_errors, output_path = helpers.generate_docx_document(
+            tpl.data, fields, field_values, template_path, output_path
+        )
+        if gen_errors:
+            return '预览生成失败：\n' + '\n'.join(gen_errors), 500
 
         return send_file(
             output_path,
@@ -397,7 +517,7 @@ def register(app):
         try:
             template_def.restore_version(template_name, version_filename)
         except FileNotFoundError as e:
-            return str(e), 404
+            return safe_error(e, '版本文件不存在', 404)
         return redirect(url_for('list_templates'))
 
     @app.route('/template-defaults', methods=['POST'])
@@ -418,7 +538,8 @@ def register(app):
         try:
             tpl = template_def.TemplateDef.load(template_path_data)
         except Exception as e:
-            return jsonify({'success': False, 'message': f'加载模板失败：{e}'}), 500
+            get_logger().error('模板加载失败: %s', e, exc_info=True)
+            return jsonify({'success': False, 'message': GENERIC_TEMPLATE_ERROR}), 500
 
         fields = tpl.data.get('fields', [])
         errors = []
@@ -446,7 +567,17 @@ def register(app):
                 except (json.JSONDecodeError, TypeError, ValueError) as e:
                     errors.append(f'{field.get("label", field.get("key"))} 的预制表格内容无效：{e}')
             elif field_type != 'calculated':
-                field['default_value'] = limit_text(request.form.get(f'field_{i}', ''))
+                default_value = limit_text(request.form.get(f'field_{i}', ''))
+                if field_type == 'number' and default_value:
+                    try:
+                        default_value = helpers.normalize_number_field_value(default_value, field)
+                    except ValueError as e:
+                        errors.append(f'{field.get("label", field.get("key"))}{e}')
+                elif field_type == 'select' and default_value:
+                    options = [str(option) for option in field.get('options', [])]
+                    if options and default_value not in options:
+                        errors.append(f'{field.get("label", field.get("key"))} 的预制选项无效')
+                field['default_value'] = default_value
 
         if errors:
             return jsonify({'success': False, 'message': '\n'.join(errors)}), 400
@@ -467,7 +598,8 @@ def register(app):
         try:
             tpl.save(template_path_data)
         except Exception as e:
-            return jsonify({'success': False, 'message': f'保存模板失败：{e}'}), 500
+            get_logger().error('保存模板默认值失败: %s', e, exc_info=True)
+            return jsonify({'success': False, 'message': GENERIC_TEMPLATE_ERROR}), 500
 
         return jsonify({
             'success': True,

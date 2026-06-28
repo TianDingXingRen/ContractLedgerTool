@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from datetime import date, timedelta
 
 from flask import render_template, request, redirect, url_for, send_file, jsonify
 
@@ -9,29 +10,48 @@ import ledger_store
 import xlsx_exporter
 from utils import helpers
 from utils.security import MAX_PLAN_ROWS, MAX_TEXT_VALUE_LENGTH, limit_text
+from utils.errors import safe_error
 
 
 def _payment_row_from_form(idx, form):
     prefix = f'plan_{idx}_'
-    paid_amount = max(0, helpers.float_or_none(form.get(prefix + 'paid_amount')) or 0)
-    ratio = helpers.float_or_none(form.get(prefix + 'ratio'))
+    def optional_number(name, label, default=None):
+        raw = str(form.get(prefix + name, '') or '').strip()
+        if not raw:
+            return default
+        parsed = helpers.float_or_none(raw)
+        if parsed is None:
+            raise ValueError(f'{label}必须是有效数字')
+        return parsed
+
+    paid_amount = optional_number('paid_amount', '已付金额', 0)
+    ratio = optional_number('ratio', '付款比例')
     if ratio is not None and (ratio < 0 or ratio > 100):
-        ratio = max(0.0, min(100.0, ratio))
-    due_amount = helpers.float_or_none(form.get(prefix + 'due_amount'))
-    if due_amount is not None:
-        due_amount = max(0.0, due_amount)
+        raise ValueError('付款比例必须在 0 到 100 之间')
+    due_amount = optional_number('due_amount', '应付金额')
+    if paid_amount < 0 or (due_amount is not None and due_amount < 0):
+        raise ValueError('付款金额不能为负数')
+
+    def optional_date(name, label):
+        raw = str(form.get(prefix + name, '') or '').strip()
+        if not raw:
+            return ''
+        normalized = helpers.normalize_date(raw)
+        if not normalized:
+            raise ValueError(f'{label}格式无效，请使用 YYYY-MM-DD')
+        return normalized
     return {
         'id': form.get(prefix + 'id', '').strip(),
         'phase_name': limit_text(form.get(prefix + 'phase_name', '').strip(), 120),
         'payment_type': form.get(prefix + 'payment_type', 'conditional').strip() or 'conditional',
         'trigger_event': limit_text(form.get(prefix + 'trigger_event', '').strip(), 200),
         'trigger_days': helpers.int_or_none(form.get(prefix + 'trigger_days')),
-        'expected_trigger_date': helpers.normalize_date(form.get(prefix + 'expected_trigger_date')) or form.get(prefix + 'expected_trigger_date', '').strip(),
-        'due_date': helpers.normalize_date(form.get(prefix + 'due_date')) or form.get(prefix + 'due_date', '').strip(),
+        'expected_trigger_date': optional_date('expected_trigger_date', '预计触发日期'),
+        'due_date': optional_date('due_date', '应付日期'),
         'ratio': ratio,
         'due_amount': due_amount,
         'paid_amount': paid_amount,
-        'paid_date': helpers.normalize_date(form.get(prefix + 'paid_date')) or form.get(prefix + 'paid_date', '').strip(),
+        'paid_date': optional_date('paid_date', '实付日期'),
         'condition_text': limit_text(form.get(prefix + 'condition_text', '').strip(), MAX_TEXT_VALUE_LENGTH),
         'source_text': limit_text(form.get(prefix + 'source_text', '').strip(), MAX_TEXT_VALUE_LENGTH),
         'confidence': form.get(prefix + 'confidence', 'low').strip() or 'low',
@@ -52,39 +72,43 @@ def register(app):
             count = 0
         if count > MAX_PLAN_ROWS:
             return f'付款计划行数不能超过 {MAX_PLAN_ROWS}', 400
+        changes = []
         for idx in range(count):
             delete_flag = request.form.get(f'plan_{idx}_delete') == '1'
             plan_id = request.form.get(f'plan_{idx}_id', '').strip()
             if delete_flag:
                 if plan_id:
                     try:
-                        ledger_store.delete_payment_plan(int(plan_id), contract_id=contract_id)
+                        changes.append({'id': int(plan_id), 'delete': True})
                     except ValueError:
                         return '付款计划 ID 无效', 400
                 continue
-            row = _payment_row_from_form(idx, request.form)
+            try:
+                row = _payment_row_from_form(idx, request.form)
+            except ValueError as e:
+                return str(e), 400
             plan_id = row.pop('id', '')
             if plan_id:
                 try:
-                    updated = ledger_store.update_payment_plan(int(plan_id), row, contract_id=contract_id)
+                    plan_id = int(plan_id)
                 except ValueError:
                     return '付款计划 ID 或状态无效', 400
-                if updated == 0:
-                    return '付款计划不存在或不属于当前合同', 404
+                changes.append({'id': plan_id, 'data': row})
             elif helpers.has_payment_content(row):
                 row['confirm_status'] = row.get('confirm_status') or 'confirmed'
-                try:
-                    ledger_store.insert_payment_plan(contract_id, row)
-                except ValueError as e:
-                    return str(e), 400
+                changes.append({'data': row})
+        try:
+            ledger_store.save_payment_plan_changes(contract_id, changes)
+        except ValueError as e:
+            return str(e), 400
         return redirect(url_for('contract_detail', contract_id=contract_id))
 
     @app.route('/contracts/<int:contract_id>/payments/confirm-all', methods=['POST'])
     def payment_plans_confirm_all(contract_id):
         plans = ledger_store.list_payment_plans(contract_id=contract_id, confirm_status='pending')
-        for plan in plans:
-            if helpers.can_bulk_confirm_payment(plan):
-                ledger_store.update_payment_plan(plan['id'], {'confirm_status': 'confirmed'}, contract_id=contract_id)
+        confirmable_ids = [plan['id'] for plan in plans if helpers.can_bulk_confirm_payment(plan)]
+        if confirmable_ids:
+            ledger_store.batch_confirm_plans(confirmable_ids, contract_id)
         return redirect(url_for('contract_detail', contract_id=contract_id))
 
     @app.route('/api/payments/due-soon')
@@ -111,6 +135,9 @@ def register(app):
                 'paid_amount': p.get('paid_amount', 0),
                 'counterparty': p.get('counterparty', ''),
                 'owner': p.get('owner', ''),
+                'project_name': p.get('project_name', ''),
+                'coverage_start': p.get('coverage_start'),
+                'coverage_end': p.get('coverage_end'),
             } for p in payments],
         })
 
@@ -120,6 +147,7 @@ def register(app):
         payment_status = request.args.get('payment_status', '').strip()
         start_date = request.args.get('start_date', '').strip()
         end_date = request.args.get('end_date', '').strip()
+        project_name = request.args.get('project_name', '').strip()
         try:
             page = max(1, int(request.args.get('page', 1)))
         except ValueError:
@@ -129,8 +157,19 @@ def register(app):
             payment_status=payment_status,
             start_date=start_date,
             end_date=end_date,
+            project_name=project_name,
             page=page,
         )
+        today = date.today()
+        today_str = today.strftime('%Y-%m-%d')
+        due_soon_end = (today + timedelta(days=7)).strftime('%Y-%m-%d')
+        for row in result['rows']:
+            unpaid = (row.get('due_amount') or 0) - (row.get('paid_amount') or 0)
+            due_date = row.get('due_date') or ''
+            is_unpaid = row.get('payment_status') != 'paid'
+            row['unpaid_amount'] = unpaid
+            row['is_overdue'] = bool(due_date and due_date <= today_str and is_unpaid)
+            row['is_due_soon'] = bool(due_date and today_str < due_date <= due_soon_end and is_unpaid)
         next_start, next_end = helpers.next_month_range()
         return render_template(
             'payment_plans.html',
@@ -139,11 +178,15 @@ def register(app):
             payment_status=payment_status,
             start_date=start_date,
             end_date=end_date,
+            project_name=project_name,
+            project_names=ledger_store.list_project_names(),
             page=result['page'],
             pages=result['pages'],
             total=result['total'],
             next_start=next_start,
             next_end=next_end,
+            today=today,
+            due_soon_end=due_soon_end,
         )
 
     @app.route('/payment-plans/export-next-month')
