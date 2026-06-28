@@ -19,3 +19,15 @@ data/*.db-shm
 templates/versions/
 # config.json — 用户本地配置（由程序自动生成）
 config.json
+# .venv — 自动创建的虚拟环境
+.venv/
+.installed_version
+.pytest_runtime_*/
+.pytest_basetemp*/
+.pytest_cache/
+# 临时/备份文件
+*.bak
+templates/_*.txt
+templates/_new_style_ref.css
+# 数据库备份目录（运行时生成）
+data/backups/

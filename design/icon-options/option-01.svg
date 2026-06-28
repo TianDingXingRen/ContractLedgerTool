@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+
+<defs>
+  <linearGradient id="bg1" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#2563EB"/>
+    <stop offset="100%" stop-color="#1D4ED8"/>
+  </linearGradient>
+  <linearGradient id="pen1" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#F59E0B"/>
+    <stop offset="100%" stop-color="#D97706"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg1)"/>
+<rect x="148" y="120" width="280" height="320" rx="16" fill="white" opacity="0.95"/>
+<rect x="184" y="172" width="140" height="10" rx="5" fill="#93C5FD"/>
+<rect x="184" y="198" width="200" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="220" width="180" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="242" width="160" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="264" width="190" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="286" width="140" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<g transform="rotate(45, 380, 140)">
+  <rect x="370" y="60" width="20" height="180" rx="10" fill="url(#pen1)"/>
+  <polygon points="380,60 370,40 390,40" fill="#D4D4D8"/>
+  <rect x="372" y="100" width="16" height="12" rx="2" fill="#FDE68A"/>
+  <rect x="372" y="130" width="16" height="12" rx="2" fill="#FCA5A5"/>
+</g>
+<circle cx="360" cy="380" r="30" fill="none" stroke="#EF4444" stroke-width="4" opacity="0.7"/>
+<text x="360" y="386" text-anchor="middle" fill="#EF4444" font-size="18" font-weight="bold" font-family="sans-serif" opacity="0.7">审</text>
+
+</svg>

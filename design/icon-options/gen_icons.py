@@ -1,0 +1,345 @@
+"""Generate 8 SVG icon candidates for the Contract Generation Tool."""
+from pathlib import Path
+
+BASE = Path(r"C:/Users/shaoxudong/Documents/合同生成工具/design/icon-options")
+BASE.mkdir(parents=True, exist_ok=True)
+
+def svg(body, w=512, h=512):
+    """Wrap body in SVG tags."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">\n'
+        f'{body}\n</svg>'
+    )
+
+def write_icon(name, body):
+    (BASE / name).write_text(body, encoding="utf-8")
+    print(f"Created: {name}")
+
+# ── Option 01: Document + Pen (Blue) ──────────────────────────────────
+write_icon("option-01.svg", svg("""
+<defs>
+  <linearGradient id="bg1" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#2563EB"/>
+    <stop offset="100%" stop-color="#1D4ED8"/>
+  </linearGradient>
+  <linearGradient id="pen1" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#F59E0B"/>
+    <stop offset="100%" stop-color="#D97706"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg1)"/>
+<rect x="148" y="120" width="280" height="320" rx="16" fill="white" opacity="0.95"/>
+<rect x="184" y="172" width="140" height="10" rx="5" fill="#93C5FD"/>
+<rect x="184" y="198" width="200" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="220" width="180" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="242" width="160" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="264" width="190" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<rect x="184" y="286" width="140" height="8" rx="4" fill="#BFDBFE" opacity="0.7"/>
+<g transform="rotate(45, 380, 140)">
+  <rect x="370" y="60" width="20" height="180" rx="10" fill="url(#pen1)"/>
+  <polygon points="380,60 370,40 390,40" fill="#D4D4D8"/>
+  <rect x="372" y="100" width="16" height="12" rx="2" fill="#FDE68A"/>
+  <rect x="372" y="130" width="16" height="12" rx="2" fill="#FCA5A5"/>
+</g>
+<circle cx="360" cy="380" r="30" fill="none" stroke="#EF4444" stroke-width="4" opacity="0.7"/>
+<text x="360" y="386" text-anchor="middle" fill="#EF4444" font-size="18" font-weight="bold" font-family="sans-serif" opacity="0.7">审</text>
+"""))
+
+# ── Option 02: Handshake (Green) ─────────────────────────────────────
+write_icon("option-02.svg", svg("""
+<defs>
+  <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#059669"/>
+    <stop offset="100%" stop-color="#047857"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg2)"/>
+<g transform="translate(130,200)" fill="#D1D5DB">
+  <rect x="30" y="20" width="30" height="70" rx="15" transform="rotate(-15,45,55)"/>
+  <rect x="15" y="40" width="20" height="55" rx="10" transform="rotate(-30,25,67)"/>
+  <rect x="2" y="35" width="18" height="65" rx="9" transform="rotate(-45,11,67)"/>
+  <rect x="-6" y="30" width="16" height="60" rx="8" transform="rotate(-55,2,60)"/>
+  <rect x="-10" y="50" width="28" height="50" rx="14" transform="rotate(10,4,75)"/>
+  <rect x="0" y="80" width="50" height="35" rx="17" transform="rotate(-5,25,97)"/>
+</g>
+<g transform="translate(310,200)" fill="#D1D5DB">
+  <rect x="-60" y="20" width="30" height="70" rx="15" transform="rotate(15,-45,55)"/>
+  <rect x="-35" y="40" width="20" height="55" rx="10" transform="rotate(30,-25,67)"/>
+  <rect x="-20" y="35" width="18" height="65" rx="9" transform="rotate(45,-11,67)"/>
+  <rect x="-10" y="30" width="16" height="60" rx="8" transform="rotate(55,-2,60)"/>
+  <rect x="-18" y="50" width="28" height="50" rx="14" transform="rotate(-10,-4,75)"/>
+  <rect x="-50" y="80" width="50" height="35" rx="17" transform="rotate(5,-25,97)"/>
+</g>
+<circle cx="220" cy="275" r="35" fill="white" opacity="0.15"/>
+<circle cx="220" cy="275" r="22" fill="white" opacity="0.25"/>
+"""))
+
+# ── Option 03: File + Checkmark (Purple) ─────────────────────────────
+write_icon("option-03.svg", svg("""
+<defs>
+  <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#7C3AED"/>
+    <stop offset="100%" stop-color="#6D28D9"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg3)"/>
+<rect x="130" y="100" width="252" height="340" rx="16" fill="white" opacity="0.95"/>
+<polygon points="382,100 382,180 312,180" fill="#E5E7EB"/>
+<polygon points="312,180 382,180 382,100" fill="#D1D5DB"/>
+<rect x="158" y="148" width="100" height="8" rx="4" fill="#DDD6FE"/>
+<rect x="158" y="170" width="160" height="6" rx="3" fill="#EDE9FE" opacity="0.8"/>
+<rect x="158" y="188" width="140" height="6" rx="3" fill="#EDE9FE" opacity="0.8"/>
+<rect x="158" y="206" width="170" height="6" rx="3" fill="#EDE9FE" opacity="0.8"/>
+<circle cx="380" cy="360" r="48" fill="#10B981"/>
+<polyline points="362,360 374,374 398,344" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+"""))
+
+# ── Option 04: Seal / Stamp (Red) ────────────────────────────────────
+write_icon("option-04.svg", svg("""
+<defs>
+  <linearGradient id="bg4" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#DC2626"/>
+    <stop offset="100%" stop-color="#B91C1C"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg4)"/>
+<circle cx="256" cy="256" r="140" fill="none" stroke="white" stroke-width="6" opacity="0.9"/>
+<circle cx="256" cy="256" r="118" fill="none" stroke="white" stroke-width="2" opacity="0.5"/>
+<polygon points="256,166 282,220 340,228 298,266 306,324 256,292 206,324 214,266 172,228 230,220" fill="white" opacity="0.9"/>
+<text x="256" y="370" text-anchor="middle" fill="white" font-size="30" font-weight="bold" font-family="sans-serif">合 同</text>
+"""))
+
+# ── Option 05: Shield + Document (Teal) ──────────────────────────────
+write_icon("option-05.svg", svg("""
+<defs>
+  <linearGradient id="bg5" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#0F766E"/>
+    <stop offset="100%" stop-color="#115E59"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg5)"/>
+<path d="M256,100 L388,164 L388,280 C388,368 320,418 256,440 C192,418 124,368 124,280 L124,164 Z" fill="white" opacity="0.12"/>
+<rect x="186" y="180" width="140" height="170" rx="10" fill="white" opacity="0.9"/>
+<rect x="202" y="200" width="80" height="6" rx="3" fill="#99F6E4"/>
+<rect x="202" y="216" width="100" height="4" rx="2" fill="#CCFBF1" opacity="0.8"/>
+<rect x="202" y="228" width="90" height="4" rx="2" fill="#CCFBF1" opacity="0.8"/>
+<rect x="202" y="240" width="100" height="4" rx="2" fill="#CCFBF1" opacity="0.8"/>
+<circle cx="316" cy="340" r="22" fill="#10B981"/>
+<polyline points="308,340 314,346 326,332" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+"""))
+
+# ── Option 06: Briefcase + Documents (Orange) ────────────────────────
+write_icon("option-06.svg", svg("""
+<defs>
+  <linearGradient id="bg6" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#D97706"/>
+    <stop offset="100%" stop-color="#B45309"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg6)"/>
+<rect x="136" y="190" width="240" height="160" rx="20" fill="white" opacity="0.9"/>
+<rect x="126" y="200" width="260" height="18" rx="9" fill="white" opacity="0.7"/>
+<rect x="206" y="170" width="100" height="36" rx="18" fill="none" stroke="white" stroke-width="10" opacity="0.9"/>
+<rect x="176" y="320" width="160" height="10" rx="5" fill="#FDE68A" opacity="0.9"/>
+<g transform="translate(150,230) rotate(-8)">
+  <rect x="0" y="0" width="60" height="80" rx="6" fill="#FEF3C7" opacity="0.85"/>
+  <rect x="10" y="12" width="35" height="4" rx="2" fill="#FCD34D"/>
+  <rect x="10" y="22" width="25" height="3" rx="1.5" fill="#FDE68A"/>
+  <rect x="10" y="30" width="30" height="3" rx="1.5" fill="#FDE68A"/>
+</g>
+<g transform="translate(302,230) rotate(8)">
+  <rect x="0" y="0" width="60" height="80" rx="6" fill="#FEF3C7" opacity="0.85"/>
+  <rect x="13" y="12" width="35" height="4" rx="2" fill="#FCD34D"/>
+  <rect x="13" y="22" width="25" height="3" rx="1.5" fill="#FDE68A"/>
+  <rect x="13" y="30" width="30" height="3" rx="1.5" fill="#FDE68A"/>
+</g>
+"""))
+
+# ── Option 07: Grid Tiles / Modules (Sky Blue) ──────────────────────
+write_icon("option-07.svg", svg("""
+<defs>
+  <linearGradient id="bg7" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#0284C7"/>
+    <stop offset="100%" stop-color="#0369A1"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg7)"/>
+<rect x="156" y="136" width="100" height="100" rx="14" fill="white" opacity="0.9"/>
+<rect x="170" y="156" width="70" height="6" rx="3" fill="#BAE6FD"/>
+<rect x="170" y="172" width="50" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="170" y="184" width="60" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="170" y="196" width="40" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="200" y="210" width="16" height="16" rx="4" fill="#38BDF8"/>
+<rect x="272" y="136" width="100" height="100" rx="14" fill="white" opacity="0.9"/>
+<rect x="286" y="156" width="70" height="6" rx="3" fill="#BAE6FD"/>
+<rect x="286" y="172" width="50" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="286" y="184" width="65" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="286" y="196" width="45" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="316" y="210" width="16" height="16" rx="4" fill="#38BDF8"/>
+<rect x="156" y="252" width="100" height="100" rx="14" fill="white" opacity="0.9"/>
+<rect x="170" y="272" width="70" height="6" rx="3" fill="#BAE6FD"/>
+<rect x="170" y="288" width="55" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="170" y="300" width="60" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="170" y="312" width="40" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="200" y="326" width="16" height="16" rx="4" fill="#10B981"/>
+<rect x="272" y="252" width="100" height="100" rx="14" fill="white" opacity="0.9"/>
+<rect x="286" y="272" width="70" height="6" rx="3" fill="#BAE6FD"/>
+<rect x="286" y="288" width="50" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="286" y="300" width="65" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="286" y="312" width="45" height="4" rx="2" fill="#E0F2FE"/>
+<rect x="316" y="326" width="16" height="16" rx="4" fill="#10B981"/>
+<line x1="256" y1="236" x2="256" y2="252" stroke="white" stroke-width="2" opacity="0.25"/>
+<line x1="206" y1="352" x2="206" y2="368" stroke="white" stroke-width="2" opacity="0.25"/>
+"""))
+
+# ── Option 08: Quill Pen + Paper (Indigo) ────────────────────────────
+write_icon("option-08.svg", svg("""
+<defs>
+  <linearGradient id="bg8" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#4338CA"/>
+    <stop offset="100%" stop-color="#3730A3"/>
+  </linearGradient>
+  <linearGradient id="quillg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#FDE68A"/>
+    <stop offset="50%" stop-color="#F59E0B"/>
+    <stop offset="100%" stop-color="#D97706"/>
+  </linearGradient>
+</defs>
+<rect width="512" height="512" rx="102" fill="url(#bg8)"/>
+<g transform="rotate(-3, 256, 270)">
+  <rect x="130" y="100" width="252" height="340" rx="16" fill="white" opacity="0.95"/>
+  <rect x="158" y="140" width="100" height="8" rx="4" fill="#C7D2FE"/>
+  <rect x="158" y="162" width="160" height="5" rx="2.5" fill="#E0E7FF"/>
+  <rect x="158" y="178" width="140" height="5" rx="2.5" fill="#E0E7FF"/>
+  <rect x="158" y="194" width="170" height="5" rx="2.5" fill="#E0E7FF"/>
+  <path d="M158,260 Q230,240 290,280" fill="none" stroke="#6366F1" stroke-width="3" stroke-linecap="round"/>
+</g>
+<g transform="rotate(30, 350, 160)">
+  <path d="M380,100 C410,140 420,200 400,260 C395,280 385,290 375,280 C365,270 370,250 380,230 C390,270 390,200 385,150 Z" fill="url(#quillg)"/>
+  <path d="M375,280 L385,295 L395,280 Z" fill="#92400E"/>
+  <line x1="380" y1="285" x2="380" y2="272" stroke="#B45309" stroke-width="2"/>
+</g>
+<circle cx="330" cy="300" r="4" fill="#1E3A8A" opacity="0.5"/>
+"""))
+
+# ── Contact Sheet Generation ──────────────────────────────────────────
+# Inline the SVG content into an HTML contact sheet
+icons_data = [
+    ("01", "Document + Pen", "blue", "经典合同文档+笔"),
+    ("02", "Handshake", "green", "握手合作"),
+    ("03", "File + Checkmark", "purple", "文件确认勾"),
+    ("04", "Seal Stamp", "red", "合同印章"),
+    ("05", "Shield + Document", "teal", "盾牌安全合同"),
+    ("06", "Briefcase + Docs", "orange", "公文包+文件"),
+    ("07", "Grid Tiles", "sky-blue", "模块化文档网格"),
+    ("08", "Quill + Paper", "indigo", "羽毛笔签署"),
+]
+
+contact_rows = []
+for num, title, color, desc in icons_data:
+    fpath = BASE / f"option-{num}.svg"
+    svg_content = fpath.read_text(encoding="utf-8")
+    contact_rows.append(f'''    <div class="card">
+      <div class="icon-wrapper">
+        {svg_content}
+      </div>
+      <div class="label">
+        <div class="title">{num}. {title}</div>
+        <div class="desc">{desc}</div>
+        <div class="color-tag {color}">{color}</div>
+      </div>
+    </div>''')
+
+contact_sheet_html = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Icon Contact Sheet - 合同生成工具</title>
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ font-family: -apple-system, "Microsoft YaHei", sans-serif; background:#f0f2f5; padding:24px; color:#333; }}
+  h1 {{ text-align:center; margin-bottom:8px; font-size:24px; }}
+  .subtitle {{ text-align:center; color:#666; margin-bottom:32px; font-size:14px; }}
+  .grid {{ display:grid; grid-template-columns:repeat(4,1fr); gap:20px; max-width:1200px; margin:0 auto; }}
+  .card {{ background:white; border-radius:16px; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,0.08); transition:transform 0.2s; }}
+  .card:hover {{ transform:translateY(-4px); box-shadow:0 8px 24px rgba(0,0,0,0.12); }}
+  .icon-wrapper {{ padding:20px; display:flex; justify-content:center; align-items:center; }}
+  .icon-wrapper svg {{ width:120px; height:120px; border-radius:22px; }}
+  .label {{ padding:14px 16px; background:#f8f9fa; border-top:1px solid #eee; text-align:center; }}
+  .title {{ font-weight:600; font-size:14px; margin-bottom:4px; }}
+  .desc {{ font-size:12px; color:#888; margin-bottom:8px; }}
+  .color-tag {{ display:inline-block; padding:2px 10px; border-radius:10px; font-size:11px; font-weight:500; color:white; }}
+  .color-tag.blue {{ background:#2563EB; }}
+  .color-tag.green {{ background:#059669; }}
+  .color-tag.purple {{ background:#7C3AED; }}
+  .color-tag.red {{ background:#DC2626; }}
+  .color-tag.teal {{ background:#0F766E; }}
+  .color-tag.orange {{ background:#D97706; }}
+  .color-tag.sky-blue {{ background:#0284C7; }}
+  .color-tag.indigo {{ background:#4338CA; }}
+  .recommend {{ max-width:1200px; margin:32px auto 0; background:white; border-radius:16px; padding:24px; box-shadow:0 2px 12px rgba(0,0,0,0.08); }}
+  .recommend h2 {{ font-size:18px; margin-bottom:12px; }}
+  .recommend ol {{ padding-left:20px; line-height:2; }}
+  .recommend li {{ font-size:14px; }}
+  @media (max-width:900px) {{ .grid {{ grid-template-columns:repeat(2,1fr); }} }}
+  @media (max-width:500px) {{ .grid {{ grid-template-columns:1fr; }} }}
+</style>
+</head>
+<body>
+<h1>合同生成工具 - Icon Contact Sheet</h1>
+<p class="subtitle">8 个图标候选方案 · SVG format · 512x512</p>
+<div class="grid">
+{chr(10).join(contact_rows)}
+</div>
+<div class="recommend">
+  <h2>推荐方案</h2>
+  <ol>
+    <li><strong>Option 01 (Document + Pen, 蓝色)</strong> — 最直观识别为合同工具，蓝色专业稳重</li>
+    <li><strong>Option 04 (Seal Stamp, 红色)</strong> — 中国文化语境下的合同意象，印章元素辨识度高</li>
+    <li><strong>Option 07 (Grid Tiles, 天蓝色)</strong> — 突出模板化/模块化的工具特性，现代简洁</li>
+  </ol>
+</div>
+</body>
+</html>'''
+
+contact_path = BASE / "contact-sheet.html"
+contact_path.write_text(contact_sheet_html, encoding="utf-8")
+print(f"Created: contact-sheet.html")
+
+# ── Choices.md ────────────────────────────────────────────────────────
+choices_md = """# Icon Choices - 合同生成工具 (Contract Generation Tool)
+
+## Project Context
+- **Product**: 合同生成工具
+- **Purpose**: Template-based contract document batch generation and management
+- **Tech Stack**: Python Flask + Browser (B/S)
+- **Keywords**: 合同 (contract), 模板 (template), 台账 (ledger), 付款 (payment)
+
+## Candidates
+
+| # | Concept | Color | Description | Best For |
+|---|---------|-------|-------------|----------|
+| 01 | Document + Pen | Blue (#2563EB) | Classic contract doc with signing pen | General use, most recognizable |
+| 02 | Handshake | Green (#059669) | Partnership and agreement symbol | Business collaboration |
+| 03 | File + Checkmark | Purple (#7C3AED) | Approved document with check | Task completion, workflow |
+| 04 | Seal Stamp | Red (#DC2626) | Chinese contract seal concept | Chinese business context |
+| 05 | Shield + Document | Teal (#0F766E) | Secure contract on shield | Security, compliance |
+| 06 | Briefcase + Docs | Orange (#D97706) | Business briefcase with documents | Corporate/professional |
+| 07 | Grid Tiles | Sky Blue (#0284C7) | Modular template grid | Template management, modern |
+| 08 | Quill + Paper | Indigo (#4338CA) | Elegant signing with quill pen | Premium, formal |
+
+## Recommended (Top 3)
+1. **Option 01** (Document + Pen) - Most recognizable as a contract tool, blue is professional and trustworthy
+2. **Option 04** (Seal Stamp) - Culturally relevant for Chinese contract context, high recognition
+3. **Option 07** (Grid Tiles) - Highlights the modular/template-based nature of the tool, modern feel
+"""
+
+(BASE / "choices.md").write_text(choices_md, encoding="utf-8")
+print(f"Created: choices.md")
+
+print("\n=== All assets generated! ===")
+for f in sorted(BASE.glob("*")):
+    if f.is_file():
+        size = f.stat().st_size
+        print(f"  {f.name} ({size:,} bytes)")

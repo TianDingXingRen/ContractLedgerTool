@@ -5,7 +5,7 @@ Generate 10 test contracts from template1 and template2, then verify all feature
 import json, os, sys, shutil, uuid, time
 from datetime import date, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import template_def
 from utils.cn_money import to_chinese as num_to_chinese
