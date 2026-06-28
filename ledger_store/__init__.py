@@ -148,6 +148,8 @@ def run_migrations():
 
 def close_connections():
     """Checkpoint WAL to prevent data loss on unclean shutdown."""
+    if not os.path.isfile(DB_PATH):
+        return
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')

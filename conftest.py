@@ -1,24 +1,60 @@
-"""全项目 pytest 引导：确保导入 app 时不会读写真实运行数据。"""
+"""全项目 pytest 引导：确保导入 app 时不会读写真实运行数据。
 
+创建隔离运行时目录并设置 CONTRACT_TOOL_RUNTIME_DIR。通过 atexit + 信号
+处理兜底清理，避免进程被中断或异常退出时残留临时目录。
+"""
+
+import atexit
 import os
 import shutil
+import signal
+import stat
 import sys
 import tempfile
 
-
-_TEST_RUNTIME = tempfile.mkdtemp(
-    prefix='.pytest_runtime_',
-    dir=os.path.dirname(os.path.abspath(__file__)),
-)
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_TEST_RUNTIME = tempfile.mkdtemp(prefix='.pytest_runtime_', dir=_BASE_DIR)
 os.environ['CONTRACT_TOOL_RUNTIME_DIR'] = _TEST_RUNTIME
 
 
-def pytest_sessionfinish(session, exitstatus):
+def _force_rmtree(path):
+    """递归清除只读属性后删除目录，兼容 Windows。"""
+    def _on_rm_error(func, fpath, exc_info):
+        try:
+            os.chmod(fpath, stat.S_IWRITE)
+            func(fpath)
+        except Exception:
+            pass
+    shutil.rmtree(path, onerror=_on_rm_error)
+
+
+def _cleanup():
     app_module = sys.modules.get('app')
     if app_module is not None:
         try:
             app_module.reset_runtime()
         except Exception:
             pass
-    shutil.rmtree(_TEST_RUNTIME, ignore_errors=True)
+    _cleanup_done = globals().setdefault('_cleaned', False)
+    if _cleanup_done:
+        return
+    globals()['_cleaned'] = True
+    _force_rmtree(_TEST_RUNTIME)
     os.environ.pop('CONTRACT_TOOL_RUNTIME_DIR', None)
+
+
+def _cleanup_on_signal(signum, frame):
+    _cleanup()
+    sys.exit(128 + signum)
+
+
+atexit.register(_cleanup)
+for _sig in (signal.SIGINT, signal.SIGTERM, signal.SIGBREAK):
+    try:
+        signal.signal(_sig, _cleanup_on_signal)
+    except (OSError, ValueError):
+        pass
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _cleanup()
