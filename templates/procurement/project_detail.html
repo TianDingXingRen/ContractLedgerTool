@@ -16,6 +16,7 @@
   <div class="flex flex-wrap gap-2">
     <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_edit', project_id=project.id) }}"><i data-lucide="pencil" style="width:15px;height:15px"></i> 编辑项目</a>
     <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_inquiry_document', project_id=project.id) }}"><i data-lucide="file-output" style="width:15px;height:15px"></i> 生成询价函</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation_plan', project_id=project.id) }}"><i data-lucide="clipboard-list" style="width:15px;height:15px"></i> 谈判预案</a>
     {% if project.award %}<a class="apple-btn apple-btn-primary" href="{{ url_for('procurement_to_contract', project_id=project.id) }}"><i data-lucide="file-check" style="width:15px;height:15px"></i> 成交转合同</a>{% endif %}
   </div>
 </div>

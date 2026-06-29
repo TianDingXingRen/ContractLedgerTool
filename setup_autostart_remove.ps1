@@ -1,3 +1,7 @@
+param(
+    [switch]$NoPrompt
+)
+
 $ErrorActionPreference = "Continue"
 
 $TaskName = "ContractLedgerTool"
@@ -35,4 +39,6 @@ if ($Removed) {
     Write-Host "Auto-start entry was not found." -ForegroundColor Yellow
 }
 
-Read-Host "Press Enter to close"
+if (-not $NoPrompt) {
+    Read-Host "Press Enter to close"
+}

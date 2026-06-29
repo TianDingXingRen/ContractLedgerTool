@@ -96,6 +96,10 @@ def _stage_redirect_url(project_id, stage):
     return url_for('procurement_project_detail', project_id=project_id)
 
 
+def _project_section_url(project_id, section):
+    return url_for('procurement_project_detail', project_id=project_id) + f'#{section}'
+
+
 def register(app):
     @app.route('/procurement')
     def procurement_home():
@@ -193,7 +197,7 @@ def register(app):
             procurement_project_service.add_item(project_id, request.form)
         except Exception as exc:
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
-        return redirect(url_for('procurement_project_detail', project_id=project_id))
+        return redirect(_project_section_url(project_id, 'items'))
 
     @app.route('/procurement/projects/<int:project_id>/items/bulk', methods=['GET', 'POST'])
     def procurement_items_bulk(project_id):
@@ -261,7 +265,24 @@ def register(app):
             procurement_project_service.add_supplier(project_id, request.form)
         except Exception as exc:
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
-        return redirect(url_for('procurement_project_detail', project_id=project_id))
+        return redirect(_project_section_url(project_id, 'suppliers'))
+
+    @app.route('/procurement/projects/<int:project_id>/quote-template')
+    def procurement_quote_template_selected(project_id):
+        supplier_id = request.args.get('supplier_id', type=int)
+        if not supplier_id:
+            return _error_redirect(
+                'procurement_quote_import', '请选择候选供应商后下载模板',
+                project_id=project_id,
+            )
+        try:
+            path = quote_service.generate_quote_template(project_id, supplier_id)
+        except Exception as exc:
+            return _error_redirect('procurement_quote_import', exc, exc_info=True, project_id=project_id)
+        return send_file(
+            path, as_attachment=True, download_name=os.path.basename(path),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
 
     @app.route('/procurement/projects/<int:project_id>/suppliers/<int:supplier_id>/delete', methods=['POST'])
     def procurement_supplier_delete(project_id, supplier_id):
@@ -567,6 +588,32 @@ def register(app):
         return render_template(
             'procurement/negotiation.html', view=negotiation_service.negotiation_view(project_id),
             error=error, money=_money,
+        )
+
+    @app.route('/procurement/projects/<int:project_id>/negotiation/plan', methods=['GET', 'POST'])
+    def procurement_negotiation_plan(project_id):
+        _project_or_404(project_id)
+        try:
+            defaults = project_document_service.negotiation_plan_defaults(project_id)
+        except Exception as exc:
+            return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
+        if request.method == 'POST':
+            try:
+                path = project_document_service.generate_negotiation_plan(project_id, request.form)
+                return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+            except Exception as exc:
+                error = _form_error('谈判预案生成失败', exc)
+                plan = {**defaults['plan'], **{
+                    key: request.form.get(key, defaults['plan'].get(key, ''))
+                    for key in defaults['plan']
+                }}
+                return render_template(
+                    'procurement/negotiation_plan.html', view=defaults,
+                    plan=plan, error=error,
+                ), 400
+        return render_template(
+            'procurement/negotiation_plan.html', view=defaults,
+            plan=defaults['plan'], error=request.args.get('error', ''),
         )
 
     @app.route('/procurement/projects/<int:project_id>/negotiation/minutes')

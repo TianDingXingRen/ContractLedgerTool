@@ -6,6 +6,7 @@ from datetime import date
 
 from openpyxl import load_workbook
 from docx import Document
+from docx.oxml.ns import qn
 from werkzeug.datastructures import FileStorage
 
 import ledger_store
@@ -13,9 +14,32 @@ import procurement_store
 import template_def
 from services import (
     award_service, comparison_service, procurement_project_service,
-    project_document_service, quote_service,
+    procurement_file_service, project_document_service, quote_service,
 )
 from utils import helpers
+
+
+def _non_empty_runs(document):
+    for paragraph in document.paragraphs:
+        for run in paragraph.runs:
+            if run.text.strip():
+                yield run
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        if run.text.strip():
+                            yield run
+
+
+def _assert_docx_uses_fangsong(document):
+    style_fonts = document.styles['Normal']._element.rPr.rFonts
+    assert style_fonts.get(qn('w:eastAsia')) == '仿宋'
+    for run in _non_empty_runs(document):
+        r_pr = run._element.rPr
+        assert r_pr is not None
+        assert r_pr.rFonts.get(qn('w:eastAsia')) == '仿宋'
 
 
 def _project_with_items_and_suppliers():
@@ -132,6 +156,57 @@ def test_procurement_schema_crud_and_constraints(app, client):
     assert len(procurement_store.list_project_suppliers(project_id)) == 2
 
 
+def test_inline_item_and_supplier_add_return_to_entry_sections(app, client):
+    project_id = procurement_project_service.create_project({
+        'project_no': 'CG-TEST-ANCHOR',
+        'project_name': '连续录入跳转测试',
+    })
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'inline-token'
+
+    item_response = client.post(
+        f'/procurement/projects/{project_id}/items',
+        data={
+            'csrf_token': 'inline-token',
+            'item_name': '测试物资',
+            'quantity': '2',
+            'unit': '件',
+        },
+        follow_redirects=False,
+    )
+    assert item_response.status_code == 302
+    assert item_response.headers['Location'].endswith(f'/procurement/projects/{project_id}#items')
+
+    supplier_response = client.post(
+        f'/procurement/projects/{project_id}/suppliers',
+        data={
+            'csrf_token': 'inline-token',
+            'supplier_name': '连续录入供应商',
+        },
+        follow_redirects=False,
+    )
+    assert supplier_response.status_code == 302
+    assert supplier_response.headers['Location'].endswith(f'/procurement/projects/{project_id}#suppliers')
+
+
+def test_standard_quote_import_page_downloads_supplier_template(app, client):
+    project_id, suppliers = _project_with_items_and_suppliers()
+    page = client.get(f'/procurement/projects/{project_id}/quotes/import')
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert '下载标准报价模板' in html
+    assert f'/procurement/projects/{project_id}/quote-template' in html
+
+    response = client.get(
+        f'/procurement/projects/{project_id}/quote-template?supplier_id={suppliers[0]}'
+    )
+    assert response.status_code == 200
+    assert response.headers['Content-Type'].startswith(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response.close()
+
+
 def test_quote_import_comparison_clarification_and_award(app, client):
     project_id, suppliers = _project_with_items_and_suppliers()
     _import_quote(project_id, suppliers[0], [100, 200])
@@ -197,7 +272,52 @@ def test_inquiry_document_contains_project_items(app):
     assert '询价函' in all_text
     assert '结构件A' in all_text
     assert '结构件B' in all_text
+    _assert_docx_uses_fangsong(document)
     assert procurement_store.get_project(project_id)['status'] == 'documents_ready'
+
+
+def test_negotiation_plan_prefills_generates_word_and_archives(app, client):
+    project_id, _ = _project_with_items_and_suppliers()
+    page = client.get(f'/procurement/projects/{project_id}/negotiation/plan')
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert '谈判预案' in html
+    assert '结构件A' in html
+    assert '目标价格' in html
+
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'plan-token'
+    response = client.post(
+        f'/procurement/projects/{project_id}/negotiation/plan',
+        data={
+            'csrf_token': 'plan-token',
+            'project_background': '按附件模板生成，减少重复填写。',
+            'fixed_asset': '否',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+    assert response.headers['Content-Type'].startswith(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    response.close()
+
+    files = [
+        row for row in procurement_store.list_project_files(project_id)
+        if row['file_type'] == 'negotiation_plan'
+    ]
+    assert files
+    path = procurement_file_service.absolute_path(files[-1]['relative_path'])
+    document = Document(path)
+    all_text = '\n'.join(
+        [paragraph.text for paragraph in document.paragraphs]
+        + [cell.text for table in document.tables for row in table.rows for cell in row.cells]
+    )
+    assert '结构件加工竞争性谈判谈判预案' in all_text
+    assert '按附件模板生成，减少重复填写。' in all_text
+    assert '结构件A' in all_text
+    assert '评价方案' in all_text
+    _assert_docx_uses_fangsong(document)
 
 
 def test_procurement_to_contract_prefills_editor_and_links_ledger(app, client):
@@ -335,6 +455,15 @@ def test_negotiation_can_start_without_quotes(app, client):
     assert response.status_code == 302
     rounds = procurement_store.list_negotiation_rounds(project_id)
     assert rounds[0]['commitments'][0]['quote_amount_minor'] == 880050
+    minutes_path = project_document_service.generate_negotiation_minutes(project_id)
+    minutes = Document(minutes_path)
+    minutes_text = '\n'.join(
+        [paragraph.text for paragraph in minutes.paragraphs]
+        + [cell.text for table in minutes.tables for row in table.rows for cell in row.cells]
+    )
+    assert '谈判人员签字' in minutes_text
+    assert '供应商代表' in minutes_text
+    _assert_docx_uses_fangsong(minutes)
 
 
 def test_payment_due_soon_crosses_month_boundary(app, client, monkeypatch):
@@ -380,6 +509,7 @@ def test_procurement_routes_render_and_reject_missing_csrf(app, client):
     detail_html = detail.get_data(as_text=True)
     assert 'data-testid="procurement-workflow"' in detail_html
     assert '直接生成合同' in detail_html
+    assert '谈判预案' in detail_html
     list_html = client.get('/procurement/projects').get_data(as_text=True)
     assert '竞争性谈判' in list_html
     assert 'competitive_negotiation' not in list_html

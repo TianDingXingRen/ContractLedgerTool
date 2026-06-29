@@ -100,6 +100,9 @@ class FrontendAssetTests(unittest.TestCase):
             os.path.join('procurement', 'history_prices.html'),
             manifest['html_templates'],
         )
+        self.assertIn('version', manifest)
+        version_path = os.path.join(build_installer.APP_RES_DIR, 'version.txt')
+        self.assertTrue(os.path.isfile(version_path))
 
     def test_offline_installer_enables_autostart_and_cleans_previous_versions(self):
         installer_path = os.path.join(app.RESOURCE_DIR, 'installer_assets', 'install.ps1')
@@ -114,6 +117,12 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('Get-NetTCPConnection -LocalPort $Port', script)
         self.assertIn('python.exe', script)
         self.assertIn('ContractLedgerTool.exe', script)
+        self.assertIn('Clear-ExistingAutostart', script)
+        self.assertIn('Clear-LegacyProgramFiles', script)
+        self.assertIn('Set-WritableIfExists', script)
+        self.assertIn('Unregister-ScheduledTask', script)
+        self.assertIn('New-DesktopLauncher', script)
+        self.assertIn('.venv', script)
 
     def test_offline_installer_build_outputs_desktop_exe_only(self):
         build_script_path = os.path.join(app.RESOURCE_DIR, 'build_installer.py')
@@ -122,6 +131,7 @@ class FrontendAssetTests(unittest.TestCase):
 
         self.assertIn('desktop_exe', script)
         self.assertIn('DESKTOP / f', script)
+        self.assertIn('write_version=True', script)
         self.assertNotIn('zip_dir(stage', script)
         self.assertNotIn("'zip': str", script)
 

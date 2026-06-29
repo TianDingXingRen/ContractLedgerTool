@@ -6,6 +6,7 @@
   </div>
   <div class="flex gap-2">
     <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_detail', project_id=view.project.id) }}">返回项目</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation_plan', project_id=view.project.id) }}">谈判预案</a>
     <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation_minutes', project_id=view.project.id) }}">导出谈判纪要</a>
     <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_final_commitments', project_id=view.project.id) }}">最终承诺表</a>
   </div>

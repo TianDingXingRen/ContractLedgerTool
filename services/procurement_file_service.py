@@ -17,10 +17,11 @@ FOLDER_NAMES = {
     'supplier_quote': '04_供应商报价',
     'comparison': '05_横向比价',
     'clarification': '06_澄清文件',
-    'negotiation': '07_谈判纪要',
-    'award': '08_成交建议',
-    'contract': '09_合同资料',
-    'archive': '10_归档包',
+    'negotiation_plan': '07_谈判预案',
+    'negotiation': '08_谈判纪要',
+    'award': '09_成交建议',
+    'contract': '10_合同资料',
+    'archive': '11_归档包',
 }
 
 

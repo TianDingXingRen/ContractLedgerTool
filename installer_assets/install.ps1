@@ -13,6 +13,16 @@ function Write-Step($Text) {
     Write-Host "==> $Text" -ForegroundColor Cyan
 }
 
+function Set-WritableIfExists($Path) {
+    if (Test-Path -LiteralPath $Path) {
+        try {
+            Set-ItemProperty -LiteralPath $Path -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "Could not clear read-only flag on $Path : $_" -ForegroundColor Yellow
+        }
+    }
+}
+
 function Stop-ProcessIfRunning($ProcessId, $Reason) {
     if (-not $ProcessId -or $ProcessId -eq $PID) {
         return
@@ -74,6 +84,122 @@ function Stop-PreviousVersions($InstallDir, $AppExe, $Port) {
     Start-Sleep -Milliseconds 500
 }
 
+function Clear-ExistingAutostart {
+    $TaskName = "ContractLedgerTool"
+    $StartupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+    $LauncherNames = @(
+        "ContractLedgerTool_Autostart.vbs",
+        "ContractLedgerTool.vbs"
+    )
+
+    foreach ($name in $LauncherNames) {
+        $path = Join-Path $StartupDir $name
+        if (Test-Path -LiteralPath $path) {
+            try {
+                Remove-Item -LiteralPath $path -Force
+                Write-Host "Removed old auto-start launcher: $path"
+            } catch {
+                Write-Host "Could not remove old auto-start launcher $path : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    try {
+        $ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($ExistingTask) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+            Write-Host "Removed old scheduled task: $TaskName"
+        }
+    } catch {
+        Write-Host "Scheduled task cleanup skipped: $_" -ForegroundColor Yellow
+    }
+}
+
+function Clear-LegacyProgramFiles($InstallDir) {
+    $LegacyDirs = @(
+        ".venv",
+        "__pycache__",
+        "core",
+        "routes",
+        "utils",
+        "services",
+        "runtime",
+        "ledger_store",
+        "procurement_store"
+    )
+    $LegacyFiles = @(
+        "app.py",
+        "config.py",
+        "doc_processor.py",
+        "docx_builder.py",
+        "excel_bill_service.py",
+        "field_eval.py",
+        "ledger_store.py",
+        "payment_extractor.py",
+        "pdf_exporter.py",
+        "template_def.py",
+        "xlsx_exporter.py",
+        "requirements.txt",
+        "requirements.lock",
+        "pyproject.toml",
+        "install.bat",
+        "setup.bat",
+        "start.bat"
+    )
+
+    foreach ($dir in $LegacyDirs) {
+        $path = Join-Path $InstallDir $dir
+        if (Test-Path -LiteralPath $path) {
+            try {
+                Remove-Item -LiteralPath $path -Recurse -Force
+                Write-Host "Removed legacy directory: $dir"
+            } catch {
+                Write-Host "Could not remove legacy directory $dir : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    foreach ($file in $LegacyFiles) {
+        $path = Join-Path $InstallDir $file
+        if (Test-Path -LiteralPath $path) {
+            try {
+                Set-WritableIfExists $path
+                Remove-Item -LiteralPath $path -Force
+                Write-Host "Removed legacy file: $file"
+            } catch {
+                Write-Host "Could not remove legacy file $file : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+function New-DesktopLauncher($InstallDir, $AppExe, $Port) {
+    $Desktop = [Environment]::GetFolderPath("Desktop")
+    $ShortcutPath = Join-Path $Desktop "合同管理工具.lnk"
+    $EnglishShortcutPath = Join-Path $Desktop "ContractLedgerTool.lnk"
+    $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $StartPs1 = Join-Path $InstallDir "start.ps1"
+
+    foreach ($oldShortcut in @($ShortcutPath, $EnglishShortcutPath)) {
+        if (Test-Path -LiteralPath $oldShortcut) {
+            try {
+                Remove-Item -LiteralPath $oldShortcut -Force
+            } catch {
+                Write-Host "Could not replace desktop launcher $oldShortcut : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    $Shell = New-Object -ComObject WScript.Shell
+    $Shortcut = $Shell.CreateShortcut($ShortcutPath)
+    $Shortcut.TargetPath = $PowerShellExe
+    $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartPs1`" -Port $Port"
+    $Shortcut.WorkingDirectory = $InstallDir
+    $Shortcut.IconLocation = "$AppExe,0"
+    $Shortcut.Save()
+    return $ShortcutPath
+}
+
 $PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppExeSource = Join-Path $PackageRoot "ContractLedgerTool.exe"
 if (-not (Test-Path -LiteralPath $AppExeSource)) {
@@ -85,12 +211,17 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $AppExe = Join-Path $InstallDir "ContractLedgerTool.exe"
 Stop-PreviousVersions $InstallDir $AppExe $Port
+Clear-ExistingAutostart
+Clear-LegacyProgramFiles $InstallDir
+Set-WritableIfExists $AppExe
 Copy-Item -LiteralPath $AppExeSource -Destination $AppExe -Force
 
 foreach ($script in @("start.ps1", "stop.ps1", "setup_autostart.ps1", "setup_autostart_remove.ps1")) {
     $src = Join-Path $PackageRoot $script
     if (Test-Path -LiteralPath $src) {
-        Copy-Item -LiteralPath $src -Destination (Join-Path $InstallDir $script) -Force
+        $dst = Join-Path $InstallDir $script
+        Set-WritableIfExists $dst
+        Copy-Item -LiteralPath $src -Destination $dst -Force
     }
 }
 
@@ -106,21 +237,7 @@ if (-not $NoAutostart) {
 
 if (-not $NoDesktopShortcut) {
     Write-Step "Creating desktop launcher"
-    $Desktop = [Environment]::GetFolderPath("Desktop")
-    $Launcher = Join-Path $Desktop "合同管理工具.lnk"
-    $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $StartPs1 = Join-Path $InstallDir "start.ps1"
-    $Shell = New-Object -ComObject WScript.Shell
-    $Shortcut = $Shell.CreateShortcut($Launcher)
-    $Shortcut.TargetPath = $PowerShellExe
-    $Shortcut.Arguments = "-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File `"$StartPs1`""
-    $Shortcut.WorkingDirectory = $InstallDir
-    $Shortcut.IconLocation = "$AppExe,0"
-    $Shortcut.Save()
-    # 保护启动脚本不被篡改
-    if (Test-Path $StartPs1) {
-        Set-ItemProperty -Path $StartPs1 -Name IsReadOnly -Value $true -ErrorAction SilentlyContinue
-    }
+    $Launcher = New-DesktopLauncher $InstallDir $AppExe $Port
 }
 
 Write-Step "Installation complete"

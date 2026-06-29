@@ -8,6 +8,7 @@ import zipfile
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import Pt
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -21,10 +22,45 @@ def _money(value):
     return f'{Decimal(int(value or 0)) / 100:,.2f}'
 
 
+def _strip_text(value):
+    return str(value or '').strip()
+
+
+_DOCX_CJK_FONT = '仿宋'
+
+
+def _set_element_fonts(element, font_name=_DOCX_CJK_FONT):
+    r_pr = element.get_or_add_rPr()
+    r_fonts = r_pr.get_or_add_rFonts()
+    for attr in ('w:ascii', 'w:hAnsi', 'w:eastAsia', 'w:cs'):
+        r_fonts.set(qn(attr), font_name)
+
+
+def _set_run_font(run, font_name=_DOCX_CJK_FONT):
+    run.font.name = font_name
+    _set_element_fonts(run._element, font_name)
+
+
+def _set_paragraph_font(paragraph, font_name=_DOCX_CJK_FONT):
+    for run in paragraph.runs:
+        _set_run_font(run, font_name)
+
+
+def _apply_document_font(document, font_name=_DOCX_CJK_FONT):
+    for paragraph in document.paragraphs:
+        _set_paragraph_font(paragraph, font_name)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    _set_paragraph_font(paragraph, font_name)
+
+
 def _set_default_font(document):
     style = document.styles['Normal']
-    style.font.name = '仿宋'
+    style.font.name = _DOCX_CJK_FONT
     style.font.size = Pt(10.5)
+    _set_element_fonts(style._element)
 
 
 def _title(document, text):
@@ -37,12 +73,198 @@ def _title(document, text):
 
 def _save_and_register(document, project, file_type, filename):
     path = procurement_file_service.target_path(project, file_type, filename)
+    _apply_document_font(document)
     document.save(path)
     procurement_store.register_project_file(
         project['id'], file_type, procurement_file_service.relative_path(path), filename,
         procurement_file_service.sha256_file(path), path.stat().st_size,
     )
     return str(path)
+
+
+def _append_negotiation_signature_box(document):
+    document.add_paragraph()
+    table = document.add_table(rows=3, cols=4)
+    table.style = 'Table Grid'
+    title_cell = table.rows[0].cells[0].merge(table.rows[0].cells[-1])
+    title_cell.text = '谈判人员签字'
+    for cell, label in zip(table.rows[1].cells, ['采购人员', '需求部门', '技术人员', '供应商代表']):
+        cell.text = label
+    for cell in table.rows[2].cells:
+        cell.text = '\n\n'
+
+
+def _default_delivery_requirement(project, items):
+    if project.get('delivery_requirement'):
+        return f"本次采购产品交付要求为{project['delivery_requirement']}。"
+    dates = [item.get('required_delivery_date') for item in items if item.get('required_delivery_date')]
+    if dates:
+        return f"本次采购产品最晚交付时间为{max(dates)}前。"
+    return '本次采购产品交付时间按采购需求及谈判确认结果执行。'
+
+
+def _default_target_price_note(project, items, quotes):
+    parts = []
+    if project.get('target_price_minor') is not None:
+        parts.append(f"本项目目标价格不超过{_money(project['target_price_minor'])}元。")
+    elif project.get('budget_minor') is not None:
+        parts.append(f"本项目预算金额为{_money(project['budget_minor'])}元。")
+
+    confirmed_quotes = [quote for quote in quotes if quote.get('total_amount_minor') is not None]
+    if confirmed_quotes:
+        lowest = min(int(quote['total_amount_minor']) for quote in confirmed_quotes)
+        parts.append(f"已确认供应商报价中最低总价为{_money(lowest)}元。")
+
+    try:
+        from services import historical_price_service
+        history_notes = []
+        seen = set()
+        for item in items:
+            item_name = item.get('item_name') or ''
+            if not item_name or item_name in seen:
+                continue
+            seen.add(item_name)
+            history = historical_price_service.price_assistance(item_name)
+            if history.get('median_minor') is not None:
+                history_notes.append(
+                    f"{item_name}历史成交中位单价为{_money(history['median_minor'])}元"
+                )
+            if len(history_notes) >= 3:
+                break
+        if history_notes:
+            parts.append('历史价格参考：' + '；'.join(history_notes) + '。')
+    except Exception:
+        pass
+
+    if parts:
+        return ''.join(parts)
+    return '本次目标价格以项目预算、历史采购价格、供应商报价及市场行情为谈判依据。'
+
+
+def _default_quote_round_note(quotes):
+    if not quotes:
+        return '拟一轮报价，谈判会上确认最终报价；如报价与目标价偏离较大，可视情况组织补充报价。'
+    rounds = sorted({int(quote.get('quote_round') or 1) for quote in quotes})
+    return f"已完成{len(rounds)}轮报价导入，本次谈判会上确认最终报价。"
+
+
+def _default_evaluation_plan():
+    return '\n'.join([
+        '1）甲方技术专家认可供应商配套能力。',
+        '2）供应商交付周期满足甲方要求。',
+        '3）供应商报价与目标价格或历史参考价格偏离度绝对值过大，或明显低于产品本身成本价格，考虑否决。',
+    ])
+
+
+def negotiation_plan_defaults(project_id):
+    project = procurement_store.get_project(project_id)
+    if not project:
+        raise ValueError('采购项目不存在')
+    items = procurement_store.list_project_items(project_id)
+    suppliers = procurement_store.list_project_suppliers(project_id)
+    quotes = procurement_store.list_quotes(project_id)
+    method_label = PROCUREMENT_METHOD_LABELS.get(
+        project.get('purchase_method'), project.get('purchase_method') or ''
+    )
+    supplier_names = '、'.join(row['supplier_name'] for row in suppliers) or '候选供应商'
+    background = _strip_text(project.get('remark'))
+    if not background:
+        background = (
+            f"{project['project_name']}，本项目拟采用{method_label or '谈判'}方式组织采购。"
+            f"结合采购需求、{supplier_names}响应情况和目标价格制定本预案。"
+        )
+    return {
+        'project': project,
+        'items': items,
+        'suppliers': suppliers,
+        'quotes': quotes,
+        'plan': {
+            'title': f"{project['project_name']}谈判预案",
+            'purchase_requirement': f"关于{project['project_name']}采购申请单。",
+            'request_no': project['project_no'],
+            'project_background': background,
+            'delivery_requirement': _default_delivery_requirement(project, items),
+            'target_price_note': _default_target_price_note(project, items, quotes),
+            'quote_round_note': _default_quote_round_note(quotes),
+            'evaluation_plan': _default_evaluation_plan(),
+            'fixed_asset': '否',
+            'purchase_method_label': method_label,
+        },
+    }
+
+
+def _negotiation_plan_from_form(defaults, form):
+    plan = dict(defaults['plan'])
+    if not form:
+        return plan
+    for key in [
+        'title', 'purchase_requirement', 'request_no', 'project_background',
+        'delivery_requirement', 'target_price_note', 'quote_round_note',
+        'evaluation_plan', 'fixed_asset',
+    ]:
+        value = _strip_text(form.get(key))
+        if value:
+            plan[key] = value
+    return plan
+
+
+def generate_negotiation_plan(project_id, form=None):
+    defaults = negotiation_plan_defaults(project_id)
+    project = defaults['project']
+    items = defaults['items']
+    if not items:
+        raise ValueError('请先录入采购明细')
+    plan = _negotiation_plan_from_form(defaults, form)
+
+    document = Document()
+    _set_default_font(document)
+    _title(document, plan['title'])
+
+    document.add_heading('一、原则', level=2)
+    document.add_paragraph('1.采购需求：')
+    document.add_paragraph(plan['purchase_requirement'])
+    document.add_paragraph(f"编号：{plan['request_no']}。")
+    document.add_paragraph('2.项目背景：')
+    document.add_paragraph(plan['project_background'])
+
+    document.add_heading('二、采购标的', level=2)
+    table = document.add_table(rows=1, cols=7)
+    table.style = 'Table Grid'
+    for cell, label in zip(table.rows[0].cells, ['序号', '产品名称', '图代号', '是否固定资产', '数量', '单位', '备注']):
+        cell.text = label
+    for index, item in enumerate(items, start=1):
+        cells = table.add_row().cells
+        remark = item.get('remark') or item.get('technical_requirement') or ''
+        values = [
+            index,
+            item['item_name'],
+            item.get('drawing_no') or item.get('spec_model') or '',
+            plan['fixed_asset'],
+            item.get('quantity_text') or '',
+            item.get('unit') or '',
+            remark,
+        ]
+        for cell, value in zip(cells, values):
+            cell.text = str(value)
+
+    document.add_heading('三、生产周期要求', level=2)
+    document.add_paragraph(plan['delivery_requirement'])
+
+    document.add_heading('四、目标价格：', level=2)
+    document.add_paragraph('金额：' + plan['target_price_note'])
+
+    document.add_heading('五、报价轮次', level=2)
+    document.add_paragraph(plan['quote_round_note'])
+
+    document.add_heading('六、评价方案', level=2)
+    for line in plan['evaluation_plan'].splitlines():
+        text = line.strip()
+        if text:
+            document.add_paragraph(text)
+
+    return _save_and_register(
+        document, project, 'negotiation_plan', f"{project['project_no']}_谈判预案.docx"
+    )
 
 
 def generate_inquiry_letter(project_id):
@@ -229,6 +451,7 @@ def generate_negotiation_minutes(project_id):
             f"{supplier['supplier_name']}：首轮 {_money(supplier['first_amount_minor'])} 元，"
             f"最新 {_money(supplier['latest_amount_minor'])} 元，降幅 {supplier['reduction_percent']}%。"
         )
+    _append_negotiation_signature_box(document)
     return _save_and_register(
         document, project, 'negotiation', f"{project['project_no']}_谈判纪要.docx"
     )

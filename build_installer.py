@@ -63,7 +63,10 @@ def sign_file(path):
 
 
 def prepare_app_resources():
-    return _prepare_resources(APP_RES_DIR, write_version=False)
+    # Offline installers should always carry a fresh resource version so an
+    # upgrade cannot be skipped because a previous install wrote the same
+    # .installed_version marker.
+    return _prepare_resources(APP_RES_DIR, write_version=True)
 
 
 def build_app_exe():
