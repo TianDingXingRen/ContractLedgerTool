@@ -48,7 +48,12 @@
         <div class="workflow-hint">可直接进入该环节办理或补录资料。</div>
         {% endif %}
         <form method="post" action="{{ url_for('procurement_workflow_jump', project_id=project.id) }}"
-              onsubmit="return confirmWorkflowJump(this)" class="workflow-action-form">
+              class="workflow-action-form"
+              {% if stage.missing_labels %}
+              data-confirm="确认跳过前置环节并进入该环节？系统会记录跳过原因。"
+              data-confirm-title="跳过前置环节"
+              data-confirm-ok="进入环节"
+              {% endif %}>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="target_stage" value="{{ stage.key }}">
           {% if stage.missing_labels %}
@@ -90,13 +95,13 @@
     <span class="apple-section-title">采购明细</span>
     <div class="flex gap-2"><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_items_bulk', project_id=project.id) }}">批量导入</a><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_items_export', project_id=project.id) }}">导出 Excel</a></div>
   </div>
-  <div class="overflow-x-auto"><table class="apple-table"><thead><tr><th>#</th><th>物资</th><th>规格/图号</th><th>数量</th><th>要求交期</th><th></th></tr></thead><tbody>{% for item in project['items'] %}<tr><td>{{ item.line_no }}</td><td>{{ item.item_name }}</td><td>{{ item.spec_model }} {{ item.drawing_no }}</td><td>{{ item.quantity_text }} {{ item.unit }}</td><td>{{ item.required_delivery_date or '-' }}</td><td><div class="flex"><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_item_edit', project_id=project.id, item_id=item.id) }}">编辑</a><form method="post" action="{{ url_for('procurement_item_delete', project_id=project.id, item_id=item.id) }}" onsubmit="return confirm('确定删除这条采购明细？')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs text-error">删除</button></form></div></td></tr>{% else %}<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--apple-text3)">尚未录入明细，可直接补录或跳过进入后续环节。</td></tr>{% endfor %}</tbody></table></div>
+  <div class="overflow-x-auto"><table class="apple-table"><thead><tr><th>#</th><th>物资</th><th>规格/图号</th><th>数量</th><th>要求交期</th><th></th></tr></thead><tbody>{% for item in project['items'] %}<tr><td>{{ item.line_no }}</td><td>{{ item.item_name }}</td><td>{{ item.spec_model }} {{ item.drawing_no }}</td><td>{{ item.quantity_text }} {{ item.unit }}</td><td>{{ item.required_delivery_date or '-' }}</td><td><div class="flex"><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_item_edit', project_id=project.id, item_id=item.id) }}">编辑</a><form method="post" action="{{ url_for('procurement_item_delete', project_id=project.id, item_id=item.id) }}" data-confirm="确定删除这条采购明细？" data-confirm-title="删除采购明细" data-confirm-ok="删除" data-confirm-danger="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs text-error">删除</button></form></div></td></tr>{% else %}<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--apple-text3)">尚未录入明细，可直接补录或跳过进入后续环节。</td></tr>{% endfor %}</tbody></table></div>
   <div class="apple-section-body"><form method="post" action="{{ url_for('procurement_item_add', project_id=project.id) }}" class="grid grid-cols-2 lg:grid-cols-7 gap-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="input input-bordered input-sm" required name="item_name" placeholder="物资名称"><input class="input input-bordered input-sm" name="spec_model" placeholder="规格型号"><input class="input input-bordered input-sm" name="drawing_no" placeholder="图号"><input class="input input-bordered input-sm" required type="number" min="0.000001" step="any" name="quantity" placeholder="数量"><input class="input input-bordered input-sm" required name="unit" placeholder="单位"><input class="input input-bordered input-sm" type="date" name="required_delivery_date"><button class="btn btn-primary btn-sm">添加明细</button></form></div>
 </section>
 
 <section id="suppliers" class="apple-section">
   <div class="apple-section-header"><span class="apple-section-title">候选供应商</span></div>
-  <div class="overflow-x-auto"><table class="apple-table"><thead><tr><th>供应商</th><th>联系人</th><th>报价状态</th><th>标准模板</th><th></th></tr></thead><tbody>{% for supplier in project.suppliers %}<tr><td>{{ supplier.supplier_name }}</td><td>{{ supplier.contact_person or '-' }} {{ supplier.contact_phone }}</td><td><span class="apple-badge gray">{{ quote_status_labels.get(supplier.quote_status, supplier.quote_status) }}</span></td><td><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_quote_template', project_id=project.id, supplier_id=supplier.id) }}">下载模板</a></td><td><div class="flex"><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_supplier_edit', project_id=project.id, supplier_id=supplier.id) }}">编辑</a><form method="post" action="{{ url_for('procurement_supplier_delete', project_id=project.id, supplier_id=supplier.id) }}" onsubmit="return confirm('确定删除该候选供应商？')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs text-error">删除</button></form></div></td></tr>{% else %}<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--apple-text3)">尚未添加供应商。直接谈判至少需要一名候选供应商。</td></tr>{% endfor %}</tbody></table></div>
+  <div class="overflow-x-auto"><table class="apple-table"><thead><tr><th>供应商</th><th>联系人</th><th>报价状态</th><th>标准模板</th><th></th></tr></thead><tbody>{% for supplier in project.suppliers %}<tr><td>{{ supplier.supplier_name }}</td><td>{{ supplier.contact_person or '-' }} {{ supplier.contact_phone }}</td><td><span class="apple-badge gray">{{ quote_status_labels.get(supplier.quote_status, supplier.quote_status) }}</span></td><td><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_quote_template', project_id=project.id, supplier_id=supplier.id) }}">下载模板</a></td><td><div class="flex"><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_supplier_edit', project_id=project.id, supplier_id=supplier.id) }}">编辑</a><form method="post" action="{{ url_for('procurement_supplier_delete', project_id=project.id, supplier_id=supplier.id) }}" data-confirm="确定删除该候选供应商？" data-confirm-title="删除候选供应商" data-confirm-ok="删除" data-confirm-danger="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs text-error">删除</button></form></div></td></tr>{% else %}<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--apple-text3)">尚未添加供应商。直接谈判至少需要一名候选供应商。</td></tr>{% endfor %}</tbody></table></div>
   <div class="apple-section-body"><form method="post" action="{{ url_for('procurement_supplier_add', project_id=project.id) }}" class="grid grid-cols-1 md:grid-cols-5 gap-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="input input-bordered input-sm" required name="supplier_name" placeholder="供应商名称"><input class="input input-bordered input-sm" name="contact_person" placeholder="联系人"><input class="input input-bordered input-sm" name="contact_phone" placeholder="电话"><input class="input input-bordered input-sm" type="email" name="email" placeholder="邮箱"><button class="btn btn-primary btn-sm">添加供应商</button></form></div>
 </section>
 
@@ -119,20 +124,4 @@
 
 {% if project.award %}<section class="apple-section"><div class="apple-section-body"><h2 class="font-semibold text-lg">已确认成交建议</h2><p class="mt-2"><strong>{{ project.award.supplier_summary or project.award.supplier_name }}</strong>，成交金额 {{ money(project.award.recommended_amount_minor) }} 元</p><p class="text-sm text-base-content/60">{{ project.award.reason_summary }}</p><div class="flex flex-wrap gap-2 mt-3"><a class="apple-btn apple-btn-primary" href="{{ url_for('procurement_to_contract', project_id=project.id) }}">生成合同数据单</a><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_erp_oa_summary', project_id=project.id) }}">ERP/OA 摘要</a><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_archive', project_id=project.id) }}">完整归档包</a></div></div></section>{% endif %}
 
-{% endblock %}
-
-{% block scripts %}
-<script>
-function confirmWorkflowJump(form) {
-  const note = form.querySelector('[name="note"]');
-  if (note && note.required && !note.value.trim()) {
-    note.focus();
-    return false;
-  }
-  if (note && note.required) {
-    return confirm('确认跳过前置环节并进入该环节？系统会记录跳过原因。');
-  }
-  return true;
-}
-</script>
 {% endblock %}

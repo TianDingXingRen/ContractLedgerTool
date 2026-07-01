@@ -1,5 +1,6 @@
 """Payment plan routes: save, confirm, list, export, API."""
 
+import json
 import os
 import uuid
 from datetime import date, timedelta
@@ -11,6 +12,37 @@ import xlsx_exporter
 from utils import helpers
 from utils.security import MAX_PLAN_ROWS, MAX_TEXT_VALUE_LENGTH, limit_text
 from utils.errors import safe_error
+
+
+def _payment_filter_args(form_or_args):
+    return {
+        'view': form_or_args.get('view', 'work') or 'work',
+        'confirm_status': form_or_args.get('confirm_status', '').strip(),
+        'payment_status': form_or_args.get('payment_status', '').strip(),
+        'start_date': form_or_args.get('start_date', '').strip(),
+        'end_date': form_or_args.get('end_date', '').strip(),
+        'project_name': form_or_args.get('project_name', '').strip(),
+    }
+
+
+def _payment_redirect(form_or_args):
+    return redirect(url_for('payment_plan_list', **_payment_filter_args(form_or_args)))
+
+
+def _parse_plan_ids(raw):
+    try:
+        ids = [int(item) for item in json.loads(raw or '[]')]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError('付款计划 ID 列表无效')
+    return list(dict.fromkeys(ids))
+
+
+def _normalized_form_date(form, name, default=''):
+    raw = str(form.get(name, '') or '').strip() or default
+    normalized = helpers.normalize_date(raw)
+    if not normalized:
+        raise ValueError('日期格式无效，请使用 YYYY-MM-DD')
+    return normalized
 
 
 def _payment_row_from_form(idx, form):
@@ -143,6 +175,9 @@ def register(app):
 
     @app.route('/payment-plans')
     def payment_plan_list():
+        view_mode = request.args.get('view', 'work').strip() or 'work'
+        if view_mode not in {'work', 'detail'}:
+            view_mode = 'work'
         confirm_status = request.args.get('confirm_status', '').strip()
         payment_status = request.args.get('payment_status', '').strip()
         start_date = request.args.get('start_date', '').strip()
@@ -187,6 +222,94 @@ def register(app):
             next_end=next_end,
             today=today,
             due_soon_end=due_soon_end,
+            view_mode=view_mode,
+        )
+
+    @app.route('/payment-plans/batch-confirm', methods=['POST'])
+    def payment_plans_batch_confirm():
+        try:
+            ids = _parse_plan_ids(request.form.get('ids'))
+        except ValueError as e:
+            return str(e), 400
+        if len(ids) > MAX_PLAN_ROWS:
+            return f'单次不能超过 {MAX_PLAN_ROWS} 条付款计划', 400
+        ledger_store.batch_confirm_plans(ids)
+        return _payment_redirect(request.form)
+
+    @app.route('/payment-plans/batch-paid', methods=['POST'])
+    def payment_plans_batch_paid():
+        try:
+            ids = _parse_plan_ids(request.form.get('ids'))
+            paid_date = _normalized_form_date(
+                request.form, 'paid_date', date.today().strftime('%Y-%m-%d')
+            )
+        except ValueError as e:
+            return str(e), 400
+        if len(ids) > MAX_PLAN_ROWS:
+            return f'单次不能超过 {MAX_PLAN_ROWS} 条付款计划', 400
+        ledger_store.batch_mark_plans_paid(ids, paid_date)
+        return _payment_redirect(request.form)
+
+    @app.route('/payment-plans/<int:plan_id>/quick-update', methods=['POST'])
+    def payment_plan_quick_update(plan_id):
+        action = request.form.get('action', '').strip()
+        plan = ledger_store.get_payment_plan(plan_id)
+        if not plan:
+            return '付款计划不存在', 404
+        try:
+            if action == 'confirm':
+                ledger_store.update_payment_plan(plan_id, {'confirm_status': 'confirmed'})
+            elif action == 'paid':
+                if plan.get('due_amount') is None:
+                    return '缺少应付金额，不能直接标记已付', 400
+                paid_date = _normalized_form_date(
+                    request.form, 'paid_date', date.today().strftime('%Y-%m-%d')
+                )
+                ledger_store.update_payment_plan(plan_id, {
+                    'confirm_status': 'confirmed',
+                    'paid_amount': plan.get('due_amount'),
+                    'paid_date': paid_date,
+                })
+            elif action == 'partial':
+                paid_amount = helpers.float_or_none(request.form.get('paid_amount'))
+                if paid_amount is None or paid_amount <= 0:
+                    return '部分付款金额必须大于 0', 400
+                paid_date = _normalized_form_date(request.form, 'paid_date')
+                ledger_store.update_payment_plan(plan_id, {
+                    'confirm_status': 'confirmed',
+                    'paid_amount': paid_amount,
+                    'paid_date': paid_date,
+                })
+            elif action == 'unpaid':
+                ledger_store.update_payment_plan(plan_id, {
+                    'paid_amount': 0,
+                    'paid_date': '',
+                })
+            else:
+                return '快捷操作无效', 400
+        except ValueError as e:
+            return str(e), 400
+        return _payment_redirect(request.form)
+
+    @app.route('/payment-plans/export')
+    def export_payment_plans():
+        filters = _payment_filter_args(request.args)
+        plans = ledger_store.list_payment_plans(
+            confirm_status=filters['confirm_status'],
+            payment_status=filters['payment_status'],
+            start_date=filters['start_date'],
+            end_date=filters['end_date'],
+            project_name=filters['project_name'],
+            page=0,
+        )
+        filename = f'payment_plans_{date.today().strftime("%Y%m%d")}_{uuid.uuid4().hex[:8]}.xlsx'
+        output_path = os.path.join(helpers.OUTPUT_FOLDER, filename)
+        xlsx_exporter.export_payment_plans(output_path, plans, title='付款计划')
+        return send_file(
+            output_path,
+            as_attachment=True,
+            download_name=f'付款计划_{date.today().strftime("%Y%m%d")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
     @app.route('/payment-plans/export-next-month')

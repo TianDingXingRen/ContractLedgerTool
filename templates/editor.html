@@ -324,13 +324,36 @@
     </div>
 </div>
 
+<div id="preflightPanel" class="hidden bg-base-100 border border-warning/30 rounded-lg shadow-sm p-4 mb-4" data-testid="generation-preflight">
+    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+        <div class="min-w-0">
+            <h3 class="font-semibold text-warning">生成前复核</h3>
+            <p class="text-sm text-base-content/60 mt-1" id="preflightSummaryText">请确认生成信息。</p>
+            <div id="preflightBlockingWrap" class="hidden mt-3">
+                <div class="text-xs font-semibold text-error mb-1">必须修正</div>
+                <ul class="list-disc pl-5 text-sm text-error space-y-1" id="preflightBlockingList"></ul>
+            </div>
+            <div id="preflightWarningWrap" class="hidden mt-3">
+                <div class="text-xs font-semibold text-warning mb-1">提醒</div>
+                <ul class="list-disc pl-5 text-sm text-base-content/70 space-y-1" id="preflightWarningList"></ul>
+            </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 md:justify-end">
+            <button type="button" class="btn btn-primary btn-sm hidden" id="preflightConfirmBtn">
+                确认生成
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="preflightCloseBtn">
+                返回修改
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Loading Overlay -->
 <div class="loading-overlay fixed inset-0 bg-base-100/80 z-[1000] flex items-center justify-center flex-col gap-4 hidden" id="loadingOverlay">
     <span class="loading loading-spinner loading-lg text-primary"></span>
     <p class="text-base-content/60">正在生成合同文档…</p>
 </div>
-
-<div class="toast fixed top-4 right-4 z-[2000] hidden" id="toast"></div>
 
 {% endblock %}
 
@@ -347,6 +370,7 @@
     // 这些 URL 必须在 Jinja 渲染阶段生成，再传给作为静态文件的 editor.js
     window.CT_saveDefaultsUrl = '{{ url_for("save_template_defaults") }}';
     window.CT_generateBatchUrl = '{{ url_for("generate_batch") }}';
+    window.CT_generatePreflightUrl = '{{ url_for("generate_preflight") }}';
 
     function escapeHtml(str) {
         const d = document.createElement('div');

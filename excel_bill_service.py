@@ -19,6 +19,7 @@ from openpyxl.utils import get_column_letter
 
 import ledger_store
 import template_def
+from utils.logger import get_logger
 
 # ── 样式常量 ──
 _HEADER_FONT = Font(name='Microsoft YaHei', bold=True, size=11)
@@ -269,6 +270,11 @@ def _template_table_def(contract):
         try:
             tpl = template_def.TemplateDef.load(info['path'])
         except Exception:
+            get_logger().debug(
+                'Skip unreadable template while resolving Excel bill table: %s',
+                info.get('path'),
+                exc_info=True,
+            )
             continue
         if tpl.name != template_name:
             continue

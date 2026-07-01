@@ -162,13 +162,6 @@
     </div>
 </form>
 
-<!-- Toast -->
-<div id="toast" class="toast toast-top toast-end z-50 hidden">
-    <div class="alert" id="toastAlert">
-        <span id="toastMsg"></span>
-    </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
@@ -408,7 +401,7 @@ function previewData() {
     const msg = '表头数据:\n' + JSON.stringify(headerData, null, 2) +
         '\n\n关联合同: ' + (document.getElementById('contractSelect').value || '无') +
         '\n采购标的总行数: ' + selectedContractItems.length;
-    alert(msg);
+    window.showNotice('预览数据', msg);
 }
 
 // ── 保存/加载表头默认值 ──
@@ -600,15 +593,5 @@ selectPreset = function(key, el) {
     loadSavedDefaultsList();
 };
 
-// ── Toast ──
-function showToast(msg, type) {
-    const toast = document.getElementById('toast');
-    const alert = document.getElementById('toastAlert');
-    const msgEl = document.getElementById('toastMsg');
-    alert.className = 'alert ' + (type === 'error' ? 'alert-error' : 'alert-success');
-    msgEl.textContent = msg;
-    toast.classList.remove('hidden');
-    setTimeout(() => toast.classList.add('hidden'), 3500);
-}
 </script>
 {% endblock %}

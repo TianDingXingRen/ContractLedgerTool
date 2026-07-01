@@ -6,7 +6,7 @@
 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
     <div>
         <h2 class="text-2xl font-bold leading-tight" style="color:var(--apple-text);letter-spacing:-0.4px">工作台</h2>
-        <p style="color:var(--apple-text2);font-size:13px;margin-top:3px">{{ today.strftime('%Y年%m月%d日') }} · 合同与付款计划概览</p>
+        <p style="color:var(--apple-text2);font-size:13px;margin-top:3px">{{ today.strftime('%Y年%m月%d日') }} · 今日优先事项与快捷处理</p>
     </div>
     <div class="flex flex-wrap items-center gap-2 lg:justify-end">
         <div class="apple-stat" style="padding:8px 14px;display:inline-flex;align-items:center;gap:8px;font-size:12px;border-radius:20px"
@@ -24,7 +24,138 @@
     </div>
 </div>
 
-<!-- Stats Row — Apple style -->
+{% if autostart_error %}
+<div class="apple-alert-warning mb-4" style="display:flex;align-items:center;gap:10px">
+    <i data-lucide="alert-circle" style="width:18px;height:18px;color:var(--apple-red)"></i>
+    <span style="color:var(--apple-text);font-size:13px;font-weight:500">{{ autostart_error }}</span>
+</div>
+{% endif %}
+
+<div class="workbench-focus-grid">
+<section class="apple-section workbench-primary" data-testid="workbench-todos">
+    <div class="apple-section-header">
+        <div>
+            <div class="apple-section-title">
+                <i data-lucide="list-checks" style="color:var(--apple-blue);width:18px;height:18px"></i>
+                今日待办
+            </div>
+            <div class="apple-section-subtitle">
+                共 {{ workbench.summary.total }} 项{% if workbench.summary.high %} · {{ workbench.summary.high }} 项紧急{% endif %}
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{{ url_for('payment_plan_list', view='work', payment_status='unpaid') }}" class="apple-btn apple-btn-ghost">处理付款</a>
+            <a href="{{ url_for('procurement_projects') }}" class="apple-btn apple-btn-ghost">采购项目</a>
+            <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-primary">生成合同</a>
+        </div>
+    </div>
+    {% if workbench['items'] %}
+    <div class="overflow-x-auto">
+        <table class="apple-table">
+            <thead>
+                <tr><th>事项</th><th>对象</th><th>日期</th><th style="text-align:right">金额</th><th>负责人</th><th style="width:80px">操作</th></tr>
+            </thead>
+            <tbody>
+                {% for item in workbench['items'] %}
+                {% set tone = 'red' if item.severity == 'high' else 'orange' if item.severity == 'medium' else 'blue' %}
+                <tr>
+                    <td>
+                        <span class="apple-badge {{ tone }}">{{ item.title }}</span>
+                        {% if item.badge %}<div style="font-size:11px;color:var(--apple-text3);margin-top:3px">{{ item.badge }}</div>{% endif %}
+                    </td>
+                    <td style="font-weight:550">{{ item.subject }}</td>
+                    <td style="font-size:12px;color:{{ 'var(--apple-red)' if item.severity == 'high' else 'var(--apple-text2)' }}">{{ item.due_date or '-' }}</td>
+                    <td style="text-align:right;font-weight:550;font-variant-numeric:tabular-nums">
+                        {{ '%.2f'|format(item.amount) if item.amount is not none else '-' }}
+                    </td>
+                    <td style="font-size:12px;color:var(--apple-text2)">{{ item.owner or '-' }}</td>
+                    <td><a href="{{ item.url }}" class="apple-btn apple-btn-ghost" style="padding:4px 12px;font-size:11px">处理</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="padding:34px 20px;text-align:center">
+        <i data-lucide="circle-check" style="width:38px;height:38px;margin:0 auto 12px;color:var(--apple-green)"></i>
+        <p style="color:var(--apple-text2);font-size:13px">当前无待处理事项</p>
+        <p style="color:var(--apple-text3);font-size:12px;margin-top:4px">逾期付款、待确认计划、采购下一步和合同到期提醒会自动出现在这里。</p>
+    </div>
+    {% endif %}
+</section>
+
+<aside class="apple-section workbench-aside" aria-label="快捷入口与风险摘要">
+    <div class="apple-section-header">
+        <div class="apple-section-title">
+            <i data-lucide="mouse-pointer-click" style="color:var(--apple-blue);width:18px;height:18px"></i>
+            快捷处理
+        </div>
+    </div>
+    <div class="workbench-side-body">
+        <div class="workbench-action-list">
+            <a href="{{ url_for('payment_plan_list', view='work', payment_status='unpaid') }}" class="workbench-action">
+                <i data-lucide="calendar-check"></i>
+                <span>
+                    <span class="workbench-action-title">处理待付款</span>
+                    <span class="workbench-action-sub">确认、到账、部分付款</span>
+                </span>
+            </a>
+            <a href="{{ url_for('list_templates') }}" class="workbench-action">
+                <i data-lucide="file-plus-2"></i>
+                <span>
+                    <span class="workbench-action-title">生成合同</span>
+                    <span class="workbench-action-sub">选择模板并填写</span>
+                </span>
+            </a>
+            <a href="{{ url_for('procurement_projects') }}" class="workbench-action">
+                <i data-lucide="briefcase-business"></i>
+                <span>
+                    <span class="workbench-action-title">采购前置</span>
+                    <span class="workbench-action-sub">补录明细、报价、成交</span>
+                </span>
+            </a>
+        </div>
+        <div>
+            <div style="font-size:12px;font-weight:650;color:var(--apple-text);margin-bottom:8px">风险摘要</div>
+            <div class="workbench-signal-grid">
+                <div class="workbench-signal">
+                    <strong style="color:{{ 'var(--apple-red)' if workbench.summary.high else 'var(--apple-text)' }}">{{ workbench.summary.high }}</strong>
+                    <span>紧急待办</span>
+                </div>
+                <div class="workbench-signal">
+                    <strong>{{ workbench.summary.payment }}</strong>
+                    <span>付款相关</span>
+                </div>
+                <div class="workbench-signal">
+                    <strong>{{ expiring_contracts|length }}</strong>
+                    <span>30 天内到期</span>
+                </div>
+                <div class="workbench-signal">
+                    <strong>{{ payment_stats.pending_count }}</strong>
+                    <span>计划待确认</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</aside>
+</div>
+
+<details class="apple-section workbench-secondary">
+    <summary class="workbench-summary">
+        <div class="apple-section-header">
+            <div>
+                <div class="apple-section-title">
+                    <i data-lucide="bar-chart-3" style="color:var(--apple-blue);width:18px;height:18px"></i>
+                    数据概览
+                </div>
+                <div class="apple-section-subtitle">合同统计、付款概览、项目进度和最近记录</div>
+            </div>
+            <i class="workbench-summary-icon" data-lucide="chevron-right" style="width:18px;height:18px;color:var(--apple-text3)"></i>
+        </div>
+    </summary>
+    <div class="workbench-secondary-body">
+
+<!-- Stats Row – Apple style -->
 <div class="apple-stat-grid">
     {% set stat_colors = {'draft':'orange','signed':'blue','active':'green','completed':'purple','void':'gray'} %}
     <div class="apple-stat blue">
@@ -40,13 +171,6 @@
     </div>
     {% endfor %}
 </div>
-
-{% if autostart_error %}
-<div class="apple-alert-warning mb-4" style="display:flex;align-items:center;gap:10px">
-    <i data-lucide="alert-circle" style="width:18px;height:18px;color:var(--apple-red)"></i>
-    <span style="color:var(--apple-text);font-size:13px;font-weight:500">{{ autostart_error }}</span>
-</div>
-{% endif %}
 
 <!-- Payment Overview — Apple style -->
 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
@@ -333,6 +457,9 @@
         </div>
     </div>
 </div>
+
+    </div>
+</details>
 
 {% endblock %}
 

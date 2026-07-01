@@ -7,12 +7,14 @@ import zipfile
 from copy import deepcopy
 from datetime import date
 
-from flask import render_template, request, redirect, url_for, send_file, session
+from flask import render_template, request, redirect, url_for, send_file, session, jsonify
 
 import template_def
 import ledger_store
 import pdf_exporter
 import xlsx_exporter
+from services import generation_preflight_service
+from services import workbench_service
 from utils import helpers
 from utils.generation_utils import generate_docx_document
 from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH, limit_text
@@ -35,6 +37,7 @@ def register(app):
         project_progress = ledger_store.get_project_progress_stats()
         recent_templates = template_def.list_templates()[:5]
         autostart = helpers.autostart_status()
+        workbench = workbench_service.build_workbench(today=today)
 
         status_labels = helpers.CONTRACT_STATUS_LABELS
 
@@ -48,6 +51,7 @@ def register(app):
             recent_contracts=recent_contracts,
             project_progress=project_progress,
             recent_templates=recent_templates,
+            workbench=workbench,
             status_labels=status_labels,
             today=today,
             autostart=autostart,
@@ -190,6 +194,74 @@ def register(app):
             response.headers['X-PDF-Url'] = pdf_url
         return response
 
+    @app.route('/generate/preflight', methods=['POST'])
+    def generate_preflight():
+        sid = session.get('sid')
+        if not sid:
+            return jsonify({'ok': False, 'blocking': ['会话已过期，请重新选择模板'], 'warnings': []}), 400
+
+        try:
+            data = helpers.load_session_data(sid)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return jsonify({'ok': False, 'blocking': ['会话已过期，请重新选择模板'], 'warnings': []}), 400
+
+        tpl_path = helpers.template_path_from_session(data)
+        if not tpl_path:
+            return jsonify({'ok': False, 'blocking': ['找不到模板信息'], 'warnings': []}), 400
+
+        try:
+            tpl = template_def.TemplateDef.load(tpl_path)
+        except Exception:
+            return jsonify({'ok': False, 'blocking': ['加载模板失败'], 'warnings': []}), 500
+
+        fields = tpl.data.get('fields', [])
+        mode = request.form.get('_generation_mode', 'single')
+        generate_pdf = request.form.get('generate_pdf') == '1'
+
+        try:
+            classification = helpers.parse_contract_classification(request.form)
+        except ValueError as e:
+            return jsonify({'ok': False, 'blocking': [str(e)], 'warnings': []}), 400
+
+        if mode == 'batch':
+            batch_field_keys = helpers.counterparty_batch_keys(
+                fields, request.form.get('batch_field_key', '').strip()
+            )
+            field_values, input_errors = helpers.prepare_generation_values(
+                fields, request.form, allow_empty_keys=batch_field_keys
+            )
+            if input_errors:
+                return jsonify({'ok': False, 'blocking': input_errors, 'warnings': []}), 400
+            counterparties_text = request.form.get('batch_counterparties', '').strip()
+            counterparties = [c.strip() for c in counterparties_text.split('\n') if c.strip()]
+            if len(counterparties) > MAX_BATCH_CONTRACTS:
+                return jsonify({
+                    'ok': False,
+                    'blocking': [f'批量生成每次不能超过 {MAX_BATCH_CONTRACTS} 份合同'],
+                    'warnings': [],
+                }), 400
+            if any(len(c) > MAX_COUNTERPARTY_LENGTH for c in counterparties):
+                return jsonify({
+                    'ok': False,
+                    'blocking': [f'对方单位名称不能超过 {MAX_COUNTERPARTY_LENGTH} 个字符'],
+                    'warnings': [],
+                }), 400
+            payload = generation_preflight_service.build_batch_preflight(
+                tpl, fields, field_values, classification, counterparties,
+                batch_field_keys, generate_pdf=generate_pdf,
+            )
+            status = 200 if payload['ok'] else 400
+            return jsonify(payload), status
+
+        field_values, input_errors = helpers.prepare_generation_values(fields, request.form)
+        if input_errors:
+            return jsonify({'ok': False, 'blocking': input_errors, 'warnings': []}), 400
+        payload = generation_preflight_service.build_single_preflight(
+            tpl, fields, field_values, classification, generate_pdf=generate_pdf,
+        )
+        status = 200 if payload['ok'] else 400
+        return jsonify(payload), status
+
     @app.route('/generate-batch', methods=['POST'])
     def generate_batch():
         sid = session.get('sid')
@@ -326,19 +398,27 @@ def register(app):
     def contract_ledger():
         q = request.args.get('q', '').strip()
         status = request.args.get('status', '').strip()
+        view_mode = request.args.get('view', 'list').strip()
+        if view_mode not in {'list', 'project'}:
+            view_mode = 'list'
         try:
             page = max(1, int(request.args.get('page', 1)))
         except ValueError:
             page = 1
         result = ledger_store.list_contracts(q=q, status=status, page=page)
 
-        # 项目维度分组数据（仅查询有项目名称的合同，避免全量加载）
-        project_groups = ledger_store.list_project_grouped_contracts(q=q, status=status)
+        # 项目维度分组只在项目进度视图读取，避免列表页承担额外查询。
+        project_groups = (
+            ledger_store.list_project_grouped_contracts(q=q, status=status)
+            if view_mode == 'project' else []
+        )
 
         return render_template(
             'contracts.html',
             contracts=result['rows'],
+            contract_ids=[row['id'] for row in result['rows']],
             project_groups=project_groups,
+            view_mode=view_mode,
             q=q,
             status=status,
             page=result['page'],
@@ -402,8 +482,10 @@ def register(app):
         return render_template(
             'contracts.html',
             contracts=result['rows'],
+            contract_ids=[row['id'] for row in result['rows']],
             q='',
             status='',
+            view_mode='list',
             page=result['page'],
             pages=result['pages'],
             total=result['total'],

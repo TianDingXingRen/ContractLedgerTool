@@ -10,6 +10,7 @@ import ledger_store
 import pdf_exporter
 import template_def
 from config import config as app_config
+from services import handover_service
 from utils import helpers
 from utils.errors import wants_json, GENERIC_ERROR
 from utils.logger import get_logger
@@ -151,7 +152,12 @@ def register(app):
 
     @app.route('/backups')
     def backups():
-        return render_template('backups.html', backups=ledger_store.list_backups())
+        return render_template(
+            'backups.html',
+            backups=ledger_store.list_backups(),
+            full_packages=handover_service.list_full_backup_packages(),
+            handover_owners=handover_service.list_handover_owners(),
+        )
 
     @app.route('/backups/create', methods=['POST'])
     def backup_create():
@@ -191,6 +197,102 @@ def register(app):
             download_name=os.path.basename(path),
             mimetype='application/octet-stream',
         )
+
+    @app.route('/backups/full/create', methods=['POST'])
+    def full_backup_create():
+        try:
+            package = handover_service.create_full_backup_package(
+                label=request.form.get('label', 'handover')
+            )
+            if wants_json():
+                return jsonify({'success': True, 'package': package})
+            return redirect(url_for('backups', message='完整数据包已生成'))
+        except Exception as e:
+            get_logger().error('完整数据包生成失败: %s', e, exc_info=True)
+            if wants_json():
+                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
+            return redirect(url_for('backups', error=GENERIC_ERROR))
+
+    @app.route('/backups/full/upload', methods=['POST'])
+    def full_backup_upload():
+        try:
+            package = handover_service.upload_full_backup_package(request.files.get('file'))
+            if wants_json():
+                return jsonify({'success': True, 'package': package})
+            return redirect(url_for('backups', message='完整数据包已上传并通过校验'))
+        except ValueError as e:
+            get_logger().warning('完整数据包上传校验失败: %s', e)
+            message = str(e)
+            if wants_json():
+                return jsonify({'success': False, 'message': message}), 400
+            return redirect(url_for('backups', error=message))
+        except Exception as e:
+            get_logger().error('完整数据包上传失败: %s', e, exc_info=True)
+            if wants_json():
+                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
+            return redirect(url_for('backups', error=GENERIC_ERROR))
+
+    @app.route('/backups/full/<filename>/download')
+    def full_backup_download(filename):
+        try:
+            path = handover_service.full_package_path(filename)
+        except FileNotFoundError:
+            abort(404)
+        return send_file(
+            path,
+            as_attachment=True,
+            download_name=os.path.basename(path),
+            mimetype='application/zip',
+        )
+
+    @app.route('/backups/full/<filename>/restore', methods=['POST'])
+    def full_backup_restore(filename):
+        try:
+            result = handover_service.restore_full_backup_package(filename)
+            if wants_json():
+                return jsonify({'success': True, 'rollback': result['rollback']})
+            return redirect(url_for('backups', message='完整数据包已恢复，恢复前数据已自动留存回滚包'))
+        except ValueError as e:
+            get_logger().warning('完整数据包恢复校验失败: %s', e)
+            message = str(e)
+            if wants_json():
+                return jsonify({'success': False, 'message': message}), 400
+            return redirect(url_for('backups', error=message))
+        except Exception as e:
+            get_logger().error('完整数据包恢复失败: %s', e, exc_info=True)
+            if wants_json():
+                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
+            return redirect(url_for('backups', error=GENERIC_ERROR))
+
+    @app.route('/backups/handover/export', methods=['POST'])
+    def handover_export():
+        owner = request.form.get('owner', '').strip()
+        include_closed = request.form.get('include_closed') == '1'
+        try:
+            result = handover_service.export_handover_checklist(
+                helpers.OUTPUT_FOLDER,
+                owner,
+                include_closed=include_closed,
+            )
+            if wants_json():
+                return jsonify({'success': True, 'export': result})
+            return send_file(
+                result['path'],
+                as_attachment=True,
+                download_name=result['download_name'],
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
+        except ValueError as e:
+            get_logger().warning('交接清单导出失败: %s', e)
+            message = str(e)
+            if wants_json():
+                return jsonify({'success': False, 'message': message}), 400
+            return redirect(url_for('backups', error=message))
+        except Exception as e:
+            get_logger().error('交接清单导出失败: %s', e, exc_info=True)
+            if wants_json():
+                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
+            return redirect(url_for('backups', error=GENERIC_ERROR))
 
     @app.route('/reset', methods=['POST'])
     def reset():

@@ -119,9 +119,6 @@
     <p class="text-base-content/60">正在保存模板…</p>
 </div>
 
-<!-- Toast -->
-<div class="toast fixed top-4 right-4 z-[2000] hidden" id="toast"></div>
-
 {% endblock %}
 
 {% block scripts %}
@@ -537,15 +534,6 @@
                     renameByPrefix(row, p, p + idx + '_' + ci));
             });
         });
-    }
-
-    function showToast(msg, type) {
-        const toast = document.getElementById('toast');
-        toast.textContent = msg;
-        toast.className = 'toast fixed top-4 right-4 z-[2000] px-4 py-3 rounded-lg shadow-lg text-white text-sm ' +
-            (type === 'error' ? 'bg-error' : 'bg-success');
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 3000);
     }
 
     // ── File upload ──

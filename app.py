@@ -189,7 +189,7 @@ def reset_runtime():
     try:
         ledger_store.close_connections()
     except Exception:
-        pass
+        get_logger().debug('reset_runtime failed to close database connections', exc_info=True)
     close_logging()
     _runtime_initialized = False
 

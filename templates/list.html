@@ -58,7 +58,11 @@
                     <button type="submit" class="apple-btn apple-btn-ghost" style="font-size:12px;padding:6px 12px">复制</button>
                 </form>
                 <form method="post" action="{{ url_for('template_delete', filename=tpl.filename) }}"
-                      onsubmit="return confirm('确定删除模板「{{ tpl.name }}」？')" style="display:contents">
+                      data-confirm="确定删除模板「{{ tpl.name }}」？"
+                      data-confirm-title="删除模板"
+                      data-confirm-ok="删除"
+                      data-confirm-danger="true"
+                      style="display:contents">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="apple-btn apple-btn-ghost" style="font-size:12px;padding:6px 12px;color:var(--apple-red)">删除</button>
                 </form>

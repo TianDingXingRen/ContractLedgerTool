@@ -1,0 +1,25 @@
+# Resolved runtime dependency lock for reproducible installs.
+# Regenerate only after intentionally updating requirements.txt.
+Flask==3.1.3
+Werkzeug==3.1.8
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+blinker==1.9.0
+click==8.3.3
+itsdangerous==2.2.0
+python-docx==1.2.0
+lxml==6.1.0
+typing_extensions==4.15.0
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+pdfplumber==0.11.10
+pdfminer.six==20260107
+pillow==12.2.0
+pypdfium2==5.10.1
+cryptography==48.0.0
+cffi==2.0.0
+pycparser==3.0
+charset-normalizer==3.4.7
+pytesseract==0.3.13
+packaging==26.2
+pywin32==311; sys_platform == "win32"

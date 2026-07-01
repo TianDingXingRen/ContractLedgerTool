@@ -23,7 +23,7 @@ class FrontendAssetTests(unittest.TestCase):
         local_assets = (
             'vendor/daisyui-full.min.css',
             'vendor/tailwindcss.js',
-            'js/base.js',
+            'js/app-shell.js',
             'vendor/alpine.min.js',
             'js/icons.js',
         )
@@ -32,18 +32,54 @@ class FrontendAssetTests(unittest.TestCase):
 
     def test_base_template_moves_shared_script_to_static_asset(self):
         base_path = os.path.join(app.RESOURCE_DIR, 'templates', 'base.html')
-        script_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'base.js')
+        script_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'app-shell.js')
         with open(base_path, 'r', encoding='utf-8') as f:
             html = f.read()
         with open(script_path, 'r', encoding='utf-8') as f:
             script = f.read()
 
-        self.assertIn('js/base.js', html)
+        self.assertIn('js/app-shell.js', html)
         self.assertNotIn('function toastCenter()', html)
         self.assertNotIn('tailwind.config =', html)
         self.assertIn('function toastCenter()', script)
         self.assertIn('window.showToast', script)
+        self.assertIn('window.confirmAction', script)
+        self.assertIn('window.showNotice', script)
+        self.assertIn("dataset.appShell = 'ready'", script)
         self.assertIn('tailwind.config =', script)
+
+    def test_shared_feedback_replaces_browser_native_prompts(self):
+        roots = (
+            os.path.join(app.RESOURCE_DIR, 'templates'),
+            os.path.join(app.RESOURCE_DIR, 'static'),
+        )
+        offenders = []
+        for root in roots:
+            for dirpath, dirnames, filenames in os.walk(root):
+                if os.path.normpath('static/vendor') in os.path.normpath(dirpath):
+                    continue
+                for filename in filenames:
+                    if not filename.endswith(('.html', '.js')):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    with open(path, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                    if 'alert(' in text or 'confirm(' in text:
+                        offenders.append(os.path.relpath(path, app.RESOURCE_DIR))
+
+        self.assertEqual([], offenders)
+
+        base_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'app-shell.js')
+        style_path = os.path.join(app.RESOURCE_DIR, 'static', 'style.css')
+        with open(base_path, 'r', encoding='utf-8') as f:
+            script = f.read()
+        with open(style_path, 'r', encoding='utf-8') as f:
+            css = f.read()
+
+        self.assertIn('form[data-confirm]', script)
+        self.assertIn('feedbackToastStack', script)
+        self.assertIn('.feedback-dialog', css)
+        self.assertIn('.feedback-toast', css)
 
     def test_local_vendor_assets_are_served(self):
         expected_min_sizes = {
@@ -61,6 +97,17 @@ class FrontendAssetTests(unittest.TestCase):
                     self.assertGreater(len(response.get_data()), min_size, path)
                 finally:
                     response.close()
+
+    def test_csp_matches_current_alpine_runtime(self):
+        with app.app.test_client() as client:
+            response = client.get('/')
+            try:
+                csp = response.headers.get('Content-Security-Policy', '')
+            finally:
+                response.close()
+
+        self.assertIn("script-src 'self' 'unsafe-inline' 'unsafe-eval'", csp)
+        self.assertIn("style-src 'self' 'unsafe-inline'", csp)
 
     def test_contract_detail_exposes_resizable_payment_columns(self):
         detail_path = os.path.join(app.RESOURCE_DIR, 'templates', 'contract_detail.html')

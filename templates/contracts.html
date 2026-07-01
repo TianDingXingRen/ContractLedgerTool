@@ -1,18 +1,19 @@
 {% extends "base.html" %}
 {% block title %}合同台账 - 合同管理工具{% endblock %}
-{% block breadcrumb %}contracts{% endblock %}
+{% block breadcrumb %}{{ '回收站' if trash_mode else '合同台账' }}{% endblock %}
 {% block content %}
 
-<!-- Title bar -->
-<div class="flex items-center justify-between mb-5">
+{% set current_view = view_mode|default('list') %}
+
+<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
     <div>
         <h2 style="font-size:24px;font-weight:700;color:var(--apple-text);letter-spacing:-0.4px">{{ '回收站' if trash_mode else '合同台账' }}</h2>
         <p style="color:var(--apple-text2);font-size:13px;margin-top:3px">
-            共 {{ total }} 条{% if q %} · 搜索"{{ q }}"{% endif %}{% if status %} · {{ contract_status_labels.get(status, status) }}{% endif %}
-            {% if trash_mode %} · 可恢复或永久删除{% endif %}
+            共 {{ total }} 条{% if q %} · 搜索 "{{ q }}"{% endif %}{% if status %} · {{ contract_status_labels.get(status, status) }}{% endif %}
+            {% if trash_mode %} · 可恢复或永久删除{% elif current_view == 'project' %} · 当前为项目进度视图{% else %} · 当前为合同列表视图{% endif %}
         </p>
     </div>
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2 lg:justify-end">
         <a href="{{ url_for('index') }}" class="apple-btn apple-btn-ghost">首页</a>
         {% if not trash_mode %}
         <a href="{{ url_for('contract_export', q=q, status=status) }}" class="apple-btn apple-btn-ghost">
@@ -25,34 +26,47 @@
     </div>
 </div>
 
-<!-- Quick stats: status pills -->
-{% if not trash_mode and total > 0 %}
-<div style="display:flex;align-items:center;gap:4px;margin-bottom:16px;flex-wrap:wrap">
-    <span style="font-size:11px;color:var(--apple-text3);font-weight:500;margin-right:4px">状态筛选:</span>
-    <a href="{{ url_for('contract_ledger') }}" class="apple-badge {{ 'blue' if not status else 'gray' }}" style="text-decoration:none;padding:4px 12px;font-size:12px">全部 {{ total }}</a>
-    {% for sk in ['draft','signed','active','completed','void'] %}
-    {% set sc = 'orange' if sk == 'draft' else 'blue' if sk in ('signed','active') else 'green' if sk == 'completed' else 'gray' %}
-    <a href="{{ url_for('contract_ledger', status=sk, q=q) }}" class="apple-badge {{ sc }}" style="text-decoration:none;padding:4px 12px;font-size:12px;{% if status == sk %}font-weight:700;box-shadow:inset 0 0 0 1px currentColor{% endif %}">
-        {{ contract_status_labels.get(sk, sk) }}
-    </a>
-    {% endfor %}
-    {% if status %}
-    <a href="{{ url_for('contract_ledger', q=q) }}" style="font-size:11px;color:var(--apple-red);text-decoration:none;margin-left:4px">× 清除</a>
+{% if not trash_mode %}
+<div class="ledger-toolbar">
+    {% if total > 0 %}
+    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--apple-text3);font-weight:500;margin-right:4px">状态筛选:</span>
+        <a href="{{ url_for('contract_ledger', view=current_view, q=q) }}" class="apple-badge {{ 'blue' if not status else 'gray' }}" style="text-decoration:none;padding:4px 12px;font-size:12px">全部 {{ total }}</a>
+        {% for sk in ['draft','signed','active','completed','void'] %}
+        {% set sc = 'orange' if sk == 'draft' else 'blue' if sk in ('signed','active') else 'green' if sk == 'completed' else 'gray' %}
+        <a href="{{ url_for('contract_ledger', view=current_view, status=sk, q=q) }}" class="apple-badge {{ sc }}" style="text-decoration:none;padding:4px 12px;font-size:12px;{% if status == sk %}font-weight:700;box-shadow:inset 0 0 0 1px currentColor{% endif %}">
+            {{ contract_status_labels.get(sk, sk) }}
+        </a>
+        {% endfor %}
+        {% if status %}
+        <a href="{{ url_for('contract_ledger', view=current_view, q=q) }}" style="font-size:11px;color:var(--apple-red);text-decoration:none;margin-left:4px">清除</a>
+        {% endif %}
+    </div>
+    {% else %}
+    <span style="font-size:12px;color:var(--apple-text3)">暂无可筛选记录</span>
     {% endif %}
+    <nav class="ledger-view-switch" aria-label="合同台账视图">
+        <a href="{{ url_for('contract_ledger', view='list', q=q, status=status) }}" class="{{ 'active' if current_view == 'list' }}">
+            <i data-lucide="list"></i> 合同列表
+        </a>
+        <a href="{{ url_for('contract_ledger', view='project', q=q, status=status) }}" class="{{ 'active' if current_view == 'project' }}">
+            <i data-lucide="folder-tree"></i> 项目进度
+        </a>
+    </nav>
 </div>
 {% endif %}
 
-<!-- Main card -->
-<div class="apple-section" x-data="{ selected: [], toggleAll(el, contracts) { this.selected = el.checked ? contracts.map(c => c.id) : []; } }">
-    <!-- Header -->
-    <div class="apple-section-header" style="gap:10px">
+<div class="apple-section" x-data="{ selected: [], allIds: {{ contract_ids|default([])|tojson }}, toggleAll(el) { this.selected = el.checked ? this.allIds : []; } }">
+    <div class="apple-section-header" style="gap:10px;flex-wrap:wrap">
         {% if not trash_mode %}
-        <form method="get" action="{{ url_for('contract_ledger') }}" style="display:flex;align-items:center;gap:8px;flex:1">
+        <form method="get" action="{{ url_for('contract_ledger') }}" class="ledger-search-form">
+            <input type="hidden" name="view" value="{{ current_view }}">
+            {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
             <i data-lucide="search" style="width:16px;height:16px;color:var(--apple-text3);flex-shrink:0"></i>
             <input type="text" name="q" value="{{ q }}" placeholder="搜索合同编号、名称、项目、对方单位..."
                    style="flex:1;border:none;background:transparent;font-size:14px;color:var(--apple-text);outline:none;padding:4px 0">
             {% if q %}
-            <a href="{{ url_for('contract_ledger', status=status) }}" class="apple-btn apple-btn-ghost" style="padding:3px 10px;font-size:11px">清除</a>
+            <a href="{{ url_for('contract_ledger', view=current_view, status=status) }}" class="apple-btn apple-btn-ghost" style="padding:3px 10px;font-size:11px">清除</a>
             {% endif %}
             <button type="submit" class="apple-btn apple-btn-primary" style="padding:5px 16px;font-size:12px">搜索</button>
         </form>
@@ -61,39 +75,42 @@
         {% endif %}
     </div>
 
-    <!-- Batch toolbar -->
+    {% if current_view == 'list' or trash_mode %}
     {% if not trash_mode %}
     <div x-show="selected.length > 0" x-cloak
-         style="display:flex;align-items:center;gap:8px;padding:8px 20px;background:rgba(40,112,200,0.04);border-bottom:0.5px solid var(--apple-sep);font-size:12px">
+         style="display:flex;align-items:center;gap:8px;padding:8px 20px;background:rgba(40,112,200,0.04);border-bottom:0.5px solid var(--apple-sep);font-size:12px;flex-wrap:wrap">
         <span style="color:var(--apple-blue);font-weight:600" x-text="'已选 ' + selected.length + ' 项'"></span>
-        <span style="color:var(--apple-text3)">|</span>
         <form method="post" action="{{ url_for('contract_batch_status') }}" style="display:flex;align-items:center;gap:4px">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="ids" :value="JSON.stringify(selected)">
-            <select name="status" style="border:0.5px solid var(--apple-sep);border-radius:6px;padding:3px 6px;font-size:11px;background:white;outline:none">
-                <option value="">改状态…</option>
-                <option value="draft">草稿</option><option value="signed">已签订</option>
-                <option value="active">执行中</option><option value="completed">已完成</option><option value="void">已作废</option>
+            <select name="status" style="border:0.5px solid var(--apple-sep);border-radius:6px;padding:3px 6px;font-size:11px;background:var(--apple-card);color:var(--apple-text);outline:none">
+                <option value="">改状态...</option>
+                <option value="draft">草稿</option>
+                <option value="signed">已签订</option>
+                <option value="active">执行中</option>
+                <option value="completed">已完成</option>
+                <option value="void">已作废</option>
             </select>
             <button type="submit" class="apple-btn" style="padding:3px 10px;font-size:11px;background:var(--apple-blue);color:#fff;border-radius:12px">应用</button>
         </form>
-        <span style="color:var(--apple-text3)">|</span>
         <form method="post" action="{{ url_for('contract_batch_delete') }}" style="display:contents"
-              x-on:submit="if (!confirm('确认将选中的 ' + selected.length + ' 份合同移入回收站？')) $event.preventDefault()">
+              data-confirm="确认将选中的合同移入回收站？"
+              data-confirm-title="批量删除合同"
+              data-confirm-ok="删除"
+              data-confirm-danger="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="ids" :value="JSON.stringify(selected)">
             <button type="submit" class="apple-btn" style="padding:3px 10px;font-size:11px;background:var(--apple-red);color:#fff;border-radius:12px">批量删除</button>
         </form>
-        <button @click="selected = []" style="font-size:11px;color:var(--apple-text3);background:none;border:none;cursor:pointer;margin-left:auto">取消选择</button>
+        <button type="button" @click="selected = []" style="font-size:11px;color:var(--apple-text3);background:none;border:none;cursor:pointer;margin-left:auto">取消选择</button>
     </div>
     {% endif %}
 
-    <!-- ===== List View ===== -->
-    <div class="overflow-x-auto" style="padding:0">
+    <div class="overflow-x-auto" data-testid="contract-list-view">
         <table class="apple-table">
             <thead>
                 <tr>
-                    {% if not trash_mode %}<th style="width:32px"><input type="checkbox" x-on:change="toggleAll($el, {{ contracts|tojson }})"></th>{% endif %}
+                    {% if not trash_mode %}<th style="width:32px"><input type="checkbox" x-on:change="toggleAll($el)"></th>{% endif %}
                     <th>合同信息</th>
                     <th>对方单位</th>
                     <th>项目</th>
@@ -111,9 +128,7 @@
                     {% if not trash_mode %}<td><input type="checkbox" value="{{ c.id }}" x-model="selected"></td>{% endif %}
                     <td>
                         <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
-                           style="font-weight:550;color:var(--apple-blue);text-decoration:none;font-size:13px"
-                           onmouseover="this.style.textDecoration='underline'"
-                           onmouseout="this.style.textDecoration='none'">{{ c.title }}</a>
+                           style="font-weight:550;color:var(--apple-blue);text-decoration:none;font-size:13px">{{ c.title }}</a>
                         <div style="font-size:11px;color:var(--apple-text3);margin-top:1px">
                             {{ c.contract_no or '未编号' }}
                             {% if c.coverage_start is not none %} · {{ c.coverage_start }}-{{ c.coverage_end }}号{% endif %}
@@ -167,40 +182,64 @@
         </table>
     </div>
 
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-top:0.5px solid var(--apple-sep);gap:12px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--apple-text3)">
+            共 {{ total }} 条{% if pages > 1 %} · 第 {{ page }}/{{ pages }} 页{% endif %}
+        </span>
+        {% if pages > 1 %}
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+            {% set list_url = url_for('contract_trash') if trash_mode else url_for('contract_ledger') %}
+            {% if page > 1 %}
+            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ page-1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">上一页</a>
+            {% endif %}
+            {% for p in range(1, pages + 1) %}
+            {% if p >= page - 2 and p <= page + 2 %}
+            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ p }}"
+               class="apple-btn"
+               style="padding:5px 14px;font-size:12px;{% if p == page %}background:var(--apple-blue);color:#fff;border-radius:8px{% else %}border-radius:8px{% endif %}">{{ p }}</a>
+            {% endif %}
+            {% endfor %}
+            {% if page < pages %}
+            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ page+1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">下一页</a>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
-
-    <!-- ===== Project Progress View ===== -->
-    {% if not trash_mode %}
-    <div style="padding:0">
+    {% else %}
+    <div data-testid="project-progress-view">
         {% if project_groups|length > 0 %}
         {% for group in project_groups %}
-        <div style="border-bottom:0.5px solid var(--apple-sep);padding:16px 20px">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                <div style="display:flex;align-items:center;gap:8px">
+        <div class="ledger-project-card">
+            <div class="ledger-project-head">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                     <i data-lucide="folder-tree" style="width:18px;height:18px;color:var(--apple-blue)"></i>
                     <span style="font-weight:600;font-size:15px;color:var(--apple-text)">{{ group[0] }}</span>
                     <span class="apple-badge gray">{{ group[1]|length }} 份</span>
                     {% set max_signed = namespace(v=0) %}
-                    {% for sc in group[1] %}{% if sc.status in ('signed','active','completed') and sc.coverage_end and sc.coverage_end > max_signed.v %}{% set max_signed.v = sc.coverage_end %}{% endif %}{% endfor %}
-                    {% if max_signed.v > 0 %}<span class="apple-badge blue">已签至 {{ max_signed.v }} 号</span>{% endif %}
+                    {% set signed_count = namespace(v=0) %}
+                    {% for pc in group[1] %}
+                        {% if pc.status in ['signed','active','completed'] %}
+                            {% set signed_count.v = signed_count.v + 1 %}
+                            {% if pc.coverage_end and pc.coverage_end > max_signed.v %}{% set max_signed.v = pc.coverage_end %}{% endif %}
+                        {% endif %}
+                    {% endfor %}
+                    {% if max_signed.v > 0 %}<span class="apple-badge blue">已签到 {{ max_signed.v }} 号</span>{% endif %}
                 </div>
-                <span style="font-size:12px;color:var(--apple-text3)">
-                    {% set signed_count = group[1]|selectattr('status','in',['signed','active','completed'])|list|length %}
-                    {{ signed_count }} 份已签
-                </span>
+                <span style="font-size:12px;color:var(--apple-text3)">{{ signed_count.v }} 份已签</span>
             </div>
-            {# Progress bar #}
+
             {% set all_starts = group[1]|map(attribute='coverage_start')|select|list %}
             {% set all_ends = group[1]|map(attribute='coverage_end')|select|list %}
-            {% set rmin = namespace(v=99999999) %}{% set rmax = namespace(v=0) %}
+            {% set rmin = namespace(v=99999999) %}
+            {% set rmax = namespace(v=0) %}
             {% for s in all_starts %}{% if s < rmin.v %}{% set rmin.v = s %}{% endif %}{% endfor %}
             {% for e in all_ends %}{% if e > rmax.v %}{% set rmax.v = e %}{% endif %}{% endfor %}
             {% if rmax.v > rmin.v and max_signed.v > 0 %}
             <div style="margin-bottom:12px">
                 <div class="apple-progress" style="height:6px;border-radius:3px">
-                    {% set total = rmax.v - rmin.v + 1 %}
-                    {% set done = max_signed.v - rmin.v + 1 %}
-                    {% set pct = (done / total * 100)|int if total > 0 else 0 %}
+                    {% set progress_total = rmax.v - rmin.v + 1 %}
+                    {% set progress_done = max_signed.v - rmin.v + 1 %}
+                    {% set pct = (progress_done / progress_total * 100)|int if progress_total > 0 else 0 %}
                     <div class="apple-progress-fill" style="width:{{ pct }}%"></div>
                 </div>
                 <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--apple-text3);margin-top:3px">
@@ -208,24 +247,19 @@
                 </div>
             </div>
             {% endif %}
+
             <div style="display:flex;flex-direction:column;gap:3px">
                 {% for c in group[1] %}
                 {% set st = c.status %}
-                <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
-                   style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;text-decoration:none;transition:background 0.15s"
-                   onmouseover="this.style.background='rgba(0,0,0,0.02)'"
-                   onmouseout="this.style.background='transparent'">
-                    <div style="min-width:70px;text-align:center;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;
-                        {% if st in ('signed','active','completed') %}background:rgba(56,160,76,0.10);color:var(--apple-green)
-                        {% elif st == 'draft' %}background:rgba(224,136,48,0.10);color:var(--apple-orange)
-                        {% else %}background:rgba(0,0,0,0.04);color:var(--apple-text2){% endif %}">
+                <a href="{{ url_for('contract_detail', contract_id=c.id) }}" class="ledger-contract-line">
+                    <span class="ledger-coverage-chip {{ 'done' if st in ('signed','active','completed') else 'draft' if st == 'draft' else '' }}">
                         {% if c.coverage_start and c.coverage_end %}{{ c.coverage_start }}-{{ c.coverage_end }}号{% else %}未编号{% endif %}
-                    </div>
-                    <div style="flex:1;min-width:0">
+                    </span>
+                    <span style="flex:1;min-width:0">
                         <span style="font-size:13px;font-weight:550;color:var(--apple-text)">{{ c.title }}</span>
                         <span style="font-size:11px;color:var(--apple-text3);margin-left:6px">{{ c.counterparty or '' }}</span>
-                    </div>
-                    <span style="font-weight:550;font-size:12px;white-space:nowrap">{{ '%.2f'|format(c.amount) if c.amount is not none else '' }}</span>
+                    </span>
+                    <span style="font-weight:550;font-size:12px;white-space:nowrap;color:var(--apple-text)">{{ '%.2f'|format(c.amount) if c.amount is not none else '' }}</span>
                     {% set sc = 'blue' if st in ('signed','active') else 'orange' if st == 'draft' else 'green' if st == 'completed' else 'gray' %}
                     <span class="apple-badge {{ sc }}" style="flex-shrink:0">{{ contract_status_labels.get(st, st) }}</span>
                 </a>
@@ -234,52 +268,14 @@
         </div>
         {% endfor %}
         {% else %}
-        <div style="text-align:center;padding:60px 0;color:var(--apple-text3)">
+        <div style="text-align:center;padding:60px 20px;color:var(--apple-text3)">
             <i data-lucide="folder-tree" style="width:40px;height:40px;margin:0 auto 14px;display:block;opacity:0.5"></i>
             <div style="font-size:14px;font-weight:500;color:var(--apple-text2)">暂无项目归类数据</div>
-            <div style="font-size:12px;color:var(--apple-text3);margin-top:4px">生成合同时填写所属项目和覆盖号段后，这里会自动形成统计</div>
+            <div style="font-size:12px;color:var(--apple-text3);margin-top:4px">生成合同时填写所属项目和覆盖号段后，这里会自动形成进度。</div>
         </div>
         {% endif %}
     </div>
     {% endif %}
-
-    <!-- Footer: count + pagination -->
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-top:0.5px solid var(--apple-sep)">
-        <span style="font-size:12px;color:var(--apple-text3)">
-            共 {{ total }} 条{% if pages > 1 %} · 第 {{ page }}/{{ pages }} 页{% endif %}
-        </span>
-        {% if pages > 1 %}
-        <div style="display:flex;gap:4px">
-            {% set list_url = url_for('contract_trash') if trash_mode else url_for('contract_ledger') %}
-            {% if page > 1 %}
-            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&page={{ page-1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">‹ 上一页</a>
-            {% endif %}
-            {% for p in range(1, pages + 1) %}
-            {% if p >= page - 2 and p <= page + 2 %}
-            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&page={{ p }}"
-               class="apple-btn"
-               style="padding:5px 14px;font-size:12px;{% if p == page %}background:var(--apple-blue);color:#fff;border-radius:8px{% else %}border-radius:8px{% endif %}">{{ p }}</a>
-            {% endif %}
-            {% endfor %}
-            {% if page < pages %}
-            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&page={{ page+1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">下一页 ›</a>
-            {% endif %}
-        </div>
-        {% endif %}
-    </div>
 </div>
 
-{% endblock %}
-
-{% block scripts %}
-<script>
-function batchSelect() {
-    return {
-        selected: [],
-        toggleAll(el, contracts) {
-            this.selected = el.checked ? contracts.map(c => c.id) : [];
-        }
-    }
-}
-</script>
 {% endblock %}

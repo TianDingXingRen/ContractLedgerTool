@@ -18,7 +18,11 @@
         <a href="{{ url_for('backups') }}" class="btn btn-ghost btn-sm">
             <i data-lucide="database-backup" class="w-4 h-4"></i> 数据备份
         </a>
-        <form method="post" action="{{ url_for('reset') }}" onsubmit="return confirm('确定重置当前填写会话？已生成的合同和台账不会删除。')" style="display:inline">
+        <form method="post" action="{{ url_for('reset') }}"
+              data-confirm="确定重置当前填写会话？已生成的合同和台账不会删除。"
+              data-confirm-title="重置当前会话"
+              data-confirm-ok="重置"
+              style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-ghost btn-sm">
                 <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重置当前会话

@@ -27,6 +27,7 @@ def _is_valid_docx(filepath):
             header = f.read(4)
         return header == b'PK\x03\x04'
     except Exception:
+        get_logger().debug('DOCX header validation failed: %s', filepath, exc_info=True)
         return False
 
 
@@ -56,7 +57,7 @@ def _try_convert_doc_to_docx(doc_path):
             if os.path.exists(target) and os.path.getsize(target) > 0:
                 return True
         except Exception:
-            pass
+            get_logger().debug('Word COM DOC conversion failed', exc_info=True)
 
         # 方法2: 使用 WPS COM
         for progid in ['WPS.Application', 'KWPS.Application', 'Ket.Application']:
@@ -74,7 +75,7 @@ def _try_convert_doc_to_docx(doc_path):
                 if os.path.exists(target) and os.path.getsize(target) > 0:
                     return True
             except Exception:
-                pass
+                get_logger().debug('WPS COM DOC conversion failed: %s', progid, exc_info=True)
 
         return False
 

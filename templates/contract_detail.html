@@ -31,14 +31,21 @@
         </a>
         {% endif %}
         {% if contract.deleted_at %}
-        <form method="post" action="{{ url_for('contract_restore', contract_id=contract.id) }}" class="contents" onsubmit="return confirm('确定恢复此合同？')">
+        <form method="post" action="{{ url_for('contract_restore', contract_id=contract.id) }}" class="contents"
+              data-confirm="确定恢复此合同？"
+              data-confirm-title="恢复合同"
+              data-confirm-ok="恢复">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-success btn-sm gap-1">
                 <i data-lucide="rotate-ccw" class="w-4 h-4"></i> 恢复
             </button>
         </form>
         {% else %}
-        <form method="post" action="{{ url_for('contract_soft_delete', contract_id=contract.id) }}" class="contents" onsubmit="return confirm('确定将此合同移入回收站？')">
+        <form method="post" action="{{ url_for('contract_soft_delete', contract_id=contract.id) }}" class="contents"
+              data-confirm="确定将此合同移入回收站？"
+              data-confirm-title="移入回收站"
+              data-confirm-ok="删除"
+              data-confirm-danger="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-ghost btn-sm text-error gap-1">
                 <i data-lucide="alert-triangle" class="w-4 h-4"></i> 删除
@@ -413,8 +420,13 @@
         // icons auto-rendered by icons.js
     }
 
-    function removePlanRow(btn) {
-        if (!confirm('确定删除这条付款计划吗？保存后生效。')) return;
+    async function removePlanRow(btn) {
+        const ok = await window.confirmAction('确定删除这条付款计划吗？保存后生效。', {
+            title: '删除付款计划',
+            confirmText: '删除',
+            danger: true,
+        });
+        if (!ok) return;
         const tr = btn.closest('tr');
         const deleteInput = tr.querySelector('input[name$="_delete"]');
         const idInput = tr.querySelector('input[name$="_id"]');

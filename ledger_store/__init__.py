@@ -2,16 +2,15 @@
 
 import json
 import os
-import shutil
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import datetime
 
 from utils.logger import get_logger
-from utils.security import path_within as _path_within
 from utils.constants import (
     ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel,
 )
+from . import backups as backup_ops
 from . import dashboard_queries
 from . import list_queries
 from . import project_reports
@@ -161,166 +160,31 @@ def close_connections():
 # ── Backup ──
 
 def get_all_docx_paths():
-    """获取所有合同的 docx_path 列表（轻量查询，仅返回路径字段）。
-    用于文件清理时保护台账引用的文件不被删除。
-    """
-    if not os.path.isfile(DB_PATH):
-        return []
-    try:
-        with get_conn() as conn:
-            rows = conn.execute(
-                'SELECT docx_path FROM contracts WHERE docx_path IS NOT NULL AND docx_path != \'\''
-            ).fetchall()
-        return [row[0] for row in rows]
-    except Exception:
-        get_logger().warning('无法查询合同 docx 路径', exc_info=True)
-        return []
+    return backup_ops.get_all_docx_paths(get_conn, DB_PATH)
 
 
 def _check_db_integrity(quick=True):
-    """数据库完整性检查。quick=True 使用 quick_check（快速），False 使用 integrity_check（彻底）。"""
-    if not os.path.isfile(DB_PATH):
-        return False
-    pragma = 'PRAGMA quick_check' if quick else 'PRAGMA integrity_check'
-    try:
-        with get_conn() as conn:
-            row = conn.execute(pragma).fetchone()
-            return row is not None and row[0] == 'ok'
-    except Exception:
-        return False
+    return backup_ops.check_db_integrity(get_conn, DB_PATH, quick=quick)
 
 
 def backup_database(max_backups=7):
-    """使用 SQLite backup API 原子备份数据库到 backups/ 目录。
-
-    保留最近 N 份不同日期的备份。同一天只保留一份。
-    备份前执行 integrity_check（更彻底），修复时用 restore 的 quick_check 做快速校验。
-    """
-    if not os.path.exists(DB_PATH):
-        return None
-    if not _check_db_integrity(quick=False):
-        get_logger().warning('数据库完整性检查失败，跳过备份')
-        return None
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    today = date.today().strftime('%Y-%m-%d')
-    backup_path = os.path.join(BACKUP_DIR, f'contracts_{today}.db')
-    if not os.path.exists(backup_path):
-        # 使用 SQLite online backup API（原子、一致、不阻塞写入）
-        src = sqlite3.connect(DB_PATH)
-        try:
-            src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-            dst = sqlite3.connect(backup_path)
-            try:
-                src.backup(dst)
-            finally:
-                dst.close()
-        except Exception:
-            get_logger().warning('SQLite backup API 失败，回退到文件复制', exc_info=True)
-            # 回退：必须在 backup API 失败时仍尝试复制
-            try:
-                shutil.copy2(DB_PATH, backup_path)
-            except Exception:
-                get_logger().error('数据库备份完全失败', exc_info=True)
-                return None
-        finally:
-            src.close()
-    backups = sorted(
-        [f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')],
-        reverse=True,
-    )
-    for old in backups[max_backups:]:
-        os.remove(os.path.join(BACKUP_DIR, old))
-    return backup_path
+    return backup_ops.backup_database(get_conn, DB_PATH, BACKUP_DIR, max_backups=max_backups)
 
 
 def list_backups():
-    """List database backups newest first."""
-    if not os.path.isdir(BACKUP_DIR):
-        return []
-    rows = []
-    for fname in os.listdir(BACKUP_DIR):
-        if not fname.endswith('.db'):
-            continue
-        path = os.path.abspath(os.path.join(BACKUP_DIR, fname))
-        if not _path_within(BACKUP_DIR, path):
-            continue
-        stat = os.stat(path)
-        rows.append({
-            'filename': fname,
-            'path': path,
-            'size': stat.st_size,
-            'mtime': stat.st_mtime,
-            'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-        })
-    rows.sort(key=lambda item: (item['mtime'], item['filename']), reverse=True)
-    return rows
+    return backup_ops.list_backups(BACKUP_DIR)
 
 
 def create_backup(label='manual'):
-    """Create a timestamped database backup using SQLite backup API (atomic)."""
-    if not os.path.exists(DB_PATH):
-        raise FileNotFoundError('数据库文件不存在')
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    safe_label = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in str(label or 'manual'))[:32]
-    stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    backup_path = os.path.abspath(os.path.join(BACKUP_DIR, f'contracts_{stamp}_{safe_label}.db'))
-    if not _path_within(BACKUP_DIR, backup_path):
-        raise ValueError('备份路径无效')
-    # 使用 SQLite backup API（原子、一致、不阻塞写入）
-    src = sqlite3.connect(DB_PATH)
-    try:
-        src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        dst = sqlite3.connect(backup_path)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    except Exception:
-        get_logger().warning('SQLite backup API 失败，回退到文件复制', exc_info=True)
-        try:
-            shutil.copy2(DB_PATH, backup_path)
-        except Exception:
-            get_logger().error('数据库手动备份完全失败', exc_info=True)
-            raise
-    finally:
-        src.close()
-    return {
-        'filename': os.path.basename(backup_path),
-        'path': backup_path,
-        'size': os.path.getsize(backup_path),
-    }
+    return backup_ops.create_backup(DB_PATH, BACKUP_DIR, label=label)
 
 
 def backup_path(filename):
-    name = os.path.basename(filename or '')
-    if not name.endswith('.db'):
-        raise FileNotFoundError('备份文件不存在')
-    path = os.path.abspath(os.path.join(BACKUP_DIR, name))
-    if not _path_within(BACKUP_DIR, path) or not os.path.isfile(path):
-        raise FileNotFoundError('备份文件不存在')
-    return path
+    return backup_ops.backup_path(BACKUP_DIR, filename)
 
 
 def restore_backup(filename):
-    """Restore a database backup. The current DB is backed up before replacement.
-    Validates the source file before overwriting."""
-    src = backup_path(filename)
-    src_conn = None
-    try:
-        src_conn = sqlite3.connect(src)
-        row = src_conn.execute('PRAGMA quick_check').fetchone()
-        if row is None or row[0] != 'ok':
-            raise ValueError(f'备份文件校验失败: {row[0] if row else "无法读取"}')
-    except sqlite3.DatabaseError as e:
-        raise ValueError(f'备份文件不是有效的 SQLite 数据库: {e}')
-    finally:
-        if src_conn:
-            src_conn.close()
-    if os.path.exists(DB_PATH):
-        create_backup('before_restore')
-    os.makedirs(DATA_DIR, exist_ok=True)
-    shutil.copy2(src, DB_PATH)
-    return DB_PATH
+    return backup_ops.restore_backup(DB_PATH, DATA_DIR, BACKUP_DIR, filename, create_backup)
 
 
 def row_to_dict(row):
@@ -441,6 +305,23 @@ def get_contract(contract_id):
     with get_conn() as conn:
         row = conn.execute('SELECT * FROM contracts WHERE id = ?', (contract_id,)).fetchone()
     return row_to_dict(row)
+
+
+def contract_no_exists(contract_no, exclude_id=None):
+    """Return whether a non-empty contract number is already used."""
+    contract_no = str(contract_no or '').strip()
+    if not contract_no:
+        return False
+    sql = (
+        "SELECT 1 FROM contracts "
+        "WHERE contract_no = ? AND (deleted_at = '' OR deleted_at IS NULL)"
+    )
+    params = [contract_no]
+    if exclude_id is not None:
+        sql += ' AND id != ?'
+        params.append(int(exclude_id))
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchone() is not None
 
 
 def list_contracts(q='', status='', page=1, per_page=20, include_deleted=False, deleted_only=False):
@@ -629,6 +510,22 @@ def list_payment_plans(contract_id=None, confirm_status='', payment_status='',
     )
 
 
+def get_payment_plan(plan_id):
+    """Return a payment plan with basic contract context."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty,
+                   c.owner, c.project_name, c.coverage_start, c.coverage_end
+            FROM payment_plans p
+            JOIN contracts c ON c.id = p.contract_id
+            WHERE p.id = ? AND (c.deleted_at = '' OR c.deleted_at IS NULL)
+            """,
+            (plan_id,),
+        ).fetchone()
+    return row_to_dict(row)
+
+
 def update_payment_plan(plan_id, data, contract_id=None):
     allowed = [
         'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
@@ -693,6 +590,45 @@ def batch_confirm_plans(plan_ids, contract_id=None):
             cur = conn.execute(
                 f"UPDATE payment_plans SET confirm_status = 'confirmed', updated_at = ? WHERE {where}",
                 [now] + params,
+            )
+            count += cur.rowcount
+        return count
+
+
+def batch_mark_plans_paid(plan_ids, paid_date):
+    """Mark confirmed unpaid plans as fully paid in one transaction."""
+    if not plan_ids:
+        return 0
+    now = _now()
+    with get_conn() as conn:
+        count = 0
+        for plan_id in plan_ids:
+            row = conn.execute(
+                """SELECT * FROM payment_plans
+                   WHERE id = ? AND confirm_status = 'confirmed'
+                     AND payment_status != 'paid'""",
+                (plan_id,),
+            ).fetchone()
+            if not row:
+                continue
+            plan = dict(row)
+            due_amount = plan.get('due_amount')
+            if due_amount is None:
+                continue
+            updated = _normalize_payment_consistency({
+                **plan,
+                'paid_amount': due_amount,
+                'paid_date': paid_date,
+            })
+            cur = conn.execute(
+                """UPDATE payment_plans
+                   SET paid_amount = ?, paid_date = ?, payment_status = ?,
+                       updated_at = ?
+                   WHERE id = ?""",
+                (
+                    updated['paid_amount'], updated['paid_date'],
+                    updated['payment_status'], now, plan_id,
+                ),
             )
             count += cur.rowcount
         return count

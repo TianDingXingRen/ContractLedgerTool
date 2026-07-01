@@ -174,11 +174,16 @@
         removeTableColumnAt(fid, cols.length - 1);
     }
 
-    function removeTableColumnAt(fid, ci) {
+    async function removeTableColumnAt(fid, ci) {
         var cols = columnsData[fid];
         if (!cols || !Array.isArray(cols) || cols.length <= 1) return;
         var colName = (cols[ci] && cols[ci].label) || ('第' + (ci + 1) + '列');
-        if (!confirm('确定删除列「' + colName + '」及其所有数据吗？此操作不可撤销。')) return;
+        var ok = await window.confirmAction('确定删除列「' + colName + '」及其所有数据吗？此操作不可撤销。', {
+            title: '删除表格列',
+            confirmText: '删除',
+            danger: true,
+        });
+        if (!ok) return;
         cols.splice(ci, 1);
         renderTableHeader(fid);
         var tbody = document.getElementById('table_body_' + fid);
@@ -458,6 +463,153 @@
         .finally(function() { btn.disabled = false; btn.innerHTML = originalText; });
     });
 
+    var pendingPreflight = null;
+
+    function generationActionUrl(isBatch, form) {
+        return isBatch ? window.CT_generateBatchUrl : form.action;
+    }
+
+    function runPreflight(form, isBatch) {
+        var formData = new FormData(form);
+        formData.append('_generation_mode', isBatch ? 'batch' : 'single');
+        return fetch(window.CT_generatePreflightUrl, { method: 'POST', body: formData })
+            .then(function(response) {
+                return response.text().then(function(text) {
+                    var payload;
+                    try {
+                        payload = JSON.parse(text || '{}');
+                    } catch(e) {
+                        payload = {
+                            ok: false,
+                            blocking: [text.substring(0, 300) || '生成前复核失败'],
+                            warnings: []
+                        };
+                    }
+                    payload._statusOk = response.ok;
+                    return payload;
+                });
+            });
+    }
+
+    function listHtml(items) {
+        return (items || []).map(function(item) {
+            return '<li>' + escapeHtml(item) + '</li>';
+        }).join('');
+    }
+
+    function preflightSummary(payload) {
+        var s = payload.summary || {};
+        if (payload.mode === 'batch') {
+            var names = (s.counterparties_preview || []).join('、');
+            return '将基于「' + (s.template || '当前模板') + '」批量生成 ' + (s.count || 0) +
+                ' 份合同' + (names ? '：' + names + ((s.count || 0) > 5 ? ' 等' : '') : '') + '。';
+        }
+        var parts = ['模板：' + (s.template || '当前模板')];
+        if (s.contract_no) parts.push('编号：' + s.contract_no);
+        if (s.counterparty) parts.push('对方：' + s.counterparty);
+        if (s.amount !== null && s.amount !== undefined && s.amount !== '') parts.push('金额：' + s.amount);
+        if (s.sign_date) parts.push('日期：' + s.sign_date);
+        return parts.join('，') + '。';
+    }
+
+    function showPreflightPanel(payload) {
+        var panel = document.getElementById('preflightPanel');
+        var summary = document.getElementById('preflightSummaryText');
+        var blockingWrap = document.getElementById('preflightBlockingWrap');
+        var warningWrap = document.getElementById('preflightWarningWrap');
+        var blockingList = document.getElementById('preflightBlockingList');
+        var warningList = document.getElementById('preflightWarningList');
+        var confirmBtn = document.getElementById('preflightConfirmBtn');
+        var blocking = payload.blocking || [];
+        var warnings = payload.warnings || [];
+
+        summary.textContent = preflightSummary(payload);
+        blockingList.innerHTML = listHtml(blocking);
+        warningList.innerHTML = listHtml(warnings);
+        blockingWrap.classList.toggle('hidden', blocking.length === 0);
+        warningWrap.classList.toggle('hidden', warnings.length === 0);
+        confirmBtn.classList.toggle('hidden', blocking.length > 0);
+        panel.classList.remove('hidden');
+        panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function setGenerating(btn, text) {
+        btn.disabled = true;
+        btn.innerHTML = text;
+    }
+
+    function resetGenerateButton(btn, origText) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+    }
+
+    function performGeneration(form, actionUrl, btn, origText, overlay) {
+        Object.keys(columnsData).forEach(function(fid) {
+            try { syncColumnsInput(parseInt(fid)); } catch(e) {}
+        });
+        var formData = new FormData(form);
+        setGenerating(btn, '<span class="loading loading-spinner"></span> 生成中…');
+        overlay.classList.add('active');
+
+        fetch(actionUrl, { method: 'POST', body: formData })
+        .then(function(response) {
+            if (!response.ok) {
+                return response.text().then(function(text) {
+                    throw new Error(text.substring(0, 300) || '服务器错误');
+                });
+            }
+            var contentType = response.headers.get('Content-Type') || '';
+            var isDocx = contentType.indexOf('officedocument') !== -1 || contentType.indexOf('octet-stream') !== -1;
+            var isZip = contentType.indexOf('zip') !== -1;
+            if (!isDocx && !isZip) {
+                return response.text().then(function(text) {
+                    throw new Error('服务器返回了意外的响应类型，请刷新页面后重试');
+                });
+            }
+            var disposition = response.headers.get('Content-Disposition') || '';
+            var detailUrl = response.headers.get('X-Contract-Detail-Url') || '';
+            var pdfUrl = response.headers.get('X-PDF-Url') || '';
+            var genErrors = response.headers.get('X-Generation-Errors') || '';
+            var ledgerError = response.headers.get('X-Ledger-Error') || '';
+            var filename = isZip ? '批量合同.zip' : '合同.docx';
+            var match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s"']+)/i);
+            if (match) { try { filename = decodeURIComponent(match[1]); } catch(e) {} }
+            return response.blob().then(function(blob) {
+                return { blob: blob, filename: filename, detailUrl: detailUrl, pdfUrl: pdfUrl,
+                         isBatch: isZip, genErrors: genErrors, ledgerError: ledgerError };
+            });
+        })
+        .then(function(result) {
+            var url = window.URL.createObjectURL(result.blob);
+            var a = document.createElement('a');
+            a.href = url; a.download = result.filename;
+            document.body.appendChild(a); a.click(); a.remove();
+            if (result.pdfUrl) {
+                var pdfFrame = document.createElement('iframe');
+                pdfFrame.style.display = 'none';
+                pdfFrame.src = result.pdfUrl;
+                document.body.appendChild(pdfFrame);
+                setTimeout(function() { document.body.removeChild(pdfFrame); }, 5000);
+            }
+            overlay.classList.remove('active');
+            resetGenerateButton(btn, origText);
+            if (result.genErrors) {
+                showToast('部分合同生成出错：' + result.genErrors, 'error');
+            } else if (result.ledgerError) {
+                showToast(result.ledgerError, 'error');
+            } else {
+                showToast(result.isBatch ? '批量合同已生成' : '合同已生成', 'success');
+            }
+            showGenerationResult(result, url);
+        })
+        .catch(function(err) {
+            overlay.classList.remove('active');
+            resetGenerateButton(btn, origText);
+            showToast(err.message || '生成失败', 'error');
+            console.error(err);
+        });
+    }
+
     // ── Form submit ──
     document.getElementById('editorForm').addEventListener('submit', function(e) {
         e.preventDefault();
@@ -516,75 +668,53 @@
             return;
         }
 
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loading loading-spinner"></span> 生成中…';
-        overlay.classList.add('active');
-
         Object.keys(columnsData).forEach(function(fid) {
             try { syncColumnsInput(parseInt(fid)); } catch(e) {}
         });
 
         var form = e.target;
-        var formData = new FormData(form);
 
         // Batch mode: POST to /generate-batch, handle zip
         var isBatch = document.getElementById('batchToggle') && document.getElementById('batchToggle').checked;
-        var actionUrl = isBatch ? window.CT_generateBatchUrl : form.action;
+        var actionUrl = generationActionUrl(isBatch, form);
+        setGenerating(btn, '<span class="loading loading-spinner"></span> 检查中…');
 
-        fetch(actionUrl, { method: 'POST', body: formData })
-        .then(function(response) {
-            if (!response.ok) {
-                return response.text().then(function(text) {
-                    throw new Error(text.substring(0, 300) || '服务器错误');
-                });
-            }
-            var contentType = response.headers.get('Content-Type') || '';
-            var isDocx = contentType.indexOf('officedocument') !== -1 || contentType.indexOf('octet-stream') !== -1;
-            var isZip = contentType.indexOf('zip') !== -1;
-            if (!isDocx && !isZip) {
-                return response.text().then(function(text) {
-                    throw new Error('服务器返回了意外的响应类型，请刷新页面后重试');
-                });
-            }
-            var disposition = response.headers.get('Content-Disposition') || '';
-            var detailUrl = response.headers.get('X-Contract-Detail-Url') || '';
-            var pdfUrl = response.headers.get('X-PDF-Url') || '';
-            var genErrors = response.headers.get('X-Generation-Errors') || '';
-            var filename = isZip ? '批量合同.zip' : '合同.docx';
-            var match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s"']+)/i);
-            if (match) { try { filename = decodeURIComponent(match[1]); } catch(e) {} }
-            return response.blob().then(function(blob) {
-                return { blob: blob, filename: filename, detailUrl: detailUrl, pdfUrl: pdfUrl,
-                         isBatch: isZip, genErrors: genErrors };
+        runPreflight(form, isBatch)
+            .then(function(payload) {
+                var blocking = payload.blocking || [];
+                var warnings = payload.warnings || [];
+                if (blocking.length || warnings.length) {
+                    pendingPreflight = blocking.length ? null : {
+                        form: form,
+                        actionUrl: actionUrl,
+                        btn: btn,
+                        origText: origText,
+                        overlay: overlay
+                    };
+                    showPreflightPanel(payload);
+                    resetGenerateButton(btn, origText);
+                    return;
+                }
+                performGeneration(form, actionUrl, btn, origText, overlay);
+            })
+            .catch(function(err) {
+                resetGenerateButton(btn, origText);
+                showToast(err.message || '生成前复核失败', 'error');
+                console.error(err);
             });
-        })
-        .then(function(result) {
-            var url = window.URL.createObjectURL(result.blob);
-            var a = document.createElement('a');
-            a.href = url; a.download = result.filename;
-            document.body.appendChild(a); a.click(); a.remove();
-            if (result.pdfUrl) {
-                var pdfFrame = document.createElement('iframe');
-                pdfFrame.style.display = 'none';
-                pdfFrame.src = result.pdfUrl;
-                document.body.appendChild(pdfFrame);
-                setTimeout(function() { document.body.removeChild(pdfFrame); }, 5000);
-            }
-            overlay.classList.remove('active');
-            btn.disabled = false; btn.innerHTML = origText;
-            if (result.genErrors) {
-                showToast('部分合同生成出错：' + result.genErrors, 'error');
-            } else {
-                showToast(result.isBatch ? '批量合同已生成' : '合同已生成', 'success');
-            }
-            showGenerationResult(result, url);
-        })
-        .catch(function(err) {
-            overlay.classList.remove('active');
-            btn.disabled = false; btn.innerHTML = origText;
-            showToast(err.message || '生成失败', 'error');
-            console.error(err);
-        });
+    });
+
+    document.getElementById('preflightConfirmBtn').addEventListener('click', function() {
+        if (!pendingPreflight) return;
+        document.getElementById('preflightPanel').classList.add('hidden');
+        var pending = pendingPreflight;
+        pendingPreflight = null;
+        performGeneration(pending.form, pending.actionUrl, pending.btn, pending.origText, pending.overlay);
+    });
+
+    document.getElementById('preflightCloseBtn').addEventListener('click', function() {
+        pendingPreflight = null;
+        document.getElementById('preflightPanel').classList.add('hidden');
     });
 
     function showGenerationResult(result, blobUrl) {
@@ -632,14 +762,6 @@
     document.getElementById('resultContinueBtn').addEventListener('click', function() {
         document.getElementById('generationResultPanel').classList.add('hidden');
     });
-
-    function showToast(msg, type) {
-        const toast = document.getElementById('toast');
-        toast.textContent = msg;
-        toast.className = 'toast fixed top-4 right-4 z-[2000] px-4 py-3 rounded-lg shadow-lg text-white text-sm show ' +
-            (type === 'error' ? 'bg-error' : 'bg-success');
-        setTimeout(() => toast.classList.remove('show'), 3000);
-    }
 
     Object.assign(window, {
         onFieldChange,
