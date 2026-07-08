@@ -1,6 +1,6 @@
 """Schema SQL and migrations for the contract ledger database."""
 
-LEDGER_SCHEMA_SQL = """
+LEDGER_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS contracts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_no TEXT,
@@ -50,7 +50,10 @@ CREATE TABLE IF NOT EXISTS payment_plans (
     updated_at TEXT NOT NULL,
     FOREIGN KEY(contract_id) REFERENCES contracts(id)
 );
+"""
 
+
+LEDGER_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_contracts_created
     ON contracts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_contract
@@ -76,6 +79,9 @@ CREATE INDEX IF NOT EXISTS idx_contracts_status
 CREATE INDEX IF NOT EXISTS idx_contracts_expiry
     ON contracts(expiry_date);
 """
+
+
+LEDGER_SCHEMA_SQL = LEDGER_TABLE_SQL + "\n" + LEDGER_INDEX_SQL
 
 
 SCHEMA_VERSION_SQL = """

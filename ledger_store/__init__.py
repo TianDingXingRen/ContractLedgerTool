@@ -14,7 +14,7 @@ from . import backups as backup_ops
 from . import dashboard_queries
 from . import list_queries
 from . import project_reports
-from .schema import LEDGER_SCHEMA_SQL, MIGRATIONS, SCHEMA_VERSION_SQL
+from .schema import LEDGER_INDEX_SQL, LEDGER_TABLE_SQL, MIGRATIONS, SCHEMA_VERSION_SQL
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
@@ -59,7 +59,9 @@ def get_conn():
 
 def init_db():
     with get_conn() as conn:
-        conn.executescript(LEDGER_SCHEMA_SQL)
+        conn.executescript(LEDGER_TABLE_SQL)
+        _ensure_legacy_contract_columns(conn)
+        conn.executescript(LEDGER_INDEX_SQL)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute(SCHEMA_VERSION_SQL)
     # 确保迁移在 init 后立即执行
@@ -67,6 +69,23 @@ def init_db():
 
 
 # ── Migrations ──
+
+LEGACY_CONTRACT_COLUMNS = {
+    'deleted_at': "TEXT DEFAULT ''",
+    'expiry_date': "TEXT DEFAULT ''",
+    'project_name': "TEXT DEFAULT ''",
+    'coverage_start': 'INTEGER',
+    'coverage_end': 'INTEGER',
+}
+
+
+def _ensure_legacy_contract_columns(conn):
+    """Repair pre-migration contract tables before indexes are created."""
+    rows = conn.execute('PRAGMA table_info(contracts)').fetchall()
+    existing = {row['name'] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
+    for column, definition in LEGACY_CONTRACT_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f'ALTER TABLE contracts ADD COLUMN {column} {definition}')
 
 def _deduplicate_contract_numbers(conn):
     """迁移唯一索引前，为历史重复编号生成可追溯的新编号。"""

@@ -132,6 +132,12 @@ class FrontendAssetTests(unittest.TestCase):
 
         self.assertIn('/static/style.css', script)
         self.assertIn('Apple-style GUI Theme', script)
+        self.assertIn('[switch]$NoPrompt', script)
+        self.assertIn('$StartupTimeoutSeconds = 120', script)
+        self.assertIn('Resolve-LaunchPort', script)
+        self.assertIn('Port $Port is busy; using port $LaunchPort instead.', script)
+        self.assertIn('-PassThru', script)
+        self.assertIn('Still waiting for the local service', script)
 
     def test_offline_build_includes_nested_procurement_templates(self):
         manifest = build_installer.prepare_app_resources()
@@ -162,13 +168,25 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('-Port $Port', script)
         self.assertIn('Stop-PreviousVersions', script)
         self.assertIn('Get-NetTCPConnection -LocalPort $Port', script)
+        self.assertIn('Resolve-InstallPort', script)
+        self.assertIn('Port $Port is busy; using port $ResolvedPort instead.', script)
         self.assertIn('python.exe', script)
         self.assertIn('ContractLedgerTool.exe', script)
+        self.assertNotIn('$isToolExe = $name -eq "ContractLedgerTool.exe"', script)
+        self.assertIn('(($name -eq "python.exe" -or $name -eq "pythonw.exe") -and $cmd', script)
+        self.assertIn('$isInstalledApp -or $isUnderInstallDir -or $isLegacySourceCommand', script)
+        self.assertIn('$cmd.IndexOf("app.py"', script)
         self.assertIn('Clear-ExistingAutostart', script)
         self.assertIn('Clear-LegacyProgramFiles', script)
         self.assertIn('Set-WritableIfExists', script)
         self.assertIn('Unregister-ScheduledTask', script)
         self.assertIn('New-DesktopLauncher', script)
+        self.assertIn('Invoke-OptionalPowerShellFile', script)
+        self.assertIn('Start-OptionalPowerShellFile', script)
+        self.assertIn('Starting the contract management tool in the background', script)
+        self.assertIn('Installation files are already in place', script)
+        self.assertIn('Local URL:', script)
+        self.assertIn('"-NoPrompt"', script)
         self.assertIn('.venv', script)
 
     def test_offline_installer_build_outputs_desktop_exe_only(self):
