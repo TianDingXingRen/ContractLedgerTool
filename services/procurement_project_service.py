@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 
 import ledger_store
 import procurement_store
@@ -15,6 +15,8 @@ from utils.constants import (
     PROCUREMENT_STAGE_ORDER,
     PROCUREMENT_STATUS_LABELS,
 )
+from utils.money import to_minor, from_minor
+from utils.logger import get_logger
 
 
 STATUS_TRANSITIONS = {
@@ -57,22 +59,11 @@ STAGE_ACTIONS = {
 
 
 def money_to_minor(value, label='金额', allow_empty=True):
-    raw = str(value or '').replace(',', '').strip()
-    if not raw and allow_empty:
-        return None
-    try:
-        amount = Decimal(raw)
-    except InvalidOperation as exc:
-        raise ValueError(f'{label}格式无效') from exc
-    if amount < 0:
-        raise ValueError(f'{label}不能为负数')
-    return int((amount * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return to_minor(value, allow_none=allow_empty)
 
 
 def minor_to_money(value):
-    if value is None:
-        return ''
-    return f'{Decimal(int(value)) / 100:.2f}'
+    return from_minor(value)
 
 
 def _next_project_no():
@@ -97,7 +88,8 @@ def create_project(form):
     name = str(form.get('project_name') or '').strip()
     if not name:
         raise ValueError('项目名称不能为空')
-    project_no = str(form.get('project_no') or '').strip() or _next_project_no()
+    submitted_project_no = str(form.get('project_no') or '').strip()
+    project_no = submitted_project_no or _next_project_no()
     data = {
         'project_no': project_no,
         'project_name': name,
@@ -121,6 +113,8 @@ def create_project(form):
             project_id = procurement_store.create_project(data)
             break
         except sqlite3.IntegrityError:
+            if submitted_project_no:
+                raise ValueError('项目编号已存在')
             if attempt == max_retries - 1:
                 raise ValueError('创建项目失败，请稍后重试')
     project = procurement_store.get_project(project_id)
@@ -176,6 +170,12 @@ def _stage_completion(project):
     }
 
 
+def _stage_applicable(project, stage):
+    if project.get('purchase_method') == 'single_source' and stage == 'comparison':
+        return False
+    return True
+
+
 def _workflow_skips(project_id):
     skipped = {}
     for event in procurement_store.list_project_audit_events(project_id, actions=['workflow_jump']):
@@ -198,6 +198,8 @@ def _missing_before(project, target_stage):
             break
         if stage == 'project':
             continue
+        if not _stage_applicable(project, stage):
+            continue
         if not completion.get(stage):
             missing.append(stage)
     return missing
@@ -211,6 +213,8 @@ def build_workflow_view(project_id):
     skipped = _workflow_skips(project_id)
     recommended_key = None
     for stage in PROCUREMENT_STAGE_ORDER:
+        if not _stage_applicable(project, stage):
+            continue
         if not completion.get(stage) and stage not in skipped:
             recommended_key = stage
             break
@@ -219,10 +223,14 @@ def build_workflow_view(project_id):
 
     stages = []
     for stage in PROCUREMENT_STAGE_ORDER:
+        applicable = _stage_applicable(project, stage)
         done = completion.get(stage, False)
         skipped_info = skipped.get(stage)
-        missing_before = _missing_before(project, stage)
-        if done:
+        missing_before = _missing_before(project, stage) if applicable else []
+        requires_skip_note = bool(missing_before and not done and not skipped_info)
+        if not applicable:
+            status = 'not_applicable'
+        elif done:
             status = 'done'
         elif skipped_info:
             status = 'skipped'
@@ -236,11 +244,13 @@ def build_workflow_view(project_id):
             'key': stage,
             'label': PROCUREMENT_STAGE_LABELS.get(stage, stage),
             'status': status,
+            'applicable': applicable,
             'done': done,
             'skipped': bool(skipped_info),
             'skip_note': (skipped_info or {}).get('note', ''),
             'missing_before': missing_before,
             'missing_labels': [PROCUREMENT_STAGE_LABELS.get(item, item) for item in missing_before],
+            'requires_skip_note': requires_skip_note,
             'action': STAGE_ACTIONS.get(stage, {}),
         })
     return {
@@ -260,15 +270,25 @@ def jump_to_stage(project_id, target_stage, note=''):
     project = project_detail(project_id)
     if not project:
         raise ValueError('采购项目不存在')
+    if not _stage_applicable(project, target_stage):
+        return target_stage
     if target_stage == 'negotiation' and not project.get('suppliers'):
         raise ValueError('进入谈判前至少需要添加一个候选供应商')
     note = str(note or '').strip()
+    completion = _stage_completion(project)
+    skipped = _workflow_skips(project_id)
     missing = _missing_before(project, target_stage)
+    target_already_available = completion.get(target_stage) or target_stage in skipped
+    if target_already_available:
+        missing = []
     if missing and not note:
         raise ValueError('跳过前置环节时需要填写原因')
     before_status = project.get('status') or ''
     next_status = STAGE_STATUS_MAP.get(target_stage, before_status)
-    procurement_store.transition_project_status(project_id, next_status, note=note)
+    if target_already_available:
+        next_status = before_status
+    if next_status != before_status:
+        procurement_store.transition_project_status(project_id, next_status, note=note)
     procurement_store.record_workflow_jump(
         project_id, target_stage, missing, note=note,
         before_status=before_status, after_status=next_status,
@@ -400,6 +420,17 @@ def update_supplier(project_id, supplier_id, form):
         'email': str(form.get('email') or '').strip(),
         'remark': str(form.get('remark') or '').strip(),
     })
+
+
+def delete_supplier(project_id, supplier_id):
+    relative_paths = procurement_store.delete_project_supplier(project_id, supplier_id)
+    for relative_path in relative_paths:
+        try:
+            procurement_file_service.absolute_path(relative_path).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            get_logger().warning(
+                '删除供应商临时报价文件失败: %s', relative_path, exc_info=True
+            )
 
 
 def prepare_direct_contract_session(project_id, template_filename):

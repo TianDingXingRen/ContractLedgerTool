@@ -84,3 +84,23 @@ def test_seed_packaged_assets_copies_once_and_skips_same_version_overwrite(tmp_p
     runtime_maintenance.seed_packaged_assets(paths)
 
     assert target_template.read_text(encoding='utf-8') == 'user-edit'
+
+
+def test_cleanup_skips_uploads_when_a_template_is_malformed(tmp_path, monkeypatch):
+    import ledger_store
+    import template_def
+
+    paths = RuntimePaths.create(tmp_path)
+    paths.ensure_writable_dirs()
+    old_upload = paths.uploads_dir / 'must-not-be-deleted.docx'
+    _touch_old(old_upload)
+    malformed = paths.templates_dir / 'malformed.contract-template'
+    malformed.write_text('1.25', encoding='utf-8')
+
+    monkeypatch.setattr(template_def, 'TEMPLATES_DIR', str(paths.templates_dir))
+    monkeypatch.setattr(ledger_store, 'get_all_docx_paths', lambda: [])
+    config = SimpleNamespace(OUTPUT_CLEANUP_DAYS=1, SESSION_TTL_HOURS=1)
+
+    runtime_maintenance.cleanup_old_files(paths, config)
+
+    assert old_upload.exists()

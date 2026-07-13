@@ -2,11 +2,21 @@
 
 Path variables (UPLOAD_FOLDER, BASE_DIR, etc.) are set by app.py at startup.
 
-Most business logic has been split to:
-  - utils.labels            → status label constants (re-exports from utils.constants)
-  - utils.field_utils       → key generation, parsing, marker detection, table normalization
-  - utils.generation_utils  → calculations, contract summary, ledger, batch, payment helpers
-  - utils.autostart         → Windows 自启动管理
+Most business logic has been moved to dedicated sub-modules:
+  utils.constants           → 枚举常量（CONTRACT_STATUS_LABELS 等）
+  utils.field_utils         → 字段键/解析/标记检测/表格规范化
+  utils.generation_utils    → 计算/合同摘要/台账/批量/付款辅助
+  utils.keyword_maps        → 中文字段关键词 → 业务语义映射
+  utils.money               → 金额（分↔元）统一转换
+  utils.autostart           → Windows 自启动管理
+
+------ 废弃提示 ------
+本模块的重导出（re-export）函数仅为向后兼容保留。
+新代码请直接从子模块导入，例如：
+  from utils.field_utils import detect_markers, normalize_date
+  from utils.generation_utils import generate_docx_document
+  from utils.money import from_minor, to_minor
+  from utils.keyword_maps import find_scalar_semantic
 """
 
 from __future__ import annotations
@@ -41,7 +51,8 @@ from utils.labels import (
     QUOTE_IMPORT_STATUS_LABELS,
 )
 # ── Re-export from sub-modules for backward compatibility ──
-from utils.field_utils import (
+# 新代码请直接从 utils.xxx 导入，而非通过 helpers 间接引用
+from utils.field_utils import (  # noqa: F811  # 有意重导出
     field_key_from_label, unique_key, safe_col_key,
     safe_filename_part, parse_number, normalize_date,
     to_calc_number, float_or_none, int_or_none, normalize_number_field_value,
@@ -49,7 +60,7 @@ from utils.field_utils import (
     normalize_table_columns, apply_submitted_table_columns,
     parse_submitted_field_values,
 )
-from utils.generation_utils import (
+from utils.generation_utils import (  # noqa: F811
     calc_context, recalculate_scalar_fields, recalculate_table_fields,
     prepare_generation_values,
     infer_contract_summary, parse_contract_classification,
@@ -60,7 +71,7 @@ from utils.generation_utils import (
     validate_template_source_bindings,
 )
 # ── Re-export from autostart module ──
-from utils.autostart import (
+from utils.autostart import (  # noqa: F811
     autostart_status, enable_autostart, disable_autostart,
     AUTOSTART_TASK_NAME, AUTOSTART_LAUNCHER_NAME,
     AUTOSTART_LEGACY_LAUNCHER_NAMES,

@@ -9,13 +9,14 @@ from openpyxl.styles import Font, PatternFill
 
 import procurement_store
 from services import procurement_file_service
+from utils.money import from_minor
 
 
 DEFAULT_THRESHOLD_PERCENT = Decimal('20')
 
 
 def _money(value):
-    return f'{Decimal(int(value or 0)) / 100:.2f}'
+    return from_minor(value or 0)
 
 
 def _latest_quote_data(project_id):

@@ -74,6 +74,66 @@ function Test-PortListening {
     }
 }
 
+function Stop-ProcessIfRunning {
+    param([int]$ProcessId, [string]$Reason)
+
+    if (-not $ProcessId -or $ProcessId -eq $PID) {
+        return
+    }
+
+    try {
+        Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+        Write-Host "Stopped previous process $ProcessId ($Reason)"
+    } catch {
+        Write-Host "Could not stop process $ProcessId ($Reason): $_" -ForegroundColor Yellow
+    }
+}
+
+function Stop-ConflictingToolListener {
+    param([int]$ProbePort)
+
+    try {
+        $fullAppDir = [System.IO.Path]::GetFullPath($AppDir).TrimEnd('\')
+        $fullAppExe = [System.IO.Path]::GetFullPath($AppExe)
+        $listeners = Get-NetTCPConnection -LocalPort $ProbePort -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty OwningProcess -Unique
+
+        foreach ($ownerProcessId in $listeners) {
+            if (-not $ownerProcessId -or $ownerProcessId -eq $PID) {
+                continue
+            }
+
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ownerProcessId" -ErrorAction SilentlyContinue
+            if (-not $proc) {
+                continue
+            }
+
+            $path = [string]$proc.ExecutablePath
+            $cmd = [string]$proc.CommandLine
+            $isSameInstalledExe = $path -and $path.Equals($fullAppExe, [System.StringComparison]::OrdinalIgnoreCase)
+            $isBundledExe = $path -and ([System.IO.Path]::GetFileName($path)).Equals("ContractLedgerTool.exe", [System.StringComparison]::OrdinalIgnoreCase)
+            $isLegacySourceCommand = (
+                $cmd -and
+                ($cmd.IndexOf($fullAppDir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -and
+                ($cmd.IndexOf("app.py", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            )
+            $mentionsTool = $cmd -and ($cmd.IndexOf("ContractLedgerTool", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+
+            if ($isSameInstalledExe -and (Test-ServiceReady -ProbePort $ProbePort)) {
+                continue
+            }
+
+            if ($isBundledExe -or $isLegacySourceCommand -or $mentionsTool) {
+                Stop-ProcessIfRunning $ownerProcessId "port $ProbePort"
+            }
+        }
+
+        Start-Sleep -Milliseconds 500
+    } catch {
+        Write-Host "Port cleanup skipped: $_" -ForegroundColor Yellow
+    }
+}
+
 function Resolve-LaunchPort {
     param([int]$PreferredPort)
 
@@ -153,6 +213,8 @@ function Complete-Launch {
     exit 1
 }
 
+$LaunchPort = $Port
+Stop-ConflictingToolListener -ProbePort $Port
 $LaunchPort = Resolve-LaunchPort -PreferredPort $Port
 if ($LaunchPort -ne $Port) {
     Write-Host "Port $Port is busy; using port $LaunchPort instead." -ForegroundColor Yellow

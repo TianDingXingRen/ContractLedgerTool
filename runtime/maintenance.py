@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import sqlite3
 import time
 
 import ledger_store
@@ -24,10 +26,11 @@ def cleanup_old_files(paths, config, max_age_days=None):
         for path in ledger_store.get_all_docx_paths():
             if path:
                 preserved.add(os.path.normpath(os.path.abspath(path)))
-    except Exception as e:
+    except (OSError, sqlite3.Error, ValueError) as e:
         get_logger().error('无法读取合同台账，跳过文件清理以避免数据丢失：%s', e)
         return
 
+    uploads_safe_to_clean = True
     try:
         for tpl_info in template_def.list_templates():
             tpl_path = tpl_info.get('path', '')
@@ -40,15 +43,20 @@ def cleanup_old_files(paths, config, max_age_days=None):
                     src_path = paths.uploads_dir / source_docx
                     if src_path.is_file():
                         preserved.add(os.path.normpath(os.path.abspath(src_path)))
-            except Exception:
+            except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError):
+                uploads_safe_to_clean = False
                 get_logger().warning('模板 %s 加载失败，upload 保护可能不完整', tpl_path, exc_info=True)
-    except Exception as e:
+    except (OSError, ValueError, json.JSONDecodeError, TypeError, AttributeError) as e:
+        uploads_safe_to_clean = False
         get_logger().warning('读取模板列表失败，upload 保护可能不完整：%s', e)
 
     for folder, label in (
         (paths.uploads_dir, 'uploads'),
         (paths.output_dir, 'output'),
     ):
+        if label == 'uploads' and not uploads_safe_to_clean:
+            get_logger().warning('存在无法读取的模板，跳过 upload 清理以避免误删源文件')
+            continue
         try:
             for item in folder.iterdir():
                 if not item.is_file():
@@ -100,7 +108,8 @@ def seed_packaged_assets(paths):
             dst = paths.templates_dir / src.name
             if src.resolve() == dst.resolve():
                 continue
-            if not dst.exists() or current_version != installed_version:
+            # Runtime templates become user-owned after the first seed.
+            if not dst.exists():
                 shutil.copy2(src, dst)
 
     resource_uploads = paths.resource_dir / 'uploads'
@@ -112,7 +121,8 @@ def seed_packaged_assets(paths):
             dst = paths.uploads_dir / src.name
             if src.resolve() == dst.resolve():
                 continue
-            if not dst.exists() or current_version != installed_version:
+            # Source documents may have been replaced or edited by the user.
+            if not dst.exists():
                 shutil.copy2(src, dst)
 
     _seed_launcher_script(paths.resource_dir, paths.base_dir, 'start.ps1')

@@ -4,9 +4,493 @@
  */
 'use strict';
 
+    var editorActiveFieldId = null;
+    var assistRenderQueued = false;
+
+    function getPreviewFields() {
+        return window.CT_previewFields || window.CT_fields || [];
+    }
+
+    function getPreviewBlocks() {
+        return window.CT_previewBlocks || [];
+    }
+
+    function normalizeFieldId(id) {
+        return id === null || id === undefined ? '' : String(id);
+    }
+
+    function getFieldItem(id) {
+        return document.getElementById('field_' + normalizeFieldId(id));
+    }
+
+    function getFieldInput(id) {
+        var item = getFieldItem(id);
+        if (!item) return null;
+        return item.querySelector('.field-input, .field-select, textarea');
+    }
+
+    function getFieldMeta(id) {
+        var fid = normalizeFieldId(id);
+        return getPreviewFields().find(function(field) {
+            return normalizeFieldId(field.id) === fid;
+        }) || null;
+    }
+
+    function getFieldTypeLabel(type) {
+        var labels = {
+            text: '单行',
+            number: '数字',
+            textarea: '多行',
+            select: '选择',
+            table: '表格',
+            calculated: '自动'
+        };
+        return labels[type] || type || '字段';
+    }
+
+    function getTableColumns(id) {
+        var fid = normalizeFieldId(id);
+        if (columnsData && columnsData[fid]) return columnsData[fid];
+        var meta = getFieldMeta(fid);
+        return (meta && meta.columns) || [];
+    }
+
+    function getTableRows(id) {
+        var dataEl = document.getElementById('table_data_' + normalizeFieldId(id));
+        if (!dataEl) return [];
+        try {
+            var rows = JSON.parse(dataEl.value || '[]');
+            return Array.isArray(rows) ? rows : [];
+        } catch(e) {
+            return [];
+        }
+    }
+
+    function rowHasContent(row) {
+        return Object.keys(row || {}).some(function(key) {
+            return String(row[key] == null ? '' : row[key]).trim() !== '';
+        });
+    }
+
+    function tableFieldHasContent(id) {
+        return getTableRows(id).some(rowHasContent);
+    }
+
+    function fieldHasValue(field) {
+        if (!field) return false;
+        if (field.field_type === 'table') {
+            return tableFieldHasContent(field.id);
+        }
+        var input = getFieldInput(field.id);
+        return !!(input && String(input.value || '').trim());
+    }
+
+    function fieldValueText(field) {
+        var input = getFieldInput(field.id);
+        return input ? String(input.value || '') : '';
+    }
+
+    function fieldTypeBadgeClass(field) {
+        if (field.required && !fieldHasValue(field)) return 'badge-error';
+        if (fieldHasValue(field)) return 'badge-success';
+        if (field.field_type === 'calculated') return 'badge-warning';
+        return 'badge-ghost';
+    }
+
+    function nl2br(text) {
+        return escapeHtml(text).replace(/\n/g, '<br>');
+    }
+
+    function previewPlaceholderText(field, tableMode) {
+        var prefix = field.required ? '必填' : '待填写';
+        return tableMode ? prefix + '表格：' + (field.label || field.key || '') : prefix + '：' + (field.label || field.key || '');
+    }
+
+    function renderPreviewValue(field) {
+        if (field.field_type === 'table') return renderPreviewTable(field);
+        var value = fieldValueText(field).trim();
+        if (!value) {
+            return '<span class="preview-placeholder">【' + escapeHtml(previewPlaceholderText(field, false)) + '】</span>';
+        }
+        return '<span class="preview-value">' + nl2br(value) + '</span>';
+    }
+
+    function renderPreviewTable(field) {
+        var columns = getTableColumns(field.id);
+        var rows = getTableRows(field.id).filter(rowHasContent);
+        if (!columns.length) {
+            return '<div class="preview-placeholder">【表格列待配置】</div>';
+        }
+        if (!rows.length) {
+            return '<div class="preview-placeholder">【' + escapeHtml(previewPlaceholderText(field, true)) + '】</div>';
+        }
+        var head = columns.map(function(col) {
+            return '<th>' + escapeHtml(col.label || col.key || '') + '</th>';
+        }).join('');
+        var body = rows.slice(0, 6).map(function(row) {
+            return '<tr>' + columns.map(function(col) {
+                return '<td>' + escapeHtml(row[col.key] == null ? '' : row[col.key]) + '</td>';
+            }).join('') + '</tr>';
+        }).join('');
+        var more = rows.length > 6 ? '<div class="contract-preview-more">还有 ' + (rows.length - 6) + ' 行未展开</div>' : '';
+        return '<div class="preview-table-mock overflow-x-auto"><table class="contract-preview-table"><thead><tr>' +
+            head + '</tr></thead><tbody>' + body + '</tbody></table></div>' + more;
+    }
+
+    function sanitizeCssFontFamily(name) {
+        return String(name || '').replace(/["';{}]/g, '').trim();
+    }
+
+    function styleFromFormat(format, extra) {
+        var fmt = format || {};
+        var styles = [];
+        if (fmt.font_size_pt) styles.push('font-size:' + Number(fmt.font_size_pt).toFixed(2) + 'pt');
+        if (fmt.bold) styles.push('font-weight:700');
+        if (fmt.font_family) {
+            var family = sanitizeCssFontFamily(fmt.font_family);
+            if (family) styles.push('font-family:' + family + ', SimSun, FangSong, serif');
+        }
+        if (fmt.left_indent_pt) styles.push('margin-left:' + Number(fmt.left_indent_pt).toFixed(2) + 'pt');
+        if (fmt.first_line_indent_pt) styles.push('text-indent:' + Number(fmt.first_line_indent_pt).toFixed(2) + 'pt');
+        if (fmt.space_before_pt) styles.push('margin-top:' + Number(fmt.space_before_pt).toFixed(2) + 'pt');
+        if (fmt.space_after_pt) styles.push('margin-bottom:' + Number(fmt.space_after_pt).toFixed(2) + 'pt');
+        if (fmt.line_pt) styles.push('line-height:' + Number(fmt.line_pt).toFixed(2) + 'pt');
+        if (fmt.align) styles.push('text-align:' + escapeHtml(fmt.align));
+        if (extra) styles.push(extra);
+        return styles.length ? ' style="' + styles.join(';') + '"' : '';
+    }
+
+    function tableColgroup(grid) {
+        if (!grid || !grid.length) return '';
+        var total = grid.reduce(function(sum, width) { return sum + Math.max(1, Number(width) || 1); }, 0);
+        if (!total) return '';
+        return '<colgroup>' + grid.map(function(width) {
+            var pct = (Math.max(1, Number(width) || 1) / total) * 100;
+            return '<col style="width:' + pct.toFixed(3) + '%">';
+        }).join('') + '</colgroup>';
+    }
+
+    function renderDocumentField(fieldId) {
+        var field = getFieldMeta(fieldId);
+        if (!field) return '';
+        return renderPreviewValue(field);
+    }
+
+    function renderPreviewParts(parts) {
+        return (parts || []).map(function(part) {
+            if (part.kind === 'field') {
+                var fid = normalizeFieldId(part.field_id);
+                return '<span class="contract-preview-token" data-preview-field="' + escapeHtml(fid) + '">' +
+                    renderDocumentField(fid) + '</span>';
+            }
+            if (part.kind === 'text') {
+                return nl2br(part.text || '');
+            }
+            return '';
+        }).join('');
+    }
+
+    function renderRepeatPart(part, field, rowData, rowIndex) {
+        if (part.kind === 'text') return nl2br(part.text || '');
+        if (part.kind === 'row_index') return String(rowIndex + 1);
+        if (part.kind !== 'table_column') return '';
+        var value = String(rowData && rowData[part.column_key] != null ? rowData[part.column_key] : '').trim();
+        if (!value) {
+            return '<span class="preview-placeholder">【' + escapeHtml(part.label || part.column_key || '待填写') + '】</span>';
+        }
+        return '<span class="preview-value">' + nl2br(value) + '</span>';
+    }
+
+    function renderRepeatCell(cell, field, rowData, rowIndex) {
+        return (cell.parts || []).map(function(part) {
+            return renderRepeatPart(part, field, rowData, rowIndex);
+        }).join('');
+    }
+
+    function renderDocumentTableRow(row) {
+        var repeatId = row.repeat_field_id;
+        if (repeatId !== null && repeatId !== undefined) {
+            var field = getFieldMeta(repeatId);
+            var rows = getTableRows(repeatId).filter(rowHasContent);
+            if (!rows.length) rows = [{}];
+            return rows.map(function(rowData, rowIndex) {
+                return '<tr class="contract-preview-repeat-row" data-preview-field="' + escapeHtml(normalizeFieldId(repeatId)) + '">' +
+                    (row.cells || []).map(function(cell) {
+                        var span = Number(cell.col_span || 1);
+                        var spanAttr = span > 1 ? ' colspan="' + span + '"' : '';
+                        return '<td' + spanAttr + styleFromFormat(cell.format) + '>' + renderRepeatCell(cell, field, rowData, rowIndex) + '</td>';
+                    }).join('') + '</tr>';
+            }).join('');
+        }
+        return '<tr>' + (row.cells || []).map(function(cell) {
+            var firstId = cell.field_ids && cell.field_ids.length ? normalizeFieldId(cell.field_ids[0]) : '';
+            var attr = firstId ? ' data-preview-field="' + escapeHtml(firstId) + '"' : '';
+            var span = Number(cell.col_span || 1);
+            var spanAttr = span > 1 ? ' colspan="' + span + '"' : '';
+            return '<td' + attr + spanAttr + styleFromFormat(cell.format) + '>' + renderPreviewParts(cell.parts || []) + '</td>';
+        }).join('') + '</tr>';
+    }
+
+    function blockFieldIds(block) {
+        var ids = (block.field_ids || []).map(normalizeFieldId);
+        if (block.type === 'table') {
+            (block.rows || []).forEach(function(row) {
+                if (row.repeat_field_id !== null && row.repeat_field_id !== undefined) {
+                    ids.push(normalizeFieldId(row.repeat_field_id));
+                }
+                (row.cells || []).forEach(function(cell) {
+                    (cell.field_ids || []).forEach(function(id) { ids.push(normalizeFieldId(id)); });
+                });
+            });
+        }
+        return ids.filter(function(id, index) { return id && ids.indexOf(id) === index; });
+    }
+
+    function blockHasMissingRequired(block) {
+        return blockFieldIds(block).some(function(id) {
+            var field = getFieldMeta(id);
+            return field && field.required && !fieldHasValue(field);
+        });
+    }
+
+    function renderDocumentBlock(block) {
+        var ids = blockFieldIds(block);
+        var firstId = ids.length ? ids[0] : '';
+        var active = editorActiveFieldId && ids.indexOf(editorActiveFieldId) !== -1 ? ' active' : '';
+        var missing = blockHasMissingRequired(block) ? ' is-missing' : '';
+        var attr = firstId ? ' data-preview-field="' + escapeHtml(firstId) + '" role="button" tabindex="0"' : '';
+        if (block.type === 'table') {
+            var tableAlign = block.align ? ' align-' + escapeHtml(block.align) : '';
+            return '<div class="contract-preview-table-wrap contract-preview-block' + tableAlign + active + missing + '"' + attr + '>' +
+                '<table class="contract-preview-table">' + tableColgroup(block.grid) + '<tbody>' +
+                (block.rows || []).map(renderDocumentTableRow).join('') +
+                '</tbody></table></div>';
+        }
+        var align = block.align ? ' align-' + escapeHtml(block.align) : '';
+        var empty = block.empty ? ' is-empty-paragraph' : '';
+        var titleLike = String(block.style || '').toLowerCase().indexOf('title') !== -1 ? ' is-title-paragraph' : '';
+        return '<div class="contract-preview-block contract-preview-paragraph' + align + empty + titleLike + active + missing + '"' + attr + styleFromFormat(block.format) + '>' +
+            renderPreviewParts(block.parts || []) + '</div>';
+    }
+
+    function renderDocumentPreview(blocks) {
+        return blocks.map(renderDocumentBlock).join('');
+    }
+
+    function fitContractPreviewPage() {
+        var frame = document.querySelector('.contract-preview-frame');
+        var page = document.querySelector('.contract-preview-page');
+        if (!frame || !page) return;
+        var available = Math.max(260, frame.clientWidth - 24);
+        var baseWidth = 794; // A4 width at 96dpi: 595pt * 96 / 72.
+        var zoom = Math.max(0.46, Math.min(0.82, available / baseWidth));
+        page.style.setProperty('--contract-preview-zoom', zoom.toFixed(3));
+    }
+
+    function renderPreviewCard(field, index) {
+        var fid = normalizeFieldId(field.id);
+        var before = field.context_before || '';
+        var after = field.context_after || '';
+        var active = editorActiveFieldId === fid ? ' active' : '';
+        var missing = field.required && !fieldHasValue(field);
+        var contextHtml;
+        if (field.field_type === 'table') {
+            contextHtml = '<div class="contract-preview-line"><span class="contract-preview-field-label">' +
+                escapeHtml((index + 1) + '. ' + (field.label || field.key || '表格')) + '</span></div>' +
+                renderPreviewTable(field);
+        } else if (before || after) {
+            contextHtml = '<div class="contract-preview-line preview-copy">' +
+                '<span class="preview-context">' + escapeHtml(before) + '</span>' +
+                renderPreviewValue(field) +
+                '<span class="preview-context">' + escapeHtml(after) + '</span>' +
+                '</div>';
+        } else {
+            contextHtml = '<div class="contract-preview-line preview-copy"><span class="contract-preview-field-label">' +
+                escapeHtml((index + 1) + '. ' + (field.label || field.key || ('字段' + (index + 1)))) + '</span>' +
+                renderPreviewValue(field) + '</div>';
+        }
+        return '<div class="contract-preview-block' + active + (missing ? ' is-missing' : '') +
+            '" data-preview-field="' + escapeHtml(fid) + '" role="button" tabindex="0">' +
+            contextHtml + '</div>';
+    }
+
+    function renderLivePreview() {
+        var list = document.getElementById('livePreviewList');
+        if (!list) return;
+        var fields = getPreviewFields();
+        var blocks = getPreviewBlocks();
+        var summary = document.getElementById('livePreviewSummary');
+        if (summary) {
+            var filled = fields.filter(fieldHasValue).length;
+            var missingRequired = fields.filter(function(field) { return field.required && !fieldHasValue(field); }).length;
+            summary.textContent = (blocks.length ? '完整合同预览' : '字段预览') + '，已填 ' + filled + '/' + fields.length + '，必填待填 ' + missingRequired;
+        }
+        if (blocks.length) {
+            list.innerHTML = renderDocumentPreview(blocks);
+            fitContractPreviewPage();
+            return;
+        }
+        if (!fields.length) {
+            list.innerHTML = '<div class="text-sm text-base-content/50">当前模板没有可预览字段。</div>';
+            return;
+        }
+        list.innerHTML = fields.map(renderPreviewCard).join('');
+        fitContractPreviewPage();
+    }
+
+    function renderMissingFieldList() {
+        var list = document.getElementById('missingFieldList');
+        var countEl = document.getElementById('requiredMissingCount');
+        if (!list || !countEl) return;
+        var missing = getPreviewFields().filter(function(field) {
+            return field.required && !fieldHasValue(field);
+        });
+        countEl.textContent = missing.length;
+        if (!missing.length) {
+            list.innerHTML = '<div class="text-success text-sm">必填字段已全部填写。</div>';
+            return;
+        }
+        list.innerHTML = missing.map(function(field) {
+            return '<button type="button" class="missing-field-link" data-missing-field="' +
+                escapeHtml(normalizeFieldId(field.id)) + '">' +
+                '<span class="font-medium">' + escapeHtml(field.label || field.key || '') + '</span>' +
+                '<span class="text-xs text-base-content/50">' + getFieldTypeLabel(field.field_type) + '</span>' +
+                '</button>';
+        }).join('');
+    }
+
+    function renderStructureList() {
+        var list = document.getElementById('assistStructureList');
+        if (!list) return;
+        var fields = getPreviewFields();
+        list.innerHTML = fields.map(function(field, index) {
+            var fid = normalizeFieldId(field.id);
+            var active = editorActiveFieldId === fid ? ' active' : '';
+            var filled = fieldHasValue(field);
+            return '<button type="button" class="assist-structure-link' + active + '" data-structure-field="' +
+                escapeHtml(fid) + '">' +
+                '<span class="structure-index">' + (index + 1) + '</span>' +
+                '<span class="structure-label">' + escapeHtml(field.label || field.key || '') + '</span>' +
+                '<span class="badge badge-xs ' + (filled ? 'badge-success' : (field.required ? 'badge-error' : 'badge-ghost')) + '">' +
+                (filled ? '已填' : (field.required ? '待填' : getFieldTypeLabel(field.field_type))) + '</span>' +
+                '</button>';
+        }).join('');
+    }
+
+    function renderActiveFieldContext() {
+        var box = document.getElementById('activeFieldContext');
+        if (!box) return;
+        var field = editorActiveFieldId ? getFieldMeta(editorActiveFieldId) : null;
+        if (!field) {
+            box.innerHTML = '<div class="text-xs text-base-content/50 mb-1">当前字段</div><div class="font-medium">聚焦左侧字段后查看上下文</div>';
+            return;
+        }
+        var before = field.context_before || '';
+        var after = field.context_after || '';
+        box.innerHTML = '<div class="flex items-center justify-between gap-2 mb-2">' +
+            '<div><div class="text-xs text-base-content/50">当前字段</div><div class="font-medium">' +
+            escapeHtml(field.label || field.key || '') + '</div></div>' +
+            '<span class="badge badge-xs ' + fieldTypeBadgeClass(field) + '">' + getFieldTypeLabel(field.field_type) + '</span>' +
+            '</div>' +
+            '<div class="text-xs text-base-content/60 font-mono break-all">' + escapeHtml(field.key || '') + '</div>' +
+            ((before || after) ? '<div class="mt-2 text-xs leading-relaxed"><span class="text-base-content/50">' +
+            escapeHtml(before) + '</span><span class="text-error font-semibold">{ }</span><span class="text-base-content/50">' +
+            escapeHtml(after) + '</span></div>' : '');
+    }
+
+    function syncActiveHighlights() {
+        document.querySelectorAll('.field-item').forEach(function(item) {
+            item.classList.toggle('editor-field-active', normalizeFieldId(item.id.replace('field_', '')) === editorActiveFieldId);
+        });
+        document.querySelectorAll('[data-preview-field]').forEach(function(el) {
+            el.classList.toggle('active', normalizeFieldId(el.dataset.previewField) === editorActiveFieldId);
+        });
+        document.querySelectorAll('[data-structure-field]').forEach(function(el) {
+            el.classList.toggle('active', normalizeFieldId(el.dataset.structureField) === editorActiveFieldId);
+        });
+    }
+
+    function setActiveField(id) {
+        editorActiveFieldId = normalizeFieldId(id);
+        renderActiveFieldContext();
+        syncActiveHighlights();
+    }
+
+    function focusField(id) {
+        var item = getFieldItem(id);
+        if (!item) return;
+        setActiveField(id);
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        var input = item.querySelector('input:not([type="hidden"]):not([readonly]), textarea, select');
+        if (input) {
+            setTimeout(function() { input.focus({ preventScroll: true }); }, 150);
+        }
+    }
+
+    function setAssistTab(tabName) {
+        document.querySelectorAll('.editor-assist-tab').forEach(function(btn) {
+            var active = btn.dataset.assistTab === tabName;
+            btn.classList.toggle('tab-active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        document.querySelectorAll('.editor-assist-pane').forEach(function(pane) {
+            pane.classList.toggle('hidden', pane.dataset.assistPane !== tabName);
+        });
+        if (tabName === 'review') renderMissingFieldList();
+        if (tabName === 'structure') renderStructureList();
+    }
+
+    function bindAssistPanel() {
+        document.querySelectorAll('.editor-assist-tab').forEach(function(btn) {
+            btn.addEventListener('click', function() { setAssistTab(btn.dataset.assistTab || 'preview'); });
+        });
+        document.querySelectorAll('[data-assist-tab-jump]').forEach(function(btn) {
+            btn.addEventListener('click', function() { setAssistTab(btn.dataset.assistTabJump || 'preview'); });
+        });
+        document.addEventListener('click', function(e) {
+            var preview = e.target.closest('[data-preview-field]');
+            if (preview) { focusField(preview.dataset.previewField); return; }
+            var missing = e.target.closest('[data-missing-field]');
+            if (missing) { focusField(missing.dataset.missingField); return; }
+            var structure = e.target.closest('[data-structure-field]');
+            if (structure) { focusField(structure.dataset.structureField); }
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            var preview = e.target.closest ? e.target.closest('[data-preview-field]') : null;
+            if (!preview) return;
+            e.preventDefault();
+            focusField(preview.dataset.previewField);
+        });
+        document.addEventListener('focusin', function(e) {
+            var item = e.target.closest ? e.target.closest('.field-item') : null;
+            if (item) setActiveField(item.id.replace('field_', ''));
+        });
+        window.addEventListener('resize', fitContractPreviewPage);
+    }
+
+    function renderAssistPanel() {
+        renderLivePreview();
+        renderMissingFieldList();
+        renderStructureList();
+        renderActiveFieldContext();
+        syncActiveHighlights();
+    }
+
+    function scheduleAssistRender() {
+        if (assistRenderQueued) return;
+        assistRenderQueued = true;
+        var raf = window.requestAnimationFrame || function(fn) { return setTimeout(fn, 0); };
+        raf(function() {
+            assistRenderQueued = false;
+            renderAssistPanel();
+        });
+    }
+
     // ── Progress ──
     function onFieldChange(id) {
         const item = document.getElementById('field_' + id);
+        if (!item) return;
         const input = item.querySelector('.field-input, .field-select, textarea');
         if (input && input.value.trim()) {
             item.classList.add('filled');
@@ -17,6 +501,7 @@
         }
         const nav = document.querySelector('[data-nav-field="' + id + '"]');
         if (nav) nav.classList.toggle('text-success', item.dataset.filled === '1');
+        setActiveField(id);
         updateProgress();
     }
 
@@ -25,8 +510,7 @@
         document.querySelectorAll('.field-item').forEach(item => {
             if (item.classList.contains('field-calc')) return;
             if (item.querySelector('.table-editor')) {
-                const tbody = item.querySelector('tbody');
-                const tableFilled = !!(tbody && tbody.querySelectorAll('tr').length > 0);
+                const tableFilled = tableFieldHasContent(item.id.replace('field_', ''));
                 item.dataset.filled = tableFilled ? '1' : '0';
                 if (tableFilled) { filled++; return; }
             }
@@ -52,6 +536,7 @@
         if (elEmp) elEmp.textContent = emptyCount;
         var elCalc = document.getElementById('countCalc');
         if (elCalc) elCalc.textContent = calcCount;
+        scheduleAssistRender();
     }
 
     function bindEditorFilters() {
@@ -204,6 +689,8 @@
             if (inp) inp.placeholder = label;
         });
         syncColumnsInput(fid);
+        scheduleAssistRender();
+        if (window.CT_scheduleDraftSave) window.CT_scheduleDraftSave();
     }
 
     function generateColumnKey(fid) {
@@ -357,6 +844,8 @@
         });
         document.getElementById('table_data_' + fid).value = JSON.stringify(rows);
         if (typeof triggerCalc === 'function') triggerCalc(fid);
+        scheduleAssistRender();
+        if (window.CT_scheduleDraftSave) window.CT_scheduleDraftSave();
     }
 
     // ── Excel 粘贴支持：将表格 cell input 的 paste 事件拦截并分发到多单元格 ──
@@ -432,9 +921,28 @@
     });
 
     // ── Calculated fields (from formula-engine.js) ──
-    var triggerCalc = window.CT_triggerCalc;
-    var recalcField = window.CT_recalcField;
-    var recalcAllFields = window.CT_recalcAllFields;
+    var baseTriggerCalc = window.CT_triggerCalc;
+    var baseRecalcField = window.CT_recalcField;
+    var baseRecalcAllFields = window.CT_recalcAllFields;
+
+    function triggerCalc(changedId) {
+        if (typeof baseTriggerCalc === 'function') baseTriggerCalc(changedId);
+        scheduleAssistRender();
+    }
+
+    function recalcField(el) {
+        var result;
+        if (typeof baseRecalcField === 'function') result = baseRecalcField(el);
+        scheduleAssistRender();
+        return result;
+    }
+
+    function recalcAllFields() {
+        var result;
+        if (typeof baseRecalcAllFields === 'function') result = baseRecalcAllFields();
+        scheduleAssistRender();
+        return result;
+    }
 
     // ── Safe eval (from formula-engine.js) ──
     var safeEval = window.CT_safeEval;
@@ -529,6 +1037,7 @@
         blockingWrap.classList.toggle('hidden', blocking.length === 0);
         warningWrap.classList.toggle('hidden', warnings.length === 0);
         confirmBtn.classList.toggle('hidden', blocking.length > 0);
+        setAssistTab('review');
         panel.classList.remove('hidden');
         panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
@@ -644,8 +1153,7 @@
         document.querySelectorAll('.field-item').forEach(function(item) {
             if (item.classList.contains('field-calc')) return;
             if (item.querySelector('.table-editor')) {
-                var tbody = item.querySelector('tbody');
-                if (!tbody || tbody.querySelectorAll('tr').length === 0) {
+                if (!tableFieldHasContent(item.id.replace('field_', ''))) {
                     emptyFields.push(item.querySelector('.field-label').textContent.trim());
                     if (item.dataset.required === '1') requiredEmpty.push(item.querySelector('.field-label').textContent.trim());
                 }
@@ -664,7 +1172,9 @@
         if (requiredEmpty.length > 0) {
             showToast(requiredEmpty.length + ' 个必填字段未填写：' + requiredEmpty.slice(0, 5).join('、') + (requiredEmpty.length > 5 ? ' 等' : ''), 'error');
             var firstRequired = document.querySelector('.field-item[data-required="1"][data-filled="0"]');
-            if (firstRequired) firstRequired.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setAssistTab('review');
+            renderMissingFieldList();
+            if (firstRequired) focusField(firstRequired.id.replace('field_', ''));
             return;
         }
 
@@ -754,6 +1264,7 @@
             pdfLink.classList.add('hidden');
         }
 
+        setAssistTab('review');
         panel.classList.remove('hidden');
         panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
         // icons.js observes dynamic nodes and renders icons automatically.
@@ -768,6 +1279,11 @@
         updateProgress,
         bindEditorFilters,
         setEditorFilter,
+        bindAssistPanel,
+        setAssistTab,
+        renderLivePreview,
+        renderMissingFieldList,
+        focusField,
         initTable,
         addTableColumn,
         removeTableColumn,

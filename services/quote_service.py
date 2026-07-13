@@ -16,6 +16,8 @@ from services import procurement_file_service
 
 FORMAT_VERSION = '1.0'
 PARSER_VERSION = '1.0'
+MAX_QUOTE_PDF_BYTES = 25 * 1024 * 1024
+PDF_HEADER = b'%PDF-'
 
 _HEADER_FILL = PatternFill('solid', fgColor='1D4ED8')
 _HEADER_FONT = Font(color='FFFFFF', bold=True)
@@ -319,6 +321,52 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
             'errors': errors,
             'warnings': warnings,
         })
+    except Exception:
+        try:
+            Path(saved['absolute_path']).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _validate_saved_pdf(path):
+    path = Path(path)
+    size = path.stat().st_size
+    if size <= 0:
+        raise ValueError('PDF 报价单不能为空')
+    if size > MAX_QUOTE_PDF_BYTES:
+        raise ValueError('PDF 报价单不能超过 25MB')
+    with open(path, 'rb') as stream:
+        header = stream.read(len(PDF_HEADER))
+    if header != PDF_HEADER:
+        raise ValueError('PDF 报价单文件内容无效，请上传真实 PDF 文件')
+
+
+def save_quote_pdf_attachment(project_id, supplier_id, quote_round, file_storage):
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    if not project or not supplier or supplier['project_id'] != project_id:
+        raise ValueError('采购项目或候选供应商不存在')
+    try:
+        quote_round = int(quote_round)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('报价轮次必须为整数') from exc
+    if quote_round < 1:
+        raise ValueError('报价轮次必须大于等于 1')
+    filename = str(file_storage.filename or '').strip()
+    if not filename:
+        raise ValueError('请选择 PDF 报价单')
+    if Path(filename).suffix.lower() != '.pdf':
+        raise ValueError('PDF 报价单仅支持 .pdf 格式')
+
+    saved = procurement_file_service.save_upload(project, 'supplier_quote_pdf', file_storage)
+    try:
+        _validate_saved_pdf(saved['absolute_path'])
+        display_name = f"第{quote_round}轮_{supplier['supplier_name']}_{saved['original_name']}"
+        return procurement_store.register_project_file(
+            project_id, 'supplier_quote_pdf', saved['relative_path'], display_name,
+            saved['sha256'], saved['size_bytes'],
+        )
     except Exception:
         try:
             Path(saved['absolute_path']).unlink(missing_ok=True)

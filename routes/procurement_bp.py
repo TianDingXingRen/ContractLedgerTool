@@ -18,26 +18,31 @@ from services import (
     quote_service,
 )
 from utils import helpers
-from utils.errors import GENERIC_ERROR
+from utils.errors import GENERIC_ERROR, classified_error_message, log_form_error
+from utils.money import from_minor
 
 _log = logging.getLogger('contract_tool')
 
-_ALLOWED_EXCEL_EXTENSIONS = {'.xlsx', '.xls'}
-_USER_FACING_ERRORS = (ValueError, FileNotFoundError)
+_ALLOWED_STANDARD_QUOTE_EXTENSIONS = {'.xlsx'}
+_ALLOWED_MAPPING_QUOTE_EXTENSIONS = {'.xlsx', '.docx', '.pdf'}
+_ALLOWED_PDF_EXTENSIONS = {'.pdf'}
 
 
-def _is_allowed_excel(filename):
-    """校验文件扩展名是否为允许的 Excel 类型。"""
+def _has_allowed_extension(filename, allowed_extensions):
+    """校验文件扩展名是否在允许列表中。"""
     if not filename:
         return False
     ext = os.path.splitext(filename)[1].lower()
-    return ext in _ALLOWED_EXCEL_EXTENSIONS
+    return ext in allowed_extensions
 
 
 def _money(value):
-    if value is None:
-        return ''
-    return f'{Decimal(int(value)) / 100:.2f}'
+    return from_minor(value)
+
+
+def _classified_error_message(error):
+    """委托到 utils.errors.classified_error_message。"""
+    return classified_error_message(error)
 
 
 def _project_or_404(project_id):
@@ -47,30 +52,18 @@ def _project_or_404(project_id):
     return project
 
 
-def _classified_error_message(error):
-    if isinstance(error, _USER_FACING_ERRORS):
-        return str(error), False
-    if isinstance(error, Exception):
-        return GENERIC_ERROR, True
-    return str(error), False
-
-
 def _form_error(context, error):
-    message, is_system_error = _classified_error_message(error)
-    if is_system_error:
-        _log.error('%s: %s', context, error, exc_info=True)
-    else:
-        _log.info('%s: %s', context, error)
+    message, _ = log_form_error(context, error, logger=_log)
     return message
 
 
-def _error_redirect(endpoint, message, exc_info=None, **values):
-    error_message, is_system_error = _classified_error_message(message)
-    if is_system_error or (exc_info and error_message == GENERIC_ERROR):
-        _log.error('采购操作错误: %s', message, exc_info=exc_info)
+def _error_redirect(endpoint, error, exc_info=None, **values):
+    message, is_system = classified_error_message(error)
+    if is_system or (exc_info and message == GENERIC_ERROR):
+        _log.error('采购操作错误: %s', error, exc_info=exc_info)
     elif exc_info:
-        _log.info('采购操作错误: %s', message)
-    values['error'] = error_message
+        _log.info('采购操作错误: %s', error)
+    values['error'] = message
     return redirect(url_for(endpoint, **values))
 
 
@@ -174,6 +167,8 @@ def register(app):
     def procurement_workflow_jump(project_id):
         _project_or_404(project_id)
         target_stage = request.form.get('target_stage', '').strip()
+        if request.form.get('mode') == 'enter':
+            return redirect(_stage_redirect_url(project_id, target_stage))
         note = request.form.get('note', '').strip()
         try:
             procurement_project_service.jump_to_stage(project_id, target_stage, note)
@@ -287,7 +282,7 @@ def register(app):
     @app.route('/procurement/projects/<int:project_id>/suppliers/<int:supplier_id>/delete', methods=['POST'])
     def procurement_supplier_delete(project_id, supplier_id):
         try:
-            procurement_store.delete_project_supplier(project_id, supplier_id)
+            procurement_project_service.delete_supplier(project_id, supplier_id)
         except Exception as exc:
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_project_detail', project_id=project_id))
@@ -395,10 +390,10 @@ def register(app):
                     'procurement/quote_import.html', project=project, suppliers=suppliers,
                     error='请选择报价 Excel 文件',
                 ), 400
-            if not _is_allowed_excel(file.filename):
+            if not _has_allowed_extension(file.filename, _ALLOWED_STANDARD_QUOTE_EXTENSIONS):
                 return render_template(
                     'procurement/quote_import.html', project=project, suppliers=suppliers,
-                    error='仅支持 .xlsx 或 .xls 格式的 Excel 文件',
+                    error='标准报价仅支持 .xlsx 格式',
                 ), 400
             try:
                 supplier_id = int(request.form.get('supplier_id', 0))
@@ -418,6 +413,34 @@ def register(app):
             error=request.args.get('error', ''),
         )
 
+    @app.route('/procurement/projects/<int:project_id>/quotes/pdf', methods=['POST'])
+    def procurement_quote_pdf_upload(project_id):
+        project = _project_or_404(project_id)
+        suppliers = procurement_store.list_project_suppliers(project_id)
+        file = request.files.get('file')
+        if not file or not file.filename:
+            return render_template(
+                'procurement/quote_import.html', project=project, suppliers=suppliers,
+                error='请选择 PDF 报价单',
+            ), 400
+        if not _has_allowed_extension(file.filename, _ALLOWED_PDF_EXTENSIONS):
+            return render_template(
+                'procurement/quote_import.html', project=project, suppliers=suppliers,
+                error='PDF 报价单仅支持 .pdf 格式',
+            ), 400
+        try:
+            quote_service.save_quote_pdf_attachment(
+                project_id, int(request.form.get('supplier_id', 0)),
+                int(request.form.get('quote_round', 1)), file,
+            )
+        except Exception as exc:
+            error = _form_error('PDF 报价单上传失败', exc)
+            return render_template(
+                'procurement/quote_import.html', project=project, suppliers=suppliers,
+                error=error,
+            ), 400
+        return redirect(url_for('procurement_project_detail', project_id=project_id))
+
     @app.route('/procurement/projects/<int:project_id>/quotes/map', methods=['GET', 'POST'])
     def procurement_quote_mapping_upload(project_id):
         project = _project_or_404(project_id)
@@ -429,10 +452,10 @@ def register(app):
                     'procurement/quote_mapping_upload.html', project=project,
                     suppliers=suppliers, error='请选择报价文件',
                 ), 400
-            if not _is_allowed_excel(file.filename):
+            if not _has_allowed_extension(file.filename, _ALLOWED_MAPPING_QUOTE_EXTENSIONS):
                 return render_template(
                     'procurement/quote_mapping_upload.html', project=project,
-                    suppliers=suppliers, error='仅支持 .xlsx 或 .xls 格式的 Excel 文件',
+                    suppliers=suppliers, error='非标准报价仅支持 .xlsx、.docx 或 .pdf',
                 ), 400
             try:
                 job_id = quote_mapping_service.create_mapping_job(
@@ -586,7 +609,10 @@ def register(app):
         else:
             error = request.args.get('error', '')
         return render_template(
-            'procurement/negotiation.html', view=negotiation_service.negotiation_view(project_id),
+            'procurement/negotiation.html',
+            view=negotiation_service.negotiation_view(
+                project_id, request.args.get('round_no', type=int)
+            ),
             error=error, money=_money,
         )
 
@@ -599,8 +625,13 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         if request.method == 'POST':
             try:
-                path = project_document_service.generate_negotiation_plan(project_id, request.form)
-                return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+                result = project_document_service.generate_negotiation_plan(
+                    project_id, request.form, return_info=True
+                )
+                return send_file(
+                    result['path'], as_attachment=True,
+                    download_name=result['download_name'],
+                )
             except Exception as exc:
                 error = _form_error('谈判预案生成失败', exc)
                 plan = {**defaults['plan'], **{

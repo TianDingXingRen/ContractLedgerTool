@@ -14,12 +14,32 @@ import ledger_store
 import pdf_exporter
 import xlsx_exporter
 from services import generation_preflight_service
+from services.contract_preview_service import editor_preview_model
 from services import workbench_service
 from utils import helpers
 from utils.generation_utils import generate_docx_document
 from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH, limit_text
 from utils.logger import get_logger
 from utils.errors import safe_error, safe_file_error, GENERIC_ERROR, GENERIC_FILE_ERROR, GENERIC_GENERATE_ERROR
+
+
+def _remove_generated_file(path):
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        get_logger().warning('Failed to remove generated file: %s', path, exc_info=True)
+
+
+def _discard_generated_contract(contract_id, output_path):
+    if contract_id:
+        try:
+            ledger_store.discard_unlinked_contract(contract_id)
+        except Exception:
+            get_logger().error(
+                'Failed to discard unlinked generated contract %s', contract_id, exc_info=True
+            )
+    _remove_generated_file(output_path)
 
 
 def register(app):
@@ -74,15 +94,27 @@ def register(app):
         for i, f in enumerate(fields):
             if 'id' not in f:
                 f['id'] = i
+        source_docx = data.get('stored_name') or data.get('source_docx', '')
+        if not source_docx:
+            template_path = helpers.template_path_from_session(data)
+            if template_path:
+                try:
+                    source_docx = template_def.TemplateDef.load(template_path).data.get('source_docx', '')
+                except Exception:
+                    source_docx = ''
 
+        preview_model = editor_preview_model(source_docx, fields)
         return render_template(
             'editor.html',
             fields=fields,
             field_count=len(fields),
             template_name=data.get('template_name', '未命名'),
             template_filename=data.get('template_filename', ''),
+            preview_blocks=preview_model.get('blocks', []),
+            preview_warnings=preview_model.get('warnings', []),
             project_names=ledger_store.list_project_names(),
             classification_project_name=data.get('project_name', ''),
+            batch_allowed=not bool(data.get('procurement_data_sheet_id')),
         )
 
     @app.route('/generate', methods=['POST'])
@@ -145,29 +177,31 @@ def register(app):
             return safe_error(e, '台账保存失败')
         except Exception as e:
             get_logger().error('Ledger save failed: %s', e, exc_info=True)
+            if data.get('procurement_data_sheet_id') or data.get('source_project_id'):
+                _remove_generated_file(output_path)
+                return safe_error(e, '采购合同台账保存失败', 500)
+            ledger_error = '台账保存失败'
 
-        if contract_id and data.get('procurement_data_sheet_id'):
+        if contract_id and (
+            data.get('procurement_data_sheet_id') or data.get('source_project_id')
+        ):
             try:
                 import procurement_store
-                procurement_store.complete_contract_link(
-                    int(data['procurement_data_sheet_id']), contract_id
-                )
-            except Exception as e:
-                get_logger().error('Procurement contract link failed: %s', e, exc_info=True)
-                ledger_error = '采购项目关联失败'
-
-        if contract_id and data.get('source_project_id'):
-            try:
-                import procurement_store
-                source_type = data.get('source_type') or 'direct_contract'
-                source_id = data.get('procurement_data_sheet_id') or data.get('source_id')
-                procurement_store.add_contract_ref(
-                    int(data['source_project_id']), contract_id,
-                    source_type=source_type, source_id=int(source_id) if source_id else None,
-                )
+                if data.get('procurement_data_sheet_id'):
+                    procurement_store.complete_contract_link(
+                        int(data['procurement_data_sheet_id']), contract_id
+                    )
+                else:
+                    source_id = data.get('source_id')
+                    procurement_store.add_contract_ref(
+                        int(data['source_project_id']), contract_id,
+                        source_type=data.get('source_type') or 'direct_contract',
+                        source_id=int(source_id) if source_id else None,
+                    )
             except Exception as e:
                 get_logger().error('Procurement contract ref failed: %s', e, exc_info=True)
-                ledger_error = '采购项目关联失败'
+                _discard_generated_contract(contract_id, output_path)
+                return safe_error(e, '采购项目关联失败', 500)
 
         pdf_url = ''
         if request.form.get('generate_pdf') == '1':
@@ -224,6 +258,12 @@ def register(app):
             return jsonify({'ok': False, 'blocking': [str(e)], 'warnings': []}), 400
 
         if mode == 'batch':
+            if data.get('procurement_data_sheet_id'):
+                return jsonify({
+                    'ok': False,
+                    'blocking': ['成交建议生成合同仅支持单份生成'],
+                    'warnings': [],
+                }), 400
             batch_field_keys = helpers.counterparty_batch_keys(
                 fields, request.form.get('batch_field_key', '').strip()
             )
@@ -272,6 +312,9 @@ def register(app):
             data = helpers.load_session_data(sid)
         except (FileNotFoundError, json.JSONDecodeError):
             return '会话已过期，请重新选择模板', 400
+
+        if data.get('procurement_data_sheet_id'):
+            return '成交建议生成合同仅支持单份生成', 400
 
         tpl_path = helpers.template_path_from_session(data)
         if not tpl_path:
@@ -364,6 +407,24 @@ def register(app):
                     except OSError:
                         pass
                     continue
+
+                if data.get('source_project_id'):
+                    try:
+                        import procurement_store
+                        source_id = data.get('source_id')
+                        procurement_store.add_contract_ref(
+                            int(data['source_project_id']), contract_id,
+                            source_type=data.get('source_type') or 'direct_contract',
+                            source_id=int(source_id) if source_id else None,
+                        )
+                    except Exception as e:
+                        get_logger().error(
+                            'Batch procurement link failed for %s: %s',
+                            counterparty, e, exc_info=True,
+                        )
+                        gen_errors.append(f'{counterparty}: 采购项目关联失败')
+                        _discard_generated_contract(contract_id, out_path)
+                        continue
 
                 archive_name = (
                     f'{idx + 1:03d}_'
@@ -513,7 +574,10 @@ def register(app):
     @app.route('/contracts/<int:contract_id>/permanent-delete', methods=['POST'])
     def contract_permanent_delete(contract_id):
         """永久删除合同（仅在回收站中可操作）"""
-        count = ledger_store.permanently_delete_contract(contract_id)
+        try:
+            count = ledger_store.permanently_delete_contract(contract_id)
+        except ValueError as exc:
+            return redirect(url_for('contract_detail', contract_id=contract_id, error=str(exc)))
         if count == 0:
             return '合同不在回收站中或无法删除', 404
         get_logger().info('Permanently deleted contract %d', contract_id)
@@ -524,6 +588,8 @@ def register(app):
         contract = ledger_store.get_contract(contract_id)
         if not contract:
             return '合同记录不存在', 404
+        import procurement_store
+        procurement_linked = procurement_store.contract_has_refs(contract_id)
         plans = ledger_store.list_payment_plans(contract_id=contract_id)
         history = ledger_store.get_contract_history(contract_id)
         return render_template(
@@ -532,6 +598,8 @@ def register(app):
             plans=plans,
             history=history,
             project_names=ledger_store.list_project_names(),
+            procurement_linked=procurement_linked,
+            error=request.args.get('error', ''),
         )
 
     @app.route('/contracts/<int:contract_id>/download')

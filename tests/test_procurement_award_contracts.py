@@ -1,3 +1,6 @@
+import pytest
+
+
 def _project_quote_item(procurement_store):
     project_id = procurement_store.create_project({
         'project_no': 'AC-001',
@@ -130,3 +133,78 @@ def test_split_award_and_direct_contract_ref_match_public_wrappers(tmp_db):
     assert links == award_contracts.get_project_contract_links(ledger_store.get_conn, project_id)
     assert links[0]['contract_id'] == contract_id
     assert links[0]['source_type'] == 'direct_contract'
+
+
+def test_procurement_link_blocks_permanent_contract_delete(tmp_db):
+    import ledger_store
+    import procurement_store
+
+    procurement_store.init_db()
+    project_id = procurement_store.create_project({
+        'project_no': 'AC-DELETE-001', 'project_name': '删除保护测试',
+    })
+    contract_id = ledger_store.create_contract(
+        {'contract_no': 'AC-LINKED-001', 'title': '采购关联合同'}, {}, '/linked.docx'
+    )
+    ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '首付款', 'due_amount': 100,
+    })
+    procurement_store.add_contract_ref(project_id, contract_id)
+    ledger_store.soft_delete_contract(contract_id)
+
+    assert procurement_store.contract_has_refs(contract_id)
+    with pytest.raises(ValueError, match='不能永久删除'):
+        ledger_store.permanently_delete_contract(contract_id)
+
+    assert ledger_store.get_contract(contract_id) is not None
+    with ledger_store.get_conn() as conn:
+        plan_count = conn.execute(
+            'SELECT COUNT(*) FROM payment_plans WHERE contract_id = ?', (contract_id,)
+        ).fetchone()[0]
+    assert plan_count == 1
+
+
+def test_contract_detail_exposes_safe_permanent_delete_controls(app, client):
+    import ledger_store
+    import procurement_store
+
+    project_id = procurement_store.create_project({
+        'project_no': 'AC-DELETE-UI', 'project_name': '删除界面测试',
+    })
+    linked_id = ledger_store.create_contract(
+        {'contract_no': 'AC-UI-LINKED', 'title': '关联删除保护'}, {}, '/linked-ui.docx'
+    )
+    procurement_store.add_contract_ref(project_id, linked_id)
+    ledger_store.soft_delete_contract(linked_id)
+
+    removable_id = ledger_store.create_contract(
+        {'contract_no': 'AC-UI-REMOVABLE', 'title': '可永久删除'}, {}, '/removable.docx'
+    )
+    ledger_store.soft_delete_contract(removable_id)
+
+    with client.session_transaction() as session:
+        session['_csrf_token'] = 'delete-token'
+
+    linked_page = client.get(f'/contracts/{linked_id}')
+    linked_html = linked_page.get_data(as_text=True)
+    assert '采购关联合同需保留审计记录，不能永久删除' in linked_html
+    assert f'/contracts/{linked_id}/permanent-delete' not in linked_html
+
+    blocked = client.post(
+        f'/contracts/{linked_id}/permanent-delete',
+        data={'csrf_token': 'delete-token'},
+        follow_redirects=True,
+    )
+    assert blocked.status_code == 200
+    assert '为保留审计记录不能永久删除' in blocked.get_data(as_text=True)
+    assert ledger_store.get_contract(linked_id) is not None
+
+    removable_page = client.get(f'/contracts/{removable_id}')
+    assert f'/contracts/{removable_id}/permanent-delete' in removable_page.get_data(as_text=True)
+    removed = client.post(
+        f'/contracts/{removable_id}/permanent-delete',
+        data={'csrf_token': 'delete-token'},
+        follow_redirects=False,
+    )
+    assert removed.status_code == 302
+    assert ledger_store.get_contract(removable_id) is None

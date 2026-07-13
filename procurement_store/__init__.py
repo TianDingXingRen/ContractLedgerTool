@@ -440,3 +440,7 @@ def add_contract_ref(project_id, contract_id, source_type='direct_contract', sou
 
 def get_project_contract_links(project_id):
     return award_contracts.get_project_contract_links(ledger_store.get_conn, project_id)
+
+
+def contract_has_refs(contract_id):
+    return award_contracts.contract_has_refs(ledger_store.get_conn, contract_id)

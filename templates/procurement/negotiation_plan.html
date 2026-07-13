@@ -29,6 +29,10 @@
         <input class="input input-bordered input-sm" required name="title" value="{{ plan.title }}">
       </label>
       <label class="form-control gap-2 md:col-span-2">
+        <span class="label-text text-xs">生成文件名</span>
+        <input class="input input-bordered input-sm" name="filename" value="{{ plan.filename }}" placeholder="例如：某项目谈判预案.docx">
+      </label>
+      <label class="form-control gap-2 md:col-span-2">
         <span class="label-text text-xs">采购需求</span>
         <input class="input input-bordered input-sm" required name="purchase_requirement" value="{{ plan.purchase_requirement }}">
       </label>

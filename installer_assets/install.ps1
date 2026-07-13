@@ -3,6 +3,7 @@ param(
     [switch]$NoDesktopShortcut,
     [switch]$NoAutostart,
     [switch]$NoStart,
+    [switch]$SkipSystemIntegrationCleanup,
     [int]$Port = 5000
 )
 
@@ -20,6 +21,50 @@ function Set-WritableIfExists($Path) {
         } catch {
             Write-Host "Could not clear read-only flag on $Path : $_" -ForegroundColor Yellow
         }
+    }
+}
+
+function Stage-AppExecutable($Source, $Destination) {
+    $staged = "$Destination.new"
+    if (Test-Path -LiteralPath $staged) {
+        Set-WritableIfExists $staged
+        Remove-Item -LiteralPath $staged -Force
+    }
+
+    Copy-Item -LiteralPath $Source -Destination $staged -Force
+    $sourceHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+    $stagedHash = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash
+    if ($sourceHash -ne $stagedHash) {
+        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+        throw "Staged application verification failed."
+    }
+    return $staged
+}
+
+function Install-StagedExecutable($Staged, $Destination) {
+    $previous = "$Destination.previous"
+    if (Test-Path -LiteralPath $previous) {
+        Set-WritableIfExists $previous
+        Remove-Item -LiteralPath $previous -Force
+    }
+
+    $hadPrevious = Test-Path -LiteralPath $Destination
+    if ($hadPrevious) {
+        Set-WritableIfExists $Destination
+        Move-Item -LiteralPath $Destination -Destination $previous -Force
+    }
+
+    try {
+        Move-Item -LiteralPath $Staged -Destination $Destination -Force
+    } catch {
+        if ($hadPrevious -and (Test-Path -LiteralPath $previous)) {
+            Move-Item -LiteralPath $previous -Destination $Destination -Force
+        }
+        throw
+    }
+
+    if (Test-Path -LiteralPath $previous) {
+        Remove-Item -LiteralPath $previous -Force
     }
 }
 
@@ -296,16 +341,18 @@ Write-Step "Installing offline application files"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $AppExe = Join-Path $InstallDir "ContractLedgerTool.exe"
+$StagedAppExe = Stage-AppExecutable $AppExeSource $AppExe
 Stop-PreviousVersions $InstallDir $AppExe $Port
 $ResolvedPort = Resolve-InstallPort $Port
 if ($ResolvedPort -ne $Port) {
     Write-Host "Port $Port is busy; using port $ResolvedPort instead." -ForegroundColor Yellow
     $Port = $ResolvedPort
 }
-Clear-ExistingAutostart
+if (-not $SkipSystemIntegrationCleanup) {
+    Clear-ExistingAutostart
+}
+Install-StagedExecutable $StagedAppExe $AppExe
 Clear-LegacyProgramFiles $InstallDir
-Set-WritableIfExists $AppExe
-Copy-Item -LiteralPath $AppExeSource -Destination $AppExe -Force
 
 foreach ($script in @("start.ps1", "stop.ps1", "setup_autostart.ps1", "setup_autostart_remove.ps1")) {
     $src = Join-Path $PackageRoot $script

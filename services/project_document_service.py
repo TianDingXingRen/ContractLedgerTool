@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 import json
+import re
 import zipfile
 
 from docx import Document
@@ -24,6 +25,16 @@ def _money(value):
 
 def _strip_text(value):
     return str(value or '').strip()
+
+
+def _safe_docx_filename(value, fallback):
+    raw = _strip_text(value) or fallback
+    stem = raw[:-5] if raw.lower().endswith('.docx') else raw
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', '_', stem).strip(' ._')
+    if not stem:
+        stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', '_', fallback).strip(' ._')
+    stem = stem[:80].strip(' ._') or '谈判预案'
+    return f'{stem}.docx'
 
 
 _DOCX_CJK_FONT = '仿宋'
@@ -180,6 +191,7 @@ def negotiation_plan_defaults(project_id):
         'quotes': quotes,
         'plan': {
             'title': f"{project['project_name']}谈判预案",
+            'filename': f"{project['project_name']}谈判预案.docx",
             'purchase_requirement': f"关于{project['project_name']}采购申请单。",
             'request_no': project['project_no'],
             'project_background': background,
@@ -198,7 +210,7 @@ def _negotiation_plan_from_form(defaults, form):
     if not form:
         return plan
     for key in [
-        'title', 'purchase_requirement', 'request_no', 'project_background',
+        'title', 'filename', 'purchase_requirement', 'request_no', 'project_background',
         'delivery_requirement', 'target_price_note', 'quote_round_note',
         'evaluation_plan', 'fixed_asset',
     ]:
@@ -208,7 +220,7 @@ def _negotiation_plan_from_form(defaults, form):
     return plan
 
 
-def generate_negotiation_plan(project_id, form=None):
+def generate_negotiation_plan(project_id, form=None, return_info=False):
     defaults = negotiation_plan_defaults(project_id)
     project = defaults['project']
     items = defaults['items']
@@ -262,9 +274,11 @@ def generate_negotiation_plan(project_id, form=None):
         if text:
             document.add_paragraph(text)
 
-    return _save_and_register(
-        document, project, 'negotiation_plan', f"{project['project_no']}_谈判预案.docx"
-    )
+    filename = _safe_docx_filename(plan.get('filename'), f"{project['project_name']}谈判预案")
+    path = _save_and_register(document, project, 'negotiation_plan', filename)
+    if return_info:
+        return {'path': path, 'download_name': filename}
+    return path
 
 
 def generate_inquiry_letter(project_id):

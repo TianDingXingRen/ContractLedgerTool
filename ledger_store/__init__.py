@@ -17,6 +17,37 @@ from . import project_reports
 from .schema import LEDGER_INDEX_SQL, LEDGER_TABLE_SQL, MIGRATIONS, SCHEMA_VERSION_SQL
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _data_dir():
+    try:
+        from runtime.app_state import app_state
+        if app_state.is_configured():
+            return app_state.data_dir
+    except Exception:
+        pass
+    return os.path.join(BASE_DIR, 'data')
+
+
+def _db_path():
+    try:
+        from runtime.app_state import app_state
+        if app_state.is_configured():
+            return app_state.database_file
+    except Exception:
+        pass
+    return os.path.join(_data_dir(), 'contracts.db')
+
+
+def _backup_dir():
+    try:
+        from runtime.app_state import app_state
+        if app_state.is_configured():
+            return app_state.backups_dir
+    except Exception:
+        pass
+    return os.path.join(_data_dir(), 'backups')
+
+
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 DB_PATH = os.path.join(DATA_DIR, 'contracts.db')
 BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
@@ -27,6 +58,29 @@ PAYMENT_TYPES = {'conditional', 'fixed_date'}
 CONFIRM_STATUSES = {s.value for s in ConfirmStatus}
 PAYMENT_STATUSES = {s.value for s in PaymentStatus}
 CONFIDENCE_LEVELS = {c.value for c in ConfidenceLevel}
+
+# 可更新的合同字段
+CONTRACT_UPDATE_FIELDS = [
+    'contract_no', 'title', 'counterparty', 'amount', 'sign_date',
+    'expiry_date', 'owner', 'status', 'project_name',
+    'coverage_start', 'coverage_end',
+]
+
+# 可更新的付款计划字段
+PLAN_UPDATE_FIELDS = [
+    'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
+    'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
+    'paid_amount', 'paid_date', 'condition_text', 'source_text',
+    'confidence', 'confirm_status', 'payment_status', 'remark',
+]
+
+# 付款计划字段对应的校验器
+PLAN_FIELD_VALIDATORS = {
+    'payment_type': (PAYMENT_TYPES, '付款类型'),
+    'confidence': (CONFIDENCE_LEVELS, '置信度'),
+    'confirm_status': (CONFIRM_STATUSES, '确认状态'),
+    'payment_status': (PAYMENT_STATUSES, '付款状态'),
+}
 
 
 def _now():
@@ -271,14 +325,9 @@ def create_contract_with_plans(summary, field_values, docx_path, plans):
 
 
 def update_contract(contract_id, data):
-    allowed = [
-        'contract_no', 'title', 'counterparty', 'amount', 'sign_date',
-        'expiry_date', 'owner', 'status', 'project_name',
-        'coverage_start', 'coverage_end',
-    ]
     assignments = []
     values = []
-    for key in allowed:
+    for key in CONTRACT_UPDATE_FIELDS:
         if key in data:
             if key == 'status':
                 data[key] = _validate_choice(data[key], CONTRACT_STATUSES, '合同状态')
@@ -302,7 +351,7 @@ def update_contract(contract_id, data):
                 values,
             )
             if old_contract:
-                for key in allowed:
+                for key in CONTRACT_UPDATE_FIELDS:
                     if key not in data:
                         continue
                     old_val = str(old_contract.get(key) or '')
@@ -331,10 +380,7 @@ def contract_no_exists(contract_no, exclude_id=None):
     contract_no = str(contract_no or '').strip()
     if not contract_no:
         return False
-    sql = (
-        "SELECT 1 FROM contracts "
-        "WHERE contract_no = ? AND (deleted_at = '' OR deleted_at IS NULL)"
-    )
+    sql = "SELECT 1 FROM contracts WHERE contract_no = ?"
     params = [contract_no]
     if exclude_id is not None:
         sql += ' AND id != ?'
@@ -484,25 +530,13 @@ def save_payment_plan_changes(contract_id, changes):
 
             row = _normalize_payment_consistency(change.get('data') or {})
             if plan_id:
-                allowed = [
-                    'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
-                    'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
-                    'paid_amount', 'paid_date', 'condition_text', 'source_text',
-                    'confidence', 'confirm_status', 'payment_status', 'remark',
-                ]
-                validators = {
-                    'payment_type': (PAYMENT_TYPES, '付款类型'),
-                    'confidence': (CONFIDENCE_LEVELS, '置信度'),
-                    'confirm_status': (CONFIRM_STATUSES, '确认状态'),
-                    'payment_status': (PAYMENT_STATUSES, '付款状态'),
-                }
                 assignments = []
                 values = []
-                for key in allowed:
+                for key in PLAN_UPDATE_FIELDS:
                     if key not in row:
                         continue
-                    if key in validators:
-                        row[key] = _validate_choice(row[key], *validators[key])
+                    if key in PLAN_FIELD_VALIDATORS:
+                        row[key] = _validate_choice(row[key], *PLAN_FIELD_VALIDATORS[key])
                     assignments.append(f'{key} = ?')
                     values.append(row[key])
                 assignments.append('updated_at = ?')
@@ -546,19 +580,7 @@ def get_payment_plan(plan_id):
 
 
 def update_payment_plan(plan_id, data, contract_id=None):
-    allowed = [
-        'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
-        'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
-        'paid_amount', 'paid_date', 'condition_text', 'source_text',
-        'confidence', 'confirm_status', 'payment_status', 'remark',
-    ]
-    validators = {
-        'payment_type': (PAYMENT_TYPES, '付款类型'),
-        'confidence': (CONFIDENCE_LEVELS, '置信度'),
-        'confirm_status': (CONFIRM_STATUSES, '确认状态'),
-        'payment_status': (PAYMENT_STATUSES, '付款状态'),
-    }
-    if not any(key in data for key in allowed):
+    if not any(key in data for key in PLAN_UPDATE_FIELDS):
         return
     with get_conn() as conn:
         where = 'id = ?'
@@ -572,15 +594,15 @@ def update_payment_plan(plan_id, data, contract_id=None):
         if not existing:
             return 0
         merged = dict(existing)
-        merged.update({key: data[key] for key in allowed if key in data})
+        merged.update({key: data[key] for key in PLAN_UPDATE_FIELDS if key in data})
         merged = _normalize_payment_consistency(merged)
         assignments = []
         values = []
-        for key in allowed:
+        for key in PLAN_UPDATE_FIELDS:
             if key not in data and key not in {'payment_status', 'paid_date'}:
                 continue
-            if key in validators:
-                merged[key] = _validate_choice(merged[key], *validators[key])
+            if key in PLAN_FIELD_VALIDATORS:
+                merged[key] = _validate_choice(merged[key], *PLAN_FIELD_VALIDATORS[key])
             assignments.append(f'{key} = ?')
             values.append(merged[key])
         assignments.append('updated_at = ?')
@@ -748,6 +770,39 @@ def permanently_delete_contract(contract_id):
         ).fetchone()
         if not row:
             return 0
+        if _contract_has_procurement_refs(conn, contract_id):
+            raise ValueError('该合同已关联采购项目，为保留审计记录不能永久删除')
+        conn.execute("DELETE FROM contract_history WHERE contract_id = ?", (contract_id,))
+        conn.execute("DELETE FROM payment_plans WHERE contract_id = ?", (contract_id,))
+        cur = conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+        return cur.rowcount
+
+
+def _contract_has_procurement_refs(conn, contract_id):
+    """检查共享数据库中是否存在采购关联，兼容尚未初始化采购表的场景。"""
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name IN ('project_contract_links', 'procurement_contract_refs')"
+        ).fetchall()
+    }
+    for table_name in ('project_contract_links', 'procurement_contract_refs'):
+        if table_name not in tables:
+            continue
+        if conn.execute(
+            f'SELECT 1 FROM {table_name} WHERE contract_id = ? LIMIT 1',
+            (contract_id,),
+        ).fetchone():
+            return True
+    return False
+
+
+def discard_unlinked_contract(contract_id):
+    """清理本次生成但尚未建立采购关联的合同。"""
+    with get_conn() as conn:
+        if _contract_has_procurement_refs(conn, contract_id):
+            raise ValueError('合同已建立采购关联，不能作为生成失败记录清理')
         conn.execute("DELETE FROM contract_history WHERE contract_id = ?", (contract_id,))
         conn.execute("DELETE FROM payment_plans WHERE contract_id = ?", (contract_id,))
         cur = conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))

@@ -134,6 +134,9 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('Apple-style GUI Theme', script)
         self.assertIn('[switch]$NoPrompt', script)
         self.assertIn('$StartupTimeoutSeconds = 120', script)
+        self.assertIn('Stop-ConflictingToolListener', script)
+        self.assertIn('Get-NetTCPConnection -LocalPort $ProbePort', script)
+        self.assertIn('ContractLedgerTool.exe', script)
         self.assertIn('Resolve-LaunchPort', script)
         self.assertIn('Port $Port is busy; using port $LaunchPort instead.', script)
         self.assertIn('-PassThru', script)
@@ -199,6 +202,16 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('write_version=True', script)
         self.assertNotIn('zip_dir(stage', script)
         self.assertNotIn("'zip': str", script)
+
+    def test_offline_installer_preserves_runtime_database(self):
+        installer_path = os.path.join(app.RESOURCE_DIR, 'installer_assets', 'install.ps1')
+        with open(installer_path, 'r', encoding='utf-8-sig') as f:
+            script = f.read()
+
+        cleanup_block = script.split('function Clear-LegacyProgramFiles', 1)[1].split('function New-DesktopLauncher', 1)[0]
+        self.assertNotIn('"data"', cleanup_block)
+        self.assertNotIn('contracts.db', cleanup_block)
+        self.assertIn('foreach ($dir in @("data", "output", "sessions", "uploads", "templates", "static", "logs"))', script)
 
 
 if __name__ == '__main__':

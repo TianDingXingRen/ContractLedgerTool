@@ -279,3 +279,14 @@ def get_project_contract_links(get_conn, project_id):
         result.append(item)
         seen.add(item['contract_id'])
     return result
+
+
+def contract_has_refs(get_conn, contract_id):
+    with get_conn() as conn:
+        return bool(conn.execute(
+            """SELECT 1 FROM project_contract_links WHERE contract_id = ?
+               UNION ALL
+               SELECT 1 FROM procurement_contract_refs WHERE contract_id = ?
+               LIMIT 1""",
+            (contract_id, contract_id),
+        ).fetchone())

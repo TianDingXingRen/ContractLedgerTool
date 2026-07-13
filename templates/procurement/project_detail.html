@@ -40,31 +40,40 @@
             <span class="apple-badge {{ tone }}">{{ procurement_stage_status_labels.get(stage.status, stage.status) }}</span>
           </div>
         </div>
-        {% if stage.missing_labels %}
-        <div class="workflow-hint">将跳过：{{ stage.missing_labels|join('、') }}</div>
+        {% if not stage.applicable %}
+        <div class="workflow-hint">单一来源采购不需要该环节。</div>
+        {% elif stage.requires_skip_note %}
+        <div class="workflow-hint">前置未完成：{{ stage.missing_labels|join('、') }}。可先进入查看，或填写原因后跳过前置。</div>
         {% elif stage.skip_note %}
         <div class="workflow-hint">跳过原因：{{ stage.skip_note }}</div>
+        {% elif stage.done %}
+        <div class="workflow-hint">已完成，可进入查看或继续编辑。</div>
         {% else %}
         <div class="workflow-hint">可直接进入该环节办理或补录资料。</div>
         {% endif %}
-        <form method="post" action="{{ url_for('procurement_workflow_jump', project_id=project.id) }}"
-              class="workflow-action-form"
-              {% if stage.missing_labels %}
-              data-confirm="确认跳过前置环节并进入该环节？系统会记录跳过原因。"
-              data-confirm-title="跳过前置环节"
-              data-confirm-ok="进入环节"
-              {% endif %}>
+        <form method="post" action="{{ url_for('procurement_workflow_jump', project_id=project.id) }}" class="workflow-action-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="target_stage" value="{{ stage.key }}">
-          {% if stage.missing_labels %}
-          <input type="text" name="note" required class="workflow-note" placeholder="填写跳过原因">
-          {% else %}
+          <input type="hidden" name="mode" value="enter">
           <input type="hidden" name="note" value="">
-          {% endif %}
-          <button class="apple-btn {{ 'apple-btn-primary' if stage.status == 'active' else 'apple-btn-ghost' }}" type="submit">
-            {{ stage.action.label or '进入环节' }}
+          <button class="apple-btn {{ 'apple-btn-primary' if stage.status == 'active' else 'apple-btn-ghost' }}" type="submit" {% if not stage.applicable %}disabled{% endif %}>
+            {{ '不适用' if not stage.applicable else (stage.action.label or '进入环节') }}
           </button>
         </form>
+        {% if stage.requires_skip_note %}
+        <form method="post" action="{{ url_for('procurement_workflow_jump', project_id=project.id) }}"
+              class="workflow-action-form"
+              data-confirm="确认跳过前置环节并进入该环节？系统会记录跳过原因。"
+              data-confirm-title="跳过前置环节"
+              data-confirm-ok="跳过并进入">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="target_stage" value="{{ stage.key }}">
+          <input type="text" name="note" required class="workflow-note" placeholder="填写跳过前置原因">
+          <button class="apple-btn apple-btn-ghost" type="submit">
+            跳过前置并进入
+          </button>
+        </form>
+          {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -122,6 +131,6 @@
 
 {% if project.files %}<section class="apple-section"><div class="apple-section-header"><span class="apple-section-title">项目文件</span></div><div class="overflow-x-auto"><table class="apple-table"><thead><tr><th>类型</th><th>文件</th><th>版本</th><th>时间</th><th></th></tr></thead><tbody>{% for file in project.files %}<tr><td>{{ file.file_type }}</td><td>{{ file.original_name }}</td><td>v{{ file.version }}</td><td>{{ file.created_at }}</td><td><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_file_download', file_id=file.id) }}">下载</a></td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
 
-{% if project.award %}<section class="apple-section"><div class="apple-section-body"><h2 class="font-semibold text-lg">已确认成交建议</h2><p class="mt-2"><strong>{{ project.award.supplier_summary or project.award.supplier_name }}</strong>，成交金额 {{ money(project.award.recommended_amount_minor) }} 元</p><p class="text-sm text-base-content/60">{{ project.award.reason_summary }}</p><div class="flex flex-wrap gap-2 mt-3"><a class="apple-btn apple-btn-primary" href="{{ url_for('procurement_to_contract', project_id=project.id) }}">生成合同数据单</a><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_erp_oa_summary', project_id=project.id) }}">ERP/OA 摘要</a><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_archive', project_id=project.id) }}">完整归档包</a></div></div></section>{% endif %}
+{% if project.award %}<section class="apple-section"><div class="apple-section-body"><h2 class="font-semibold text-lg">已确认成交建议</h2><p class="mt-2"><strong>{{ project.award.supplier_summary or project.award.supplier_name }}</strong>，成交金额 {{ money(project.award.recommended_amount_minor) }} 元</p><p class="text-sm text-base-content/60">{{ project.award.reason_summary }}</p><div class="flex flex-wrap gap-2 mt-3"><a class="apple-btn apple-btn-primary" href="{{ url_for('procurement_to_contract', project_id=project.id) }}">生成合同数据单</a><a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_archive', project_id=project.id) }}">完整归档包</a></div></div></section>{% endif %}
 
 {% endblock %}

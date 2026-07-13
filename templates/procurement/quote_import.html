@@ -33,7 +33,7 @@
         <span class="label-text">标准报价 Excel</span>
         <input class="file-input file-input-bordered" required type="file" accept=".xlsx" name="file">
       </label>
-      <div class="alert alert-info text-sm">文件会先解析并展示预览，确认后才写入正式报价数据。</div>
+      <div class="alert alert-info text-sm">标准报价会先解析并展示预览，确认后才写入可用于比价和成交建议的正式报价数据。</div>
       <div class="flex flex-wrap justify-end gap-2">
         <button
           class="btn btn-outline"
@@ -44,6 +44,37 @@
         >下载标准报价模板</button>
         <a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回</a>
         <button class="btn btn-primary" type="submit">解析文件</button>
+      </div>
+    </div>
+  </form>
+
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('procurement_quote_pdf_upload', project_id=project.id) }}" class="card bg-base-100 border border-base-300 mt-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body gap-4">
+      <div>
+        <h2 class="font-semibold text-lg">上传 PDF 报价单原件</h2>
+        <p class="text-sm text-base-content/50 mt-1">PDF 作为供应商报价原件归档，可在项目文件中下载查看；比价和成交建议仍使用已解析确认的报价数据。</p>
+      </div>
+      <label class="form-control">
+        <span class="label-text">候选供应商</span>
+        <select class="select select-bordered" required name="supplier_id">
+          <option value="">请选择</option>
+          {% for supplier in suppliers %}
+          <option value="{{ supplier.id }}">{{ supplier.supplier_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label-text">报价轮次</span>
+        <input class="input input-bordered" type="number" min="1" name="quote_round" value="1">
+      </label>
+      <label class="form-control">
+        <span class="label-text">PDF 报价单</span>
+        <input class="file-input file-input-bordered" required type="file" accept=".pdf" name="file">
+      </label>
+      <div class="flex flex-wrap justify-end gap-2">
+        <a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回项目</a>
+        <button class="btn btn-primary" type="submit">上传 PDF 原件</button>
       </div>
     </div>
   </form>

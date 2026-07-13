@@ -10,6 +10,7 @@ from flask import render_template, request, redirect, url_for, session, jsonify,
 
 import template_def
 import field_eval
+from services.contract_preview_service import editor_preview_model
 from utils import helpers
 from utils.logger import get_logger
 from utils.security import MAX_TEMPLATE_FIELDS, MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, bounded_int, bounded_decimal_places, limit_text
@@ -439,12 +440,16 @@ def register(app):
             if 'id' not in f:
                 f['id'] = i
 
+        preview_model = editor_preview_model(tpl.data.get('source_docx', ''), fields)
         return render_template(
             'editor.html',
             fields=fields,
             field_count=len(fields),
             template_name=tpl.name,
             template_filename=os.path.basename(path),
+            preview_blocks=preview_model.get('blocks', []),
+            preview_warnings=preview_model.get('warnings', []),
+            batch_allowed=True,
         )
 
     @app.route('/template/<name>/preview', methods=['POST'])

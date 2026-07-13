@@ -15,6 +15,7 @@ FOLDER_NAMES = {
     'inquiry': '02_询价函',
     'quote_template': '03_报价模板',
     'supplier_quote': '04_供应商报价',
+    'supplier_quote_pdf': '04_供应商报价',
     'comparison': '05_横向比价',
     'clarification': '06_澄清文件',
     'negotiation_plan': '07_谈判预案',

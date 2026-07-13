@@ -14,6 +14,12 @@ from utils.field_utils import (
     to_calc_number, parse_number, normalize_date,
     apply_submitted_table_columns, parse_submitted_field_values,
 )
+from utils.keyword_maps import (
+    find_scalar_semantic,
+    BATCH_COUNTERPARTY_KEYWORDS,
+    CONTRACT_NUMBER_KEYWORDS,
+    contains_keyword,
+)
 from utils.logger import get_logger
 from utils.security import (
     MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, MAX_BATCH_CONTRACTS,
@@ -121,6 +127,7 @@ def recalculate_scalar_fields(fields, field_values):
 
 
 def recalculate_table_fields(fields, field_values):
+    errors = []
     for field in fields:
         if field.get('field_type') != FieldType.TABLE:
             continue
@@ -128,7 +135,7 @@ def recalculate_table_fields(fields, field_values):
         if not isinstance(rows_data, list):
             rows_data = []
         columns = field.get('columns', [])
-        for row in rows_data:
+        for row_index, row in enumerate(rows_data, start=1):
             if not isinstance(row, dict):
                 continue
             for col in columns:
@@ -147,8 +154,13 @@ def recalculate_table_fields(fields, field_values):
                     result = field_eval.safe_eval(col['formula'], ctx)
                     decimals = int(col.get('decimal_places', 2))
                     row[col_key] = field_eval.format_number(result, decimals)
-                except (field_eval.FormulaError, ValueError, TypeError):
-                    row[col_key] = '?'
+                except (field_eval.FormulaError, ValueError, TypeError) as exc:
+                    row[col_key] = ''
+                    errors.append(
+                        f'{field.get("label", field.get("key", "表格"))}第 {row_index} 行'
+                        f'“{col.get("label", col_key)}”公式计算失败：{exc}'
+                    )
+    return errors
 
 
 def prepare_generation_values(fields, form, allow_empty_keys=None):
@@ -160,7 +172,9 @@ def prepare_generation_values(fields, form, allow_empty_keys=None):
     errors.extend(parse_errors)
     if errors:
         return field_values, errors
-    recalculate_table_fields(fields, field_values)
+    errors.extend(recalculate_table_fields(fields, field_values))
+    if errors:
+        return field_values, errors
     errors.extend(recalculate_scalar_fields(fields, field_values))
     return field_values, errors
 
@@ -169,49 +183,37 @@ def prepare_generation_values(fields, form, allow_empty_keys=None):
 #  Contract generation helpers
 # ═══════════════════════════════════════════════════════
 
-def _value_by_keywords(fields, field_values, keywords, numeric=False, date_value=False):
+def _find_field_by_semantic(fields, semantic_name):
     for field in fields:
         if field.get('field_type') == 'table':
             continue
-        key = field.get('key', '')
-        label = field.get('label', '')
-        haystack = f'{key} {label}'.lower()
-        if not any(kw.lower() in haystack for kw in keywords):
-            continue
-        raw = field_values.get(key, '')
-        if numeric:
-            parsed = parse_number(raw)
-            if parsed is not None:
-                return parsed
-        elif date_value:
-            parsed = normalize_date(raw)
-            if parsed:
-                return parsed
-        elif str(raw).strip():
-            return str(raw).strip()
+        label = str(field.get('label') or '')
+        key = str(field.get('key') or '')
+        if find_scalar_semantic(label, key) == semantic_name:
+            return field
     return None
 
 
+def _value_by_semantic(fields, field_values, semantic_name, numeric=False, date_value=False):
+    field = _find_field_by_semantic(fields, semantic_name)
+    if not field:
+        return None
+    raw = field_values.get(field['key'], '')
+    if numeric:
+        parsed = parse_number(raw)
+        return parsed if parsed is not None else None
+    if date_value:
+        return normalize_date(raw) or None
+    return str(raw).strip() or None
+
+
 def infer_contract_summary(tpl, fields, field_values):
-    amount = _value_by_keywords(fields, field_values, [
-        '合同金额', '总金额', '合同总价', '总价', '价款', '金额', '合计',
-        'amount', 'total'
-    ], numeric=True)
-    sign_date = _value_by_keywords(fields, field_values, [
-        '签订日期', '签约日期', '签署日期', '日期', 'sign_date'
-    ], date_value=True)
-    contract_no = _value_by_keywords(fields, field_values, [
-        '合同编号', '合同号', '编号', 'contract_no'
-    ])
-    title = _value_by_keywords(fields, field_values, [
-        '合同名称', '项目名称', '标题', 'title'
-    ])
-    counterparty = _value_by_keywords(fields, field_values, [
-        '对方', '供应商', '供方', '卖方', '乙方', '客户', 'counterparty'
-    ])
-    owner = _value_by_keywords(fields, field_values, [
-        '负责人', '经办人', '业务员', 'owner'
-    ])
+    amount = _value_by_semantic(fields, field_values, 'amount', numeric=True)
+    sign_date = _value_by_semantic(fields, field_values, 'sign_date', date_value=True)
+    contract_no = _value_by_semantic(fields, field_values, 'contract_no')
+    title = _value_by_semantic(fields, field_values, 'title')
+    counterparty = _value_by_semantic(fields, field_values, 'counterparty')
+    owner = _value_by_semantic(fields, field_values, 'owner')
     if not contract_no:
         contract_no = 'HT' + datetime.now().strftime('%Y%m%d%H%M%S') + secrets.token_hex(4)  # 8位随机后缀防碰撞
     return {
@@ -366,31 +368,27 @@ def counterparty_batch_keys(fields, submitted_key=''):
                         keys.append(key)
         return list(dict.fromkeys(keys))
 
-    keywords = [
-        '对方单位', '对方名称', '供应商', '供方', '卖方',
-        '乙方单位名称', '乙方名称', '乙方', '对方', '客户名称', 'counterparty',
-    ]
     for field in fields:
         if field.get('field_type') == 'table':
             continue
-        haystack = f'{field.get("label", "")} {field.get("key", "")}'
-        if any(keyword in haystack for keyword in keywords):
-            key = field.get('key')
+        label = str(field.get('label') or '')
+        key = str(field.get('key') or '')
+        if find_scalar_semantic(label, key) == 'counterparty':
             if key:
                 keys.append(key)
     return list(dict.fromkeys(keys))
 
 
 def contract_number_keys(fields):
-    """识别批量生成时需要追加序号的合同编号字段。"""
     keys = []
     for field in fields:
         if field.get('field_type') == 'table':
             continue
-        haystack = f'{field.get("label", "")} {field.get("key", "")}'.lower()
-        if any(keyword in haystack for keyword in ('合同编号', '合同号', 'contract_no')):
-            if field.get('key'):
-                keys.append(field['key'])
+        label = str(field.get('label') or '')
+        key = str(field.get('key') or '')
+        if find_scalar_semantic(label, key) == 'contract_no':
+            if key:
+                keys.append(key)
     return keys
 
 

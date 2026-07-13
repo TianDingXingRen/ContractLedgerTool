@@ -119,6 +119,12 @@ def init_runtime(run_maintenance=True):
         level = getattr(__import__('logging'), app_config.LOG_LEVEL.upper(), 20)
         setup_logging(os.path.join(BASE_DIR, 'logs'), level=level)
 
+        # Capture the last pre-upgrade state before any schema initialization
+        # or migration. A failed migration must not be the only recoverable copy.
+        if os.path.isfile(ledger_store.DB_PATH):
+            backup = ledger_store.create_backup(label='before_upgrade')
+            get_logger().info('Created pre-upgrade database backup: %s', backup['path'])
+
         ledger_store.init_db()
         procurement_store.init_db()
         if run_maintenance:

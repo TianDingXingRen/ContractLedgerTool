@@ -1,133 +1,129 @@
 param(
-    [string]$InstallDir = "$env:LOCALAPPDATA\ContractLedgerTool"
+    [string]$InstallDir = "$env:LOCALAPPDATA\ContractLedgerTool",
+    [switch]$NoDesktopShortcut,
+    [switch]$NoAutostart,
+    [switch]$NoStart,
+    [int]$Port = 5000
 )
 
 $ErrorActionPreference = "Stop"
-$Host.UI.RawUI.WindowTitle = "合同管理工具 - 安装程序"
-
 $PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppSource = Join-Path $PackageRoot "app"
-
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "    合同管理工具 - 安装程序"                   -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host ""
-
-# ── 1. 检查 Python ──
-Write-Host "[1/5] 检查 Python 环境..." -ForegroundColor Yellow
-$PythonExe = $null
-$py = Get-Command py -ErrorAction SilentlyContinue
-if ($py) {
-    try { $PythonExe = (& py -3 -c "import sys; print(sys.executable)" 2>$null).Trim() } catch {}
+if (-not (Test-Path -LiteralPath (Join-Path $AppSource "app.py"))) {
+    $AppSource = $PackageRoot
 }
-if (-not $PythonExe) {
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
-        try { $PythonExe = (& python -c "import sys; print(sys.executable)" 2>$null).Trim() } catch {}
+
+function Find-Python {
+    $launcher = Get-Command py -ErrorAction SilentlyContinue
+    if ($launcher) {
+        $candidate = (& py -3 -c "import sys; print(sys.executable)" 2>$null).Trim()
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+    $command = Get-Command python -ErrorAction SilentlyContinue
+    if ($command) {
+        $candidate = (& python -c "import sys; print(sys.executable)" 2>$null).Trim()
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+    throw "Python 3.10 or later is required. Use the offline installer on machines without Python."
+}
+
+function Copy-TreeContents($Source, $Destination) {
+    if (-not (Test-Path -LiteralPath $Source)) { return }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
     }
 }
-if (-not $PythonExe -or -not (Test-Path $PythonExe)) {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($winget) {
-        Write-Host "未找到 Python，尝试通过 winget 安装 Python 3.12..."
-        winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements
-        $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [Environment]::GetEnvironmentVariable("PATH", "Machine")
-        try { $PythonExe = (& py -3 -c "import sys; print(sys.executable)" 2>$null).Trim() } catch {}
-    }
-    if (-not $PythonExe) {
-        Write-Host "请先安装 Python 3.11+，然后重新运行安装程序。" -ForegroundColor Red
-        Write-Host "下载: https://www.python.org/downloads/" -ForegroundColor Yellow
-        Read-Host "按 Enter 退出"
-        exit 1
-    }
-}
-Write-Host "  Python 路径: $PythonExe" -ForegroundColor Green
 
-# ── 2. 复制应用文件 ──
-Write-Host "[2/5] 复制应用文件到 $InstallDir ..." -ForegroundColor Yellow
+Write-Host "Installing ContractLedgerTool source package to $InstallDir"
+$PythonExe = Find-Python
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-Get-ChildItem -LiteralPath $AppSource -File | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination $InstallDir -Force
+foreach ($name in @(
+    "app.py", "config.py", "docx_builder.py", "excel_bill_service.py",
+    "field_eval.py", "payment_extractor.py", "pdf_exporter.py", "template_def.py",
+    "xlsx_exporter.py", "requirements.txt", "requirements.lock", "pyproject.toml",
+    "version.txt", "setup_autostart.ps1", "setup_autostart_remove.ps1"
+)) {
+    $source = Join-Path $AppSource $name
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $InstallDir $name) -Force
+    }
 }
 
-foreach ($assetDir in @("static", "templates", "uploads", "routes", "utils")) {
-    $srcDir = Join-Path $AppSource $assetDir
-    $dstDir = Join-Path $InstallDir $assetDir
-    New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
-    if (Test-Path $srcDir) {
-        $items = Get-ChildItem -LiteralPath $srcDir -Force -ErrorAction SilentlyContinue
-        if ($items) {
-            Copy-Item -LiteralPath $items.FullName -Destination $dstDir -Recurse -Force
+foreach ($package in @("core", "runtime", "ledger_store", "procurement_store", "routes", "services", "utils", "static")) {
+    Copy-TreeContents (Join-Path $AppSource $package) (Join-Path $InstallDir $package)
+}
+
+# HTML is application code and is updated. Contract templates and source
+# documents are user-owned after installation and are only seeded when absent.
+$sourceTemplates = Join-Path $AppSource "templates"
+if (Test-Path -LiteralPath $sourceTemplates) {
+    Get-ChildItem -LiteralPath $sourceTemplates -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring($sourceTemplates.Length).TrimStart('\')
+        $destination = Join-Path (Join-Path $InstallDir "templates") $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        if ($_.Extension -eq ".html" -or -not (Test-Path -LiteralPath $destination)) {
+            Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
         }
     }
 }
 
-foreach ($dir in @("data", "output", "sessions", "logs")) {
+$sourceUploads = Join-Path $AppSource "uploads"
+if (Test-Path -LiteralPath $sourceUploads) {
+    Get-ChildItem -LiteralPath $sourceUploads -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring($sourceUploads.Length).TrimStart('\')
+        $destination = Join-Path (Join-Path $InstallDir "uploads") $relative
+        if (-not (Test-Path -LiteralPath $destination)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $_.FullName -Destination $destination
+        }
+    }
+}
+
+foreach ($dir in @("data", "output", "sessions", "uploads", "templates", "logs")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir $dir) | Out-Null
 }
-Write-Host "  文件复制完成" -ForegroundColor Green
 
-# ── 3. 创建虚拟环境并安装依赖 ──
-Write-Host "[3/5] 创建虚拟环境并安装 Python 依赖..." -ForegroundColor Yellow
-$VenvDir = Join-Path $InstallDir ".venv"
-$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-if (-not (Test-Path $VenvPython)) {
-    & $PythonExe -m venv $VenvDir
-    if (-not (Test-Path $VenvPython)) {
-        Write-Host "  虚拟环境创建失败，请检查 Python 安装" -ForegroundColor Red
-        Read-Host "按 Enter 退出"
-        exit 1
+foreach ($script in @("start.ps1", "stop.ps1")) {
+    $source = Join-Path $AppSource $script
+    if (-not (Test-Path -LiteralPath $source)) {
+        $source = Join-Path (Join-Path $PackageRoot "installer_assets") $script
+    }
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $InstallDir $script) -Force
     }
 }
-& $VenvPython -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-& $VenvPython -m pip install -r (Join-Path $InstallDir "requirements.txt") --quiet
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  pip 安装依赖失败（退出码: $LASTEXITCODE），请检查网络连接" -ForegroundColor Red
-    Read-Host "按 Enter 退出"
-    exit 1
+
+$VenvPython = Join-Path $InstallDir ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $VenvPython)) {
+    & $PythonExe -m venv (Join-Path $InstallDir ".venv")
 }
-Write-Host "  依赖安装完成" -ForegroundColor Green
-
-# ── 4. 配置开机自启 ──
-Write-Host "[4/5] 配置开机自启（后台静默启动服务）..." -ForegroundColor Yellow
-$SetupScript = Join-Path $InstallDir "setup_autostart.ps1"
-if (Test-Path $SetupScript) {
-    try {
-        & $SetupScript -AppDir $InstallDir -NoPrompt
-    } catch {
-        Write-Host "  开机自启配置失败: $_" -ForegroundColor Yellow
-        Write-Host "  您可以稍后在应用内手动开启自启" -ForegroundColor Yellow
-    }
+$requirements = Join-Path $InstallDir "requirements.lock"
+if (-not (Test-Path -LiteralPath $requirements)) {
+    $requirements = Join-Path $InstallDir "requirements.txt"
 }
-Write-Host "  开机自启配置完成" -ForegroundColor Green
+& $VenvPython -m pip install -r $requirements
+if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed with exit code $LASTEXITCODE" }
 
-# ── 5. 创建桌面快捷方式 ──
-Write-Host "[5/5] 创建桌面快捷方式..." -ForegroundColor Yellow
-$Desktop = [Environment]::GetFolderPath("Desktop")
-$ShortcutPath = Join-Path $Desktop "合同管理工具.lnk"
-$PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-$StartPs1 = Join-Path $InstallDir "start.ps1"
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $PowerShellExe
-$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartPs1`""
-$Shortcut.WorkingDirectory = $InstallDir
-$Shortcut.IconLocation = "$PowerShellExe,0"
-$Shortcut.Save()
-Write-Host "  快捷方式: $ShortcutPath" -ForegroundColor Green
+if (-not $NoAutostart) {
+    & (Join-Path $InstallDir "setup_autostart.ps1") -AppDir $InstallDir -NoPrompt -Port $Port
+}
 
-# ── 完成 ──
-Write-Host ""
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "    安装完成！"                              -ForegroundColor Green
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  安装目录:       $InstallDir"
-Write-Host "  桌面快捷方式:   $ShortcutPath"
-Write-Host "  开机自启:       已启用（开机后后台启动服务）"
-Write-Host ""
+if (-not $NoDesktopShortcut) {
+    $Desktop = [Environment]::GetFolderPath("Desktop")
+    $ShortcutPath = Join-Path $Desktop "合同管理工具.lnk"
+    $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $StartPs1 = Join-Path $InstallDir "start.ps1"
+    $Shell = New-Object -ComObject WScript.Shell
+    $Shortcut = $Shell.CreateShortcut($ShortcutPath)
+    $Shortcut.TargetPath = $PowerShellExe
+    $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartPs1`" -Port $Port"
+    $Shortcut.WorkingDirectory = $InstallDir
+    $Shortcut.Save()
+}
 
-# ── 启动应用 ──
-Write-Host "正在启动合同管理工具，浏览器将自动打开..."
-Start-Sleep -Seconds 1
-& $StartPs1
+Write-Host "Installation complete. Existing data, templates, uploads, and outputs were preserved."
+if (-not $NoStart) {
+    & (Join-Path $InstallDir "start.ps1") -Port $Port
+}

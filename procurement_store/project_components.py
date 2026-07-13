@@ -165,19 +165,41 @@ def add_project_supplier(
 
 def delete_project_supplier(get_conn, audit, project_id, supplier_id):
     with get_conn() as conn:
-        if conn.execute(
-            'SELECT 1 FROM supplier_quotes WHERE supplier_id = ? LIMIT 1',
-            (supplier_id,),
-        ).fetchone():
-            raise ValueError('该供应商已有报价，不能删除')
         row = conn.execute(
             'SELECT * FROM project_suppliers WHERE id = ? AND project_id = ?',
             (supplier_id, project_id),
         ).fetchone()
         if not row:
             raise ValueError('候选供应商不存在')
+        if conn.execute(
+            'SELECT 1 FROM supplier_quotes WHERE supplier_id = ? LIMIT 1',
+            (supplier_id,),
+        ).fetchone():
+            raise ValueError('该供应商已有确认报价，不能删除')
+        if conn.execute(
+            'SELECT 1 FROM negotiation_commitments WHERE supplier_id = ? LIMIT 1',
+            (supplier_id,),
+        ).fetchone():
+            raise ValueError('该供应商已有谈判记录，不能删除')
+
+        paths = {
+            item[0]
+            for item in conn.execute(
+                """SELECT relative_path FROM quote_import_jobs WHERE supplier_id = ?
+                   UNION
+                   SELECT relative_path FROM quote_mapping_jobs WHERE supplier_id = ?""",
+                (supplier_id, supplier_id),
+            ).fetchall()
+            if item[0]
+        }
+        conn.execute('DELETE FROM quote_import_jobs WHERE supplier_id = ?', (supplier_id,))
+        conn.execute('DELETE FROM quote_mapping_jobs WHERE supplier_id = ?', (supplier_id,))
         conn.execute('DELETE FROM project_suppliers WHERE id = ?', (supplier_id,))
-        audit(conn, 'project_supplier', supplier_id, 'delete', before=dict(row))
+        audit(
+            conn, 'project_supplier', supplier_id, 'delete', before=dict(row),
+            after={'removed_temporary_quote_files': len(paths)},
+        )
+        return sorted(paths)
 
 
 def register_project_file(

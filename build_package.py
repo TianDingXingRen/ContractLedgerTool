@@ -17,7 +17,7 @@ DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
 SKIP_FILES = {
     ".gitignore", ".secret_key", "README.md",
     "demo_flow_data.py",
-    "build_desktop_exe.py", "build_installer.py", "build_package.py", "build_icons.py",
+    "build_desktop_exe.py", "build_installer.py", "build_package.py",
     "启动合同生成工具.bat", "启动合同生成工具_autostart.bat",
 }
 
@@ -59,15 +59,19 @@ def main():
         print(f"  {py_file.name}")
 
     # ── 复制子包目录（core/、runtime/） ──
-    for pkg in ("core", "runtime"):
+    for pkg in (
+        "core", "runtime", "ledger_store", "procurement_store",
+        "routes", "services", "utils",
+    ):
         src_pkg = ROOT / pkg
         if src_pkg.is_dir():
             copy_dir(src_pkg, APP / pkg, skip_dirs=SKIP_DIRS)
             print(f"  {pkg}/")
 
-    # ── 复制 requirements.txt ──
-    copy_file(ROOT / "requirements.txt", APP / "requirements.txt")
-    print("  requirements.txt")
+    # ── 复制依赖声明；安装时优先使用完整锁文件 ──
+    for requirements_file in ("requirements.txt", "requirements.lock"):
+        copy_file(ROOT / requirements_file, APP / requirements_file)
+        print(f"  {requirements_file}")
 
     # ── 复制运行时脚本 ──
     for script in ["setup_autostart.ps1", "setup_autostart_remove.ps1"]:
@@ -82,14 +86,6 @@ def main():
         if src.exists():
             copy_file(src, APP / script)
             print(f"  {script}")
-
-    # ── 复制 routes/ ──
-    copy_dir(ROOT / "routes", APP / "routes", skip_dirs=SKIP_DIRS)
-    print("  routes/")
-
-    # ── 复制 utils/ ──
-    copy_dir(ROOT / "utils", APP / "utils", skip_dirs=SKIP_DIRS)
-    print("  utils/")
 
     # ── 复制 static/ ──
     copy_dir(ROOT / "static", APP / "static", skip_dirs=SKIP_DIRS)

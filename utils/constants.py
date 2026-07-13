@@ -92,6 +92,7 @@ PROCUREMENT_METHOD_LABELS = {
     'competitive_negotiation': '竞争性谈判',
     'inquiry': '询价',
     'comparison': '比价',
+    'single_source': '单一来源',
 }
 
 PROCUREMENT_STAGE_ORDER = [
@@ -124,6 +125,7 @@ PROCUREMENT_STAGE_STATUS_LABELS = {
     'skipped': '已跳过',
     'available': '可切入',
     'blocked': '待补录',
+    'not_applicable': '不适用',
 }
 
 CLARIFICATION_STATUS_LABELS = {

@@ -3,6 +3,10 @@
 {% block breadcrumb %}contract_detail{% endblock %}
 {% block content %}
 
+{% if error %}
+<div class="alert alert-error mb-4">{{ error }}</div>
+{% endif %}
+
 <div class="flex items-center justify-between mb-6">
     <div>
         <h2 class="text-2xl font-bold">
@@ -40,6 +44,23 @@
                 <i data-lucide="rotate-ccw" class="w-4 h-4"></i> 恢复
             </button>
         </form>
+        {% if procurement_linked %}
+        <button type="button" class="btn btn-ghost btn-sm text-error gap-1" disabled
+                title="采购关联合同需保留审计记录，不能永久删除">
+            <i data-lucide="trash-2" class="w-4 h-4"></i> 永久删除
+        </button>
+        {% else %}
+        <form method="post" action="{{ url_for('contract_permanent_delete', contract_id=contract.id) }}" class="contents"
+              data-confirm="永久删除后无法恢复，确定继续？"
+              data-confirm-title="永久删除合同"
+              data-confirm-ok="永久删除"
+              data-confirm-danger="true">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm text-error gap-1">
+                <i data-lucide="trash-2" class="w-4 h-4"></i> 永久删除
+            </button>
+        </form>
+        {% endif %}
         {% else %}
         <form method="post" action="{{ url_for('contract_soft_delete', contract_id=contract.id) }}" class="contents"
               data-confirm="确定将此合同移入回收站？"

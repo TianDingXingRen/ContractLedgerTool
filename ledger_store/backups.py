@@ -93,6 +93,14 @@ def create_backup(db_path, backup_dir, label='manual'):
     if not path_within(backup_dir, target_path):
         raise ValueError('Invalid backup path')
     _copy_database(db_path, target_path)
+    try:
+        _validate_sqlite_backup(target_path)
+    except Exception:
+        try:
+            os.remove(target_path)
+        except OSError:
+            pass
+        raise
     return {
         'filename': os.path.basename(target_path),
         'path': target_path,

@@ -37,6 +37,9 @@ def apply_runtime_context(context: RuntimeContext) -> RuntimeContext:
     import utils.autostart as autostart
     from utils import helpers
     from services import procurement_file_service
+    from runtime.app_state import app_state
+
+    app_state.configure(paths)
 
     template_def.TEMPLATES_DIR = str(paths.templates_dir)
 

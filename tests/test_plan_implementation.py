@@ -86,6 +86,53 @@ def test_table_aggregate_formula_is_supported():
     assert field_eval.get_calc_deps(fields[1]) == {'items', 'subtotal'}
 
 
+def test_table_formula_errors_block_preflight_and_generation(app, client):
+    columns = [
+        {'key': 'qty', 'label': '数量', 'field_type': 'number'},
+        {'key': 'divisor', 'label': '除数', 'field_type': 'number'},
+        {
+            'key': 'ratio', 'label': '比率', 'field_type': 'calculated',
+            'formula': 'qty / divisor', 'decimal_places': 2,
+        },
+    ]
+    fields = [{
+        'id': 0, 'key': 'items', 'label': '明细', 'field_type': 'table',
+        'required': True, 'columns': columns,
+    }]
+
+    values = {'items': [{'qty': '10', 'divisor': '2'}]}
+    assert helpers.recalculate_table_fields(fields, values) == []
+    assert values['items'][0]['ratio'] == 5.0
+
+    tpl = template_def.TemplateDef.create('表格公式阻断测试', '', fields)
+    template_path = tpl.save()
+    sid = uuid.uuid4().hex
+    helpers.save_session_data(sid, {
+        'template_name': tpl.name,
+        'template_path': template_path,
+        'template_filename': os.path.basename(template_path),
+        'stored_name': '',
+        'step': 'editor',
+    })
+    with client.session_transaction() as session:
+        session['sid'] = sid
+        session['_csrf_token'] = 'formula-token'
+
+    form = {
+        'csrf_token': 'formula-token',
+        'field_0': json.dumps([{'qty': '10', 'divisor': '0'}]),
+        'table_cols_0': json.dumps(columns, ensure_ascii=False),
+    }
+    preflight = client.post('/generate/preflight', data=form)
+    assert preflight.status_code == 400
+    assert '除数为零' in preflight.get_json()['blocking'][0]
+
+    generated = client.post('/generate', data=form)
+    assert generated.status_code == 400
+    assert '公式计算失败' in generated.get_data(as_text=True)
+    assert ledger_store.list_contracts(per_page=10)['total'] == 0
+
+
 def test_contract_number_unique_and_batch_history(tmp_db):
     summary = {'contract_no': 'HT-001', 'title': '测试合同'}
     first_id = ledger_store.create_contract(summary, {}, 'a.docx')
@@ -98,6 +145,22 @@ def test_contract_number_unique_and_batch_history(tmp_db):
     history = ledger_store.get_contract_history(first_id)
     assert any(row['field'] == 'status' and row['new_value'] == 'signed' for row in history)
     assert len([row for row in history if row['field'] == 'deleted_at']) == 2
+
+
+def test_contract_number_remains_reserved_while_in_trash(tmp_db):
+    contract_id = ledger_store.create_contract(
+        {'contract_no': 'TRASH-001', 'title': '回收站编号'}, {}, 'trash.docx'
+    )
+    ledger_store.soft_delete_contract(contract_id)
+
+    assert ledger_store.contract_no_exists('TRASH-001')
+    with pytest.raises(ValueError, match='合同编号已存在'):
+        ledger_store.create_contract(
+            {'contract_no': 'TRASH-001', 'title': '重复编号'}, {}, 'duplicate.docx'
+        )
+
+    assert ledger_store.permanently_delete_contract(contract_id) == 1
+    assert not ledger_store.contract_no_exists('TRASH-001')
 
 
 def test_payment_plan_changes_are_atomic_and_status_is_derived(tmp_db):

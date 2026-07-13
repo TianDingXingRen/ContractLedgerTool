@@ -1,3 +1,6 @@
+import pytest
+
+
 def _project_with_supplier_and_item(procurement_store):
     project_id = procurement_store.create_project({
         'project_no': 'QJ-001',
@@ -87,6 +90,9 @@ def test_quote_import_and_quote_queries_match_public_wrappers(tmp_db):
     assert quote['supplier_name'] == '供应商A'
     assert quote['total_amount_minor'] == 12345
     assert procurement_store.get_quote_items(quote_id)[0]['project_item_id'] == item_id
+
+    with pytest.raises(ValueError, match='确认报价'):
+        procurement_store.delete_project_supplier(project_id, supplier_id)
 
     try:
         procurement_store.create_import_job({

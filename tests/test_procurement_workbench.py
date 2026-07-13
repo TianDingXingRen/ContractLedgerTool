@@ -2,8 +2,10 @@ import io
 import json
 import os
 import uuid
+import zipfile
 from datetime import date
 
+import pytest
 from openpyxl import load_workbook
 from docx import Document
 from docx.oxml.ns import qn
@@ -13,7 +15,7 @@ import ledger_store
 import procurement_store
 import template_def
 from services import (
-    award_service, comparison_service, procurement_project_service,
+    award_service, comparison_service, negotiation_service, procurement_project_service,
     procurement_file_service, project_document_service, quote_service,
 )
 from utils import helpers
@@ -132,13 +134,10 @@ def test_procurement_schema_crud_and_constraints(app, client):
         f'/procurement/projects/{project_id}/suppliers/{suppliers[0]}/edit'
     ).status_code == 200
 
-    try:
+    with pytest.raises(ValueError, match='项目编号已存在'):
         procurement_project_service.create_project({
             'project_no': 'CG-TEST-0001', 'project_name': '重复项目',
         })
-        assert False, '重复项目编号应被拒绝'
-    except Exception:
-        pass
 
     procurement_project_service.transition(project_id, 'documents_ready')
     assert procurement_store.get_project(project_id)['status'] == 'documents_ready'
@@ -207,6 +206,62 @@ def test_standard_quote_import_page_downloads_supplier_template(app, client):
     response.close()
 
 
+def test_pdf_quote_attachment_uploads_and_rejects_non_pdf(app, client):
+    project_id, suppliers = _project_with_items_and_suppliers()
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'pdf-token'
+
+    response = client.post(
+        f'/procurement/projects/{project_id}/quotes/pdf',
+        data={
+            'csrf_token': 'pdf-token',
+            'supplier_id': str(suppliers[0]),
+            'quote_round': '2',
+            'file': (io.BytesIO(b'%PDF-1.4\n%%EOF'), 'quote.pdf'),
+        },
+        content_type='multipart/form-data',
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    files = [
+        row for row in procurement_store.list_project_files(project_id)
+        if row['file_type'] == 'supplier_quote_pdf'
+    ]
+    assert files
+    assert files[0]['original_name'] == '第2轮_供应商A_quote.pdf'
+    assert procurement_file_service.absolute_path(files[0]['relative_path']).is_file()
+
+    rejected = client.post(
+        f'/procurement/projects/{project_id}/quotes/pdf',
+        data={
+            'csrf_token': 'pdf-token',
+            'supplier_id': str(suppliers[0]),
+            'quote_round': '1',
+            'file': (io.BytesIO(b'not pdf'), 'quote.txt'),
+        },
+        content_type='multipart/form-data',
+    )
+    assert rejected.status_code == 400
+    assert 'PDF 报价单仅支持 .pdf 格式' in rejected.get_data(as_text=True)
+
+    fake_pdf = client.post(
+        f'/procurement/projects/{project_id}/quotes/pdf',
+        data={
+            'csrf_token': 'pdf-token',
+            'supplier_id': str(suppliers[0]),
+            'quote_round': '1',
+            'file': (io.BytesIO(b'not actually a pdf'), 'quote.pdf'),
+        },
+        content_type='multipart/form-data',
+    )
+    assert fake_pdf.status_code == 400
+    files_after_reject = [
+        row for row in procurement_store.list_project_files(project_id)
+        if row['file_type'] == 'supplier_quote_pdf'
+    ]
+    assert len(files_after_reject) == 1
+
+
 def test_quote_import_comparison_clarification_and_award(app, client):
     project_id, suppliers = _project_with_items_and_suppliers()
     _import_quote(project_id, suppliers[0], [100, 200])
@@ -253,6 +308,8 @@ def test_quote_import_comparison_clarification_and_award(app, client):
     assert client.get(f'/procurement/projects/{project_id}/award').status_code == 200
     award_path = project_document_service.generate_award_recommendation(project_id)
     assert '成交建议' in '\n'.join(p.text for p in Document(award_path).paragraphs)
+    detail_html = client.get(f'/procurement/projects/{project_id}').get_data(as_text=True)
+    assert 'ERP/OA 摘要' not in detail_html
     sheet = award_service.build_contract_data_sheet(project_id)
     payload = json.loads(sheet['payload_json'])
     assert payload['supplier']['name'] == '供应商C'
@@ -284,6 +341,7 @@ def test_negotiation_plan_prefills_generates_word_and_archives(app, client):
     assert '谈判预案' in html
     assert '结构件A' in html
     assert '目标价格' in html
+    assert '生成文件名' in html
 
     with client.session_transaction() as flask_session:
         flask_session['_csrf_token'] = 'plan-token'
@@ -291,6 +349,7 @@ def test_negotiation_plan_prefills_generates_word_and_archives(app, client):
         f'/procurement/projects/{project_id}/negotiation/plan',
         data={
             'csrf_token': 'plan-token',
+            'filename': '自定义谈判预案.docx',
             'project_background': '按附件模板生成，减少重复填写。',
             'fixed_asset': '否',
         },
@@ -307,6 +366,7 @@ def test_negotiation_plan_prefills_generates_word_and_archives(app, client):
         if row['file_type'] == 'negotiation_plan'
     ]
     assert files
+    assert files[-1]['original_name'] == '自定义谈判预案.docx'
     path = procurement_file_service.absolute_path(files[-1]['relative_path'])
     document = Document(path)
     all_text = '\n'.join(
@@ -353,6 +413,19 @@ def test_procurement_to_contract_prefills_editor_and_links_ledger(app, client):
     editor_html = editor_page.get_data(as_text=True)
     assert 'value="供应商A"' in editor_html
     assert 'value="结构件加工竞争性谈判"' in editor_html
+    assert 'id="batchToggle"' not in editor_html
+
+    before_count = ledger_store.list_contracts(per_page=100)['total']
+    preflight = client.post('/generate/preflight', data={
+        'csrf_token': 'procurement-token',
+        '_generation_mode': 'batch',
+    })
+    assert preflight.status_code == 400
+    assert '仅支持单份生成' in preflight.get_json()['blocking'][0]
+    batch = client.post('/generate-batch', data={'csrf_token': 'procurement-token'})
+    assert batch.status_code == 400
+    assert '仅支持单份生成' in batch.get_data(as_text=True)
+    assert ledger_store.list_contracts(per_page=100)['total'] == before_count
 
     response = client.post('/generate', data={
         'csrf_token': 'procurement-token',
@@ -390,6 +463,63 @@ def test_workflow_jump_records_skipped_stages(app, client):
     assert events
     assert events[0]['after']['target_stage'] == 'negotiation'
     assert 'quotes' in events[0]['after']['skipped_stages']
+
+
+def test_workflow_enter_does_not_require_skip_note_or_change_status(app, client):
+    project_id, _suppliers = _project_with_items_and_suppliers()
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'enter-token'
+
+    response = client.post(
+        f'/procurement/projects/{project_id}/workflow/jump',
+        data={
+            'csrf_token': 'enter-token',
+            'target_stage': 'award',
+            'mode': 'enter',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers['Location'].endswith(f'/procurement/projects/{project_id}/award')
+    assert procurement_store.get_project(project_id)['status'] == 'draft'
+
+    award_page = client.get(f'/procurement/projects/{project_id}/award')
+    award_html = award_page.get_data(as_text=True)
+    assert '尚无已确认的结构化报价' in award_html
+    assert '导入报价' in award_html
+
+    try:
+        procurement_project_service.jump_to_stage(project_id, 'award', '')
+    except ValueError as exc:
+        assert '跳过前置环节时需要填写原因' in str(exc)
+    else:
+        raise AssertionError('跳过前置环节必须填写原因')
+
+
+def test_single_source_skips_comparison_as_required_stage(app, client):
+    project_id = procurement_project_service.create_project({
+        'project_no': 'CG-SINGLE-0001',
+        'project_name': '单一来源项目',
+        'purchase_method': 'single_source',
+    })
+    procurement_project_service.add_item(project_id, {
+        'item_name': '专用件',
+        'quantity': '1',
+        'unit': '件',
+    })
+    procurement_project_service.add_supplier(project_id, {'supplier_name': '唯一供应商'})
+
+    workflow = procurement_project_service.build_workflow_view(project_id)
+    comparison = next(stage for stage in workflow['stages'] if stage['key'] == 'comparison')
+    negotiation = next(stage for stage in workflow['stages'] if stage['key'] == 'negotiation')
+    assert comparison['status'] == 'not_applicable'
+    assert '比价与澄清' not in negotiation['missing_labels']
+
+    page_html = client.get('/procurement/projects/new').get_data(as_text=True)
+    assert '单一来源' in page_html
+    list_html = client.get('/procurement/projects').get_data(as_text=True)
+    assert '单一来源' in list_html
+    assert 'single_source' not in list_html
 
 
 def test_direct_contract_session_and_generated_contract_ref(app, client):
@@ -431,6 +561,141 @@ def test_direct_contract_session_and_generated_contract_ref(app, client):
     assert any(row['contract_id'] == contract_id and row['source_type'] == 'direct_contract' for row in links)
 
 
+def test_direct_procurement_batch_links_every_contract(app, client):
+    project_id, _suppliers = _project_with_items_and_suppliers()
+    fields = [
+        {'id': 0, 'key': 'project_name', 'label': '项目名称', 'field_type': 'text'},
+        {'id': 1, 'key': 'supplier', 'label': '供应商名称', 'field_type': 'text'},
+        {'id': 2, 'key': 'contract_no', 'label': '合同编号', 'field_type': 'text'},
+    ]
+    tpl = template_def.TemplateDef.create('直接采购批量合同模板', '', fields)
+    template_path = tpl.save()
+    data = procurement_project_service.prepare_direct_contract_session(
+        project_id, os.path.basename(template_path)
+    )
+    sid = uuid.uuid4().hex
+    helpers.save_session_data(sid, data)
+    with client.session_transaction() as flask_session:
+        flask_session['sid'] = sid
+        flask_session['_csrf_token'] = 'direct-batch-token'
+
+    editor_html = client.get('/editor').get_data(as_text=True)
+    assert 'id="batchToggle"' in editor_html
+
+    response = client.post('/generate-batch', data={
+        'csrf_token': 'direct-batch-token',
+        'project_name': data['project_name'],
+        'field_0': data['project_name'],
+        'field_1': '',
+        'field_2': 'DIRECT-BATCH',
+        'batch_counterparties': '供应商甲\n供应商乙',
+        'batch_field_key': 'supplier',
+    })
+    assert response.status_code == 200, response.get_data(as_text=True)
+    with zipfile.ZipFile(io.BytesIO(response.get_data())) as archive:
+        assert len(archive.namelist()) == 2
+    response.close()
+
+    links = procurement_store.get_project_contract_links(project_id)
+    assert len(links) == 2
+    assert {row['source_type'] for row in links} == {'direct_contract'}
+    assert {row['contract_no'] for row in links} == {
+        'DIRECT-BATCH-001', 'DIRECT-BATCH-002',
+    }
+
+
+def test_direct_procurement_link_failure_discards_generated_records(app, client, monkeypatch):
+    project_id, _suppliers = _project_with_items_and_suppliers()
+    fields = [
+        {'id': 0, 'key': 'supplier', 'label': '供应商名称', 'field_type': 'text'},
+        {'id': 1, 'key': 'contract_no', 'label': '合同编号', 'field_type': 'text'},
+    ]
+    tpl = template_def.TemplateDef.create('采购关联失败回滚模板', '', fields)
+    template_path = tpl.save()
+    data = procurement_project_service.prepare_direct_contract_session(
+        project_id, os.path.basename(template_path)
+    )
+    sid = uuid.uuid4().hex
+    helpers.save_session_data(sid, data)
+    with client.session_transaction() as flask_session:
+        flask_session['sid'] = sid
+        flask_session['_csrf_token'] = 'link-failure-token'
+
+    def fail_link(*_args, **_kwargs):
+        raise RuntimeError('simulated procurement link failure')
+
+    monkeypatch.setattr(procurement_store, 'add_contract_ref', fail_link)
+
+    single = client.post('/generate', data={
+        'csrf_token': 'link-failure-token',
+        'field_0': '供应商甲',
+        'field_1': 'LINK-FAIL-SINGLE',
+    })
+    assert single.status_code == 500
+    assert ledger_store.list_contracts(per_page=100)['total'] == 0
+
+    batch = client.post('/generate-batch', data={
+        'csrf_token': 'link-failure-token',
+        'field_0': '',
+        'field_1': 'LINK-FAIL-BATCH',
+        'batch_counterparties': '供应商甲\n供应商乙',
+        'batch_field_key': 'supplier',
+    })
+    assert batch.status_code == 500
+    assert ledger_store.list_contracts(per_page=100)['total'] == 0
+
+    output_dir = app.extensions['runtime_paths'].output_dir
+    assert not list(output_dir.glob(f'{sid}_*_output.docx'))
+    assert not list(output_dir.glob(f'{sid}_batch_*.docx'))
+    assert not list(output_dir.glob(f'{sid}_*_batch.zip'))
+
+
+def test_supplier_delete_cleans_temporary_quote_jobs_and_files(app):
+    project_id = procurement_store.create_project({
+        'project_no': 'CG-SUPPLIER-CLEAN', 'project_name': '供应商清理测试',
+    })
+    supplier_id = procurement_store.add_project_supplier(project_id, {
+        'supplier_name': '待删除供应商',
+    })
+    project = procurement_store.get_project(project_id)
+    import_path = procurement_file_service.target_path(
+        project, 'supplier_quote', 'invalid.xlsx'
+    )
+    mapping_path = procurement_file_service.target_path(
+        project, 'supplier_quote', 'mapping.xlsx'
+    )
+    import_path.write_bytes(b'invalid')
+    mapping_path.write_bytes(b'mapping')
+    import_job_id = procurement_store.create_import_job({
+        'project_id': project_id,
+        'supplier_id': supplier_id,
+        'quote_round': 1,
+        'original_name': 'invalid.xlsx',
+        'relative_path': procurement_file_service.relative_path(import_path),
+        'file_sha256': 'invalid-hash',
+        'payload': {},
+        'errors': ['文件无效'],
+    })
+    mapping_job_id = procurement_store.create_mapping_job({
+        'project_id': project_id,
+        'supplier_id': supplier_id,
+        'quote_round': 1,
+        'source_type': 'xlsx',
+        'original_name': 'mapping.xlsx',
+        'relative_path': procurement_file_service.relative_path(mapping_path),
+        'file_sha256': 'mapping-hash',
+        'source': {'tables': [{'name': '报价表', 'rows': []}]},
+    })
+
+    procurement_project_service.delete_supplier(project_id, supplier_id)
+
+    assert procurement_store.get_project_supplier(supplier_id) is None
+    assert procurement_store.get_import_job(import_job_id) is None
+    assert procurement_store.get_mapping_job(mapping_job_id) is None
+    assert not import_path.exists()
+    assert not mapping_path.exists()
+
+
 def test_negotiation_can_start_without_quotes(app, client):
     project_id, suppliers = _project_with_items_and_suppliers()
     with client.session_transaction() as flask_session:
@@ -464,6 +729,51 @@ def test_negotiation_can_start_without_quotes(app, client):
     assert '谈判人员签字' in minutes_text
     assert '供应商代表' in minutes_text
     _assert_docx_uses_fangsong(minutes)
+
+
+def test_negotiation_round_can_be_edited_from_existing_record(app, client):
+    project_id, suppliers = _project_with_items_and_suppliers()
+    negotiation_service.save_round(project_id, {
+        'round_no': '1',
+        'meeting_date': '2026-06-25',
+        'summary': '原始谈判记录',
+        f'amount_{suppliers[0]}': '8800.50',
+        f'delivery_{suppliers[0]}': '20天',
+        f'payment_{suppliers[0]}': '验收后付款',
+        f'commitment_{suppliers[0]}': '按期交付',
+    })
+    page = client.get(f'/procurement/projects/{project_id}/negotiation?round_no=1')
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert '编辑第 1 轮谈判' in html
+    assert 'value="8800.50"' in html
+    assert '原始谈判记录' in html
+
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'edit-round-token'
+    response = client.post(
+        f'/procurement/projects/{project_id}/negotiation',
+        data={
+            'csrf_token': 'edit-round-token',
+            'round_no': '1',
+            'meeting_date': '2026-06-26',
+            'summary': '更新后的谈判记录',
+            f'amount_{suppliers[0]}': '8700',
+            f'delivery_{suppliers[0]}': '18天',
+            f'payment_{suppliers[0]}': '到货验收后付款',
+            f'commitment_{suppliers[0]}': '提前交付',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    rounds = procurement_store.list_negotiation_rounds(project_id)
+    assert len(rounds) == 1
+    assert rounds[0]['meeting_date'] == '2026-06-26'
+    assert rounds[0]['summary'] == '更新后的谈判记录'
+    edited = rounds[0]['commitments'][0]
+    assert edited['quote_amount_minor'] == 870000
+    assert edited['delivery_period'] == '18天'
+    assert edited['commitment'] == '提前交付'
 
 
 def test_payment_due_soon_crosses_month_boundary(app, client, monkeypatch):
@@ -514,6 +824,8 @@ def test_procurement_routes_render_and_reject_missing_csrf(app, client):
     assert '竞争性谈判' in list_html
     assert 'competitive_negotiation' not in list_html
     assert client.get(f'/procurement/projects/{project_id}/quotes/import').status_code == 200
+    comparison_html = client.get(f'/procurement/projects/{project_id}/comparison').get_data(as_text=True)
+    assert '返回项目' in comparison_html
     response = client.post('/procurement/projects/new', data={'project_name': '无令牌'})
     assert response.status_code == 400
 
