@@ -82,7 +82,16 @@ def register_security_hooks(app, config):
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-XSS-Protection'] = '1; mode=block'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        if request.endpoint == 'static':
+            # Official templates append a per-file version token. Versioned
+            # assets are immutable; direct, unversioned probes get a short
+            # cache to avoid stale resources after an upgrade.
+            if request.args.get('v'):
+                response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            else:
+                response.headers['Cache-Control'] = 'public, max-age=3600'
+        else:
+            response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "

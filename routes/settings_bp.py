@@ -17,9 +17,17 @@ from utils.logger import get_logger
 
 
 def _autostart_json(enabled=None, error=''):
-    status = helpers.autostart_status()
-    if enabled is not None:
-        status['enabled'] = enabled
+    if enabled is None:
+        status = dict(helpers.autostart_status())
+    else:
+        # Enabling/disabling already completed the expensive PowerShell
+        # operation. Do not immediately launch a second status query.
+        status = {
+            'enabled': bool(enabled),
+            'supported': os.name == 'nt',
+            'description': '已开启' if enabled else '未开启',
+            'source': 'updated',
+        }
     payload = {
         'success': not bool(error),
         'enabled': bool(status.get('enabled')),
@@ -42,9 +50,19 @@ def _tail_lines(path, max_lines=40):
         return []
 
 
-def _diagnostics_payload():
+def _diagnostics_payload(include_autostart=True):
     log_path = os.path.join(helpers.BASE_DIR or '', 'logs', 'app.log')
-    autostart = helpers.autostart_status()
+    if include_autostart:
+        autostart = helpers.autostart_status()
+    else:
+        autostart = {
+            'enabled': False,
+            'supported': os.name == 'nt',
+            'description': '检测中',
+            'task_state': '',
+            'startup_path': '',
+            'message': '',
+        }
     try:
         template_count = len(template_def.list_templates())
     except Exception as e:
@@ -59,7 +77,9 @@ def _diagnostics_payload():
     return {
         'app': {
             'python': sys.version.split()[0],
-            'platform': platform.platform(),
+            # platform.platform() performs an expensive Windows probe on its
+            # first call. The concise values below are sufficient here.
+            'platform': f'{platform.system()} {platform.release()}',
             'host': app_config.HOST,
             'port': app_config.PORT,
             'debug': bool(app_config.DEBUG),
@@ -105,6 +125,10 @@ def _open_folder(path):
 
 
 def register(app):
+    @app.route('/api/autostart/status')
+    def autostart_status_api():
+        return _autostart_json()
+
     @app.route('/autostart/enable', methods=['POST'])
     def autostart_enable():
         try:
@@ -133,7 +157,10 @@ def register(app):
 
     @app.route('/diagnostics')
     def diagnostics():
-        return render_template('diagnostics.html', diagnostics=_diagnostics_payload())
+        return render_template(
+            'diagnostics.html',
+            diagnostics=_diagnostics_payload(include_autostart=False),
+        )
 
     @app.route('/api/diagnostics')
     def api_diagnostics():

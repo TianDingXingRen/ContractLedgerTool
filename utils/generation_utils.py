@@ -16,14 +16,10 @@ from utils.field_utils import (
 )
 from utils.keyword_maps import (
     find_scalar_semantic,
-    BATCH_COUNTERPARTY_KEYWORDS,
-    CONTRACT_NUMBER_KEYWORDS,
-    contains_keyword,
 )
 from utils.logger import get_logger
 from utils.security import (
-    MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, MAX_BATCH_CONTRACTS,
-    MAX_PLAN_ROWS, MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH,
+    MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH,
     bounded_int, limit_text,
 )
 from utils.constants import FieldType

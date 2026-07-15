@@ -11,7 +11,6 @@ import ledger_store
 import xlsx_exporter
 from utils import helpers
 from utils.security import MAX_PLAN_ROWS, MAX_TEXT_VALUE_LENGTH, limit_text
-from utils.errors import safe_error
 
 
 def _payment_filter_args(form_or_args):

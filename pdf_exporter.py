@@ -10,6 +10,7 @@ import sys
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from importlib.util import find_spec
 
 _log = logging.getLogger('contract_tool')
 
@@ -275,16 +276,8 @@ def diagnose_environment() -> dict[str, str]:
         for p in ['soffice', 'libreoffice']
     )
     info['libreoffice_found'] = str(lo_found)
-    try:
-        import win32com
-        info['pywin32'] = 'installed'
-    except ImportError:
-        info['pywin32'] = 'not installed'
-    try:
-        import pythoncom
-        info['pythoncom'] = 'available'
-    except ImportError:
-        info['pythoncom'] = 'not available'
+    info['pywin32'] = 'installed' if find_spec('win32com') else 'not installed'
+    info['pythoncom'] = 'available' if find_spec('pythoncom') else 'not available'
     info['winword_paths_checked'] = ', '.join(
         p for p in _WINWORD_PATHS if os.path.isfile(p)
     ) or '(none found)'

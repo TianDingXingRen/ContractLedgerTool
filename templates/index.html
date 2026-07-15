@@ -14,11 +14,11 @@
             <i data-lucide="power" class="w-3.5 h-3.5" :style="on ? 'color:var(--apple-green)' : 'color:var(--apple-text3)'"></i>
             <span style="color:var(--apple-text2);font-weight:500">开机自启</span>
             <button x-show="supported" @click="toggle"
-                    :disabled="busy"
+                    :disabled="busy || !ready"
                     class="apple-btn"
                     style="padding:3px 12px;font-size:11px"
                     :style="on ? 'background:var(--apple-green);color:#fff' : 'background:rgba(0,0,0,0.04);color:var(--apple-text2)'"
-                    x-text="busy ? '...' : (on ? '开' : '关')"></button>
+                    x-text="!ready ? '检测中' : (busy ? '...' : (on ? '开' : '关'))"></button>
             <span class="text-error max-w-40 truncate" x-text="err" x-show="err"></span>
         </div>
     </div>
@@ -471,9 +471,27 @@ document.addEventListener('alpine:init', () => {
         supported: supported,
         csrf: csrf,
         busy: false,
+        ready: !supported,
         err: '',
+        init() {
+            if (!this.supported) return;
+            this.busy = true;
+            fetch("{{ url_for('autostart_status_api') }}", {
+                headers: { 'Accept': 'application/json' }
+            })
+            .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) throw new Error(data.message || '自启动状态检测失败');
+                this.on = !!data.enabled;
+            })
+            .catch(e => { this.err = e.message; })
+            .finally(() => {
+                this.ready = true;
+                this.busy = false;
+            });
+        },
         toggle() {
-            if (this.busy || !this.supported) return;
+            if (this.busy || !this.supported || !this.ready) return;
             clearTimeout(this._timer);
             this.busy = true;
             this.err = '';

@@ -523,16 +523,14 @@ def map_contract_items_to_detail(contract_items, column_mapping, bill_no, defaul
 
 # ── 表头数据持久化 ──
 
-import os as _os
-
 _DEFAULTS_DIR = None
 
 
 def configure_defaults_dir(path):
     """设置可持久化的单据默认值目录。"""
     global _DEFAULTS_DIR
-    _DEFAULTS_DIR = _os.path.abspath(str(path))
-    _os.makedirs(_DEFAULTS_DIR, exist_ok=True)
+    _DEFAULTS_DIR = os.path.abspath(str(path))
+    os.makedirs(_DEFAULTS_DIR, exist_ok=True)
     return _DEFAULTS_DIR
 
 
@@ -540,10 +538,10 @@ def _get_defaults_dir():
     """获取/延迟初始化 defaults 存储目录"""
     global _DEFAULTS_DIR
     if _DEFAULTS_DIR is None:
-        _DEFAULTS_DIR = _os.path.join(
-            _os.path.dirname(_os.path.abspath(__file__)), "data", "excel_bill_defaults"
+        _DEFAULTS_DIR = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "data", "excel_bill_defaults"
         )
-        _os.makedirs(_DEFAULTS_DIR, exist_ok=True)
+        os.makedirs(_DEFAULTS_DIR, exist_ok=True)
     return _DEFAULTS_DIR
 
 
@@ -560,12 +558,12 @@ def save_header_default(preset_key, name, header_data, detail_defaults=None, col
     import re as _re
     ddir = _get_defaults_dir()
     # 清洗 preset_key：取 basename 并校验路径不越界
-    safe_preset_key = _os.path.basename(str(preset_key or ''))
+    safe_preset_key = os.path.basename(str(preset_key or ''))
     safe_name = _re.sub(r'[^\w一-鿿-]', '_', str(name))
     filename = f"{safe_preset_key}__{safe_name}.json"
-    path = _os.path.realpath(_os.path.join(ddir, filename))
-    ddir_real = _os.path.realpath(ddir)
-    if _os.path.commonpath([ddir_real, path]) != ddir_real:
+    path = os.path.realpath(os.path.join(ddir, filename))
+    ddir_real = os.path.realpath(ddir)
+    if os.path.commonpath([ddir_real, path]) != ddir_real:
         raise ValueError('无效的预设标识')
 
     record = {
@@ -592,13 +590,13 @@ def list_header_defaults(preset_key=None):
     """
     ddir = _get_defaults_dir()
     results = []
-    if not _os.path.isdir(ddir):
+    if not os.path.isdir(ddir):
         return results
 
-    for fname in sorted(_os.listdir(ddir), reverse=True):
+    for fname in sorted(os.listdir(ddir), reverse=True):
         if not fname.endswith(".json"):
             continue
-        path = _os.path.join(ddir, fname)
+        path = os.path.join(ddir, fname)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 record = json.load(f)
@@ -623,14 +621,14 @@ def list_header_defaults(preset_key=None):
 def load_header_default(filename):
     """加载指定保存的表头默认值"""
     ddir = _get_defaults_dir()
-    filename = _os.path.basename(filename or "")
+    filename = os.path.basename(filename or "")
     if not filename.endswith(".json"):
         raise ValueError("无效的文件名")
-    ddir_real = _os.path.realpath(ddir)
-    path = _os.path.realpath(_os.path.join(ddir, filename))
-    if _os.path.commonpath([ddir_real, path]) != ddir_real:
+    ddir_real = os.path.realpath(ddir)
+    path = os.path.realpath(os.path.join(ddir, filename))
+    if os.path.commonpath([ddir_real, path]) != ddir_real:
         raise ValueError("无效的文件名")
-    if not _os.path.isfile(path):
+    if not os.path.isfile(path):
         raise FileNotFoundError(f"保存记录不存在: {filename}")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -639,14 +637,14 @@ def load_header_default(filename):
 def delete_header_default(filename):
     """删除指定保存的表头默认值"""
     ddir = _get_defaults_dir()
-    filename = _os.path.basename(filename or "")
+    filename = os.path.basename(filename or "")
     if not filename.endswith(".json"):
         return False
-    ddir_real = _os.path.realpath(ddir)
-    path = _os.path.realpath(_os.path.join(ddir, filename))
-    if _os.path.commonpath([ddir_real, path]) != ddir_real:
+    ddir_real = os.path.realpath(ddir)
+    path = os.path.realpath(os.path.join(ddir, filename))
+    if os.path.commonpath([ddir_real, path]) != ddir_real:
         return False
-    if _os.path.isfile(path):
-        _os.remove(path)
+    if os.path.isfile(path):
+        os.remove(path)
         return True
     return False

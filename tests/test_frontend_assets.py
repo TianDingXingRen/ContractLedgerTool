@@ -21,14 +21,15 @@ class FrontendAssetTests(unittest.TestCase):
             self.assertNotIn(ref, html)
 
         local_assets = (
-            'vendor/daisyui-full.min.css',
-            'vendor/tailwindcss.js',
+            'css/app.min.css',
             'js/app-shell.js',
             'vendor/alpine.min.js',
             'js/icons.js',
         )
         for asset in local_assets:
             self.assertIn(asset, html)
+        self.assertNotIn('vendor/daisyui-full.min.css', html)
+        self.assertNotIn('vendor/tailwindcss.js', html)
 
     def test_base_template_moves_shared_script_to_static_asset(self):
         base_path = os.path.join(app.RESOURCE_DIR, 'templates', 'base.html')
@@ -46,7 +47,7 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('window.confirmAction', script)
         self.assertIn('window.showNotice', script)
         self.assertIn("dataset.appShell = 'ready'", script)
-        self.assertIn('tailwind.config =', script)
+        self.assertNotIn('tailwind.config =', script)
 
     def test_shared_feedback_replaces_browser_native_prompts(self):
         roots = (
@@ -83,10 +84,9 @@ class FrontendAssetTests(unittest.TestCase):
 
     def test_local_vendor_assets_are_served(self):
         expected_min_sizes = {
-            '/static/vendor/daisyui-full.min.css': 100_000,
-            '/static/vendor/tailwindcss.js': 100_000,
+            '/static/css/app.min.css': 50_000,
             '/static/vendor/alpine.min.js': 10_000,
-            '/static/vendor/lucide.min.js': 10_000,
+            '/static/js/icons.js': 5_000,
         }
 
         with app.app.test_client() as client:
@@ -97,6 +97,34 @@ class FrontendAssetTests(unittest.TestCase):
                     self.assertGreater(len(response.get_data()), min_size, path)
                 finally:
                     response.close()
+
+        css_path = os.path.join(app.RESOURCE_DIR, 'static', 'css', 'app.min.css')
+        self.assertLess(os.path.getsize(css_path), 250_000)
+
+    def test_static_assets_are_versioned_and_cacheable(self):
+        with app.app.test_client() as client:
+            page = client.get('/')
+            html = page.get_data(as_text=True)
+            page_cache_control = page.headers.get('Cache-Control')
+            page.close()
+
+            self.assertIn('/static/css/app.min.css?v=', html)
+            self.assertEqual('no-store, max-age=0', page_cache_control)
+
+            versioned = client.get('/static/css/app.min.css?v=test')
+            direct = client.get('/static/css/app.min.css')
+            try:
+                self.assertEqual(
+                    'public, max-age=31536000, immutable',
+                    versioned.headers.get('Cache-Control'),
+                )
+                self.assertEqual(
+                    'public, max-age=3600',
+                    direct.headers.get('Cache-Control'),
+                )
+            finally:
+                versioned.close()
+                direct.close()
 
     def test_csp_matches_current_alpine_runtime(self):
         with app.app.test_client() as client:

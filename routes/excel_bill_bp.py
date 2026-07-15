@@ -3,7 +3,7 @@
 import json
 import os
 
-from flask import render_template, request, jsonify, send_file, session
+from flask import render_template, request, jsonify, send_file
 
 import excel_bill_service
 from utils import helpers

@@ -119,7 +119,7 @@
 <script id="diagnosticsPayload" type="application/json">{{ diagnostics|tojson }}</script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const payload = JSON.parse(document.getElementById('diagnosticsPayload').textContent || '{}');
+    let payload = JSON.parse(document.getElementById('diagnosticsPayload').textContent || '{}');
     const toast = document.getElementById('diagnosticsToast');
 
     function showMessage(message, type) {
@@ -147,6 +147,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     function applyDiagnostics(data) {
+        payload = data;
         const autostart = data.autostart || {};
         const badge = document.getElementById('autostartDiagnosticBadge');
         badge.textContent = autostart.enabled ? '已开启' : '未开启';
@@ -162,10 +163,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function refreshDiagnostics(label) {
         return fetch('{{ url_for("api_diagnostics") }}', { headers: { 'Accept': 'application/json' } })
-            .then(function(response) { return response.json(); })
+            .then(function(response) {
+                return response.json().then(function(data) {
+                    if (!response.ok) throw new Error(data.message || '诊断检测失败');
+                    return data;
+                });
+            })
             .then(function(data) {
                 applyDiagnostics(data);
-                showMessage(label || '检测完成', 'success');
+                if (label) showMessage(label, 'success');
                 return data;
             })
             .catch(function(err) { showMessage(err.message || '检测失败', 'error'); });
@@ -177,6 +183,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('pdfCheckBtn').addEventListener('click', function() {
         refreshDiagnostics('PDF 环境已重新检测');
     });
+    refreshDiagnostics('');
 
     document.querySelectorAll('.diagnostics-folder-form').forEach(function(form) {
         form.addEventListener('submit', function(event) {

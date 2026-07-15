@@ -196,10 +196,49 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertFalse(status['enabled'])
         self.assertEqual(status['task_state'], 'Disabled')
 
+    def test_index_defers_autostart_status_query(self):
+        with mock.patch.object(
+                helpers, 'autostart_status',
+                side_effect=AssertionError('首页不应同步查询 PowerShell 状态')):
+            with app.app.test_client() as client:
+                response = client.get('/')
+                try:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn('检测中', response.get_data(as_text=True))
+                finally:
+                    response.close()
+
+    def test_autostart_status_api_returns_json(self):
+        status = {
+            'enabled': True,
+            'supported': True,
+            'description': '计划任务已启用',
+            'source': '计划任务',
+        }
+        with mock.patch.object(helpers, 'autostart_status', return_value=status):
+            with app.app.test_client() as client:
+                response = client.get('/api/autostart/status')
+                try:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertTrue(response.get_json()['enabled'])
+                finally:
+                    response.close()
+
     def test_diagnostics_routes_load(self):
         with app.app.test_client() as client:
-            html_response = client.get('/diagnostics')
-            json_response = client.get('/api/diagnostics')
+            with mock.patch.object(
+                    helpers, 'autostart_status',
+                    side_effect=AssertionError('诊断页不应同步查询 PowerShell 状态')):
+                html_response = client.get('/diagnostics')
+            with mock.patch.object(helpers, 'autostart_status', return_value={
+                    'enabled': False,
+                    'supported': True,
+                    'description': '未开启',
+                    'task_state': '',
+                    'startup_path': '',
+                    'message': '',
+            }):
+                json_response = client.get('/api/diagnostics')
             try:
                 self.assertEqual(html_response.status_code, 200)
                 self.assertEqual(json_response.status_code, 200)

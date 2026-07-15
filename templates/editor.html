@@ -441,7 +441,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/formula-engine.js') }}"></script>
+<script src="{{ static_url('js/formula-engine.js') }}"></script>
 <script>
     const fields = {{ fields|tojson }};
     window.CT_fields = fields;
@@ -669,5 +669,5 @@
     }
 </script>
 <!-- editor.js 必须在上方内联脚本之后加载：它依赖 columnsData/filledCount 等全局变量 -->
-<script src="{{ url_for('static', filename='js/editor.js') }}"></script>
+<script src="{{ static_url('js/editor.js') }}"></script>
 {% endblock %}

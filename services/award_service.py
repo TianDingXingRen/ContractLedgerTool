@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from decimal import Decimal
 
 import procurement_store
 import template_def
 from utils import helpers
-from utils.keyword_maps import find_scalar_semantic, find_column_semantic, contains_keyword
+from utils.keyword_maps import find_scalar_semantic, find_column_semantic
 from utils.money import from_minor
 
 

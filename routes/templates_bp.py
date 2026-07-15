@@ -14,7 +14,7 @@ from services.contract_preview_service import editor_preview_model
 from utils import helpers
 from utils.logger import get_logger
 from utils.security import MAX_TEMPLATE_FIELDS, MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, bounded_int, bounded_decimal_places, limit_text
-from utils.errors import safe_error, safe_file_error, safe_parse_error, GENERIC_ERROR, GENERIC_PARSE_ERROR, GENERIC_TEMPLATE_ERROR
+from utils.errors import safe_error, safe_parse_error, GENERIC_TEMPLATE_ERROR
 
 ALLOWED_EXTENSIONS = {'docx', 'doc'}
 

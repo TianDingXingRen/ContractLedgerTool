@@ -20,7 +20,7 @@ from utils import helpers
 from utils.generation_utils import generate_docx_document
 from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH, limit_text
 from utils.logger import get_logger
-from utils.errors import safe_error, safe_file_error, GENERIC_ERROR, GENERIC_FILE_ERROR, GENERIC_GENERATE_ERROR
+from utils.errors import safe_error, safe_file_error, GENERIC_ERROR, GENERIC_GENERATE_ERROR
 
 
 def _remove_generated_file(path):
@@ -56,7 +56,10 @@ def register(app):
         recent_contracts = ledger_store.get_recent_contracts(5)
         project_progress = ledger_store.get_project_progress_stats()
         recent_templates = template_def.list_templates()[:5]
-        autostart = helpers.autostart_status()
+        # Windows scheduled-task discovery launches PowerShell and can take
+        # several seconds. The page loads immediately and refreshes this
+        # status through the asynchronous API instead.
+        autostart = {'enabled': False, 'supported': os.name == 'nt'}
         workbench = workbench_service.build_workbench(today=today)
 
         status_labels = helpers.CONTRACT_STATUS_LABELS

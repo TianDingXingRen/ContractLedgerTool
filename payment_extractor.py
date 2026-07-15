@@ -8,7 +8,7 @@ with their original text preserved for manual review.
 import math
 import re
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from docx import Document
 

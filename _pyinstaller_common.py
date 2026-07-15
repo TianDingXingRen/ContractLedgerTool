@@ -112,6 +112,18 @@ def copy_html_templates(templates_dir):
     return copied
 
 
+def verify_compiled_frontend():
+    """Fail packaging early when the production CSS artifact is missing."""
+    compiled_css = ROOT / 'static' / 'css' / 'app.min.css'
+    if not compiled_css.is_file():
+        raise RuntimeError('缺少前端 CSS 产物，请先运行 npm run build:css')
+    size = compiled_css.stat().st_size
+    if size < 50_000 or size > 250_000:
+        raise RuntimeError(
+            f'前端 CSS 产物大小异常 ({size} bytes)，请重新运行 npm run build:css'
+        )
+
+
 def write_version_file(target_dir, version_str=None):
     """写入 version.txt。"""
     version = version_str or datetime.now().strftime('%Y%m%d.%H%M%S')
@@ -125,6 +137,7 @@ def prepare_app_resources(res_dir, write_version=True):
     所有 build 脚本共用此函数，避免资源准备逻辑重复。
     返回 manifest 字典，包含 html_templates/templates/uploads/skipped 及可选 version。
     """
+    verify_compiled_frontend()
     reset_dir(res_dir)
     templates_out = res_dir / 'templates'
     uploads_out = res_dir / 'uploads'

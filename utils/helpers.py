@@ -23,20 +23,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import sys
-import subprocess
-import threading
-import time as _time
 from typing import Any
 
 import template_def
 
-from utils.security import (
-    path_within, safe_join_file, bounded_int,
-)
-from utils.logger import get_logger
-from utils.labels import (
+from utils.security import path_within, safe_join_file
+from utils.labels import (  # noqa: F401  # 兼容重导出
     CONTRACT_STATUS_LABELS,
     CONFIRM_STATUS_LABELS,
     PAYMENT_STATUS_LABELS,
@@ -52,7 +44,7 @@ from utils.labels import (
 )
 # ── Re-export from sub-modules for backward compatibility ──
 # 新代码请直接从 utils.xxx 导入，而非通过 helpers 间接引用
-from utils.field_utils import (  # noqa: F811  # 有意重导出
+from utils.field_utils import (  # noqa: F401,F811  # 有意重导出
     field_key_from_label, unique_key, safe_col_key,
     safe_filename_part, parse_number, normalize_date,
     to_calc_number, float_or_none, int_or_none, normalize_number_field_value,
@@ -60,7 +52,7 @@ from utils.field_utils import (  # noqa: F811  # 有意重导出
     normalize_table_columns, apply_submitted_table_columns,
     parse_submitted_field_values,
 )
-from utils.generation_utils import (  # noqa: F811
+from utils.generation_utils import (  # noqa: F401,F811
     calc_context, recalculate_scalar_fields, recalculate_table_fields,
     prepare_generation_values,
     infer_contract_summary, parse_contract_classification,
@@ -71,7 +63,7 @@ from utils.generation_utils import (  # noqa: F811
     validate_template_source_bindings,
 )
 # ── Re-export from autostart module ──
-from utils.autostart import (  # noqa: F811
+from utils.autostart import (  # noqa: F401,F811
     autostart_status, enable_autostart, disable_autostart,
     AUTOSTART_TASK_NAME, AUTOSTART_LAUNCHER_NAME,
     AUTOSTART_LEGACY_LAUNCHER_NAMES,

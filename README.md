@@ -130,6 +130,17 @@ python -m pytest -q --basetemp .pytest_basetemp
 
 测试运行时会使用隔离的数据目录，不读写正式合同、台账和配置。
 
+## 前端样式开发
+
+运行版使用已经编译好的 `static/css/app.min.css`，不在浏览器中执行 Tailwind 编译。修改模板中的 Tailwind/DaisyUI 类名后，需要重新生成并提交 CSS：
+
+```powershell
+npm install
+npm run build:css
+```
+
+Node.js 只用于开发和发布构建；安装后的合同工具不依赖 Node.js。
+
 ## 安全
 
 - CSRF 保护（所有 POST 请求）

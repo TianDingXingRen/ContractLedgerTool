@@ -1,14 +1,4 @@
-// Shared shell behavior: Tailwind config, feedback, and form confirmations.
-window.tailwind = window.tailwind || {};
-window.tailwind.config = {
-  theme: {
-    extend: {
-      fontFamily: {
-        sans: ['-apple-system', 'Microsoft YaHei', 'PingFang SC', 'sans-serif'],
-      },
-    },
-  },
-};
+// Shared shell behavior: feedback and form confirmations.
 
 function toastCenter() {
   return {

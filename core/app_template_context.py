@@ -1,8 +1,10 @@
 """Template context registration for shared labels and helpers."""
 
+import os
 import uuid
 
-from flask import session
+from flask import session, url_for
+from werkzeug.utils import safe_join
 
 from utils import helpers
 
@@ -17,6 +19,18 @@ def csrf_token():
 
 def register_template_context(app, csrf_token_func=csrf_token):
     """Register shared template globals on a Flask app."""
+
+    def static_url(filename):
+        """Return a cache-busted URL for a packaged static asset."""
+        path = safe_join(app.static_folder, filename)
+        if path is None:
+            raise ValueError('静态资源路径无效')
+        try:
+            stat = os.stat(path)
+            version = f'{stat.st_mtime_ns:x}-{stat.st_size:x}'
+        except OSError:
+            version = 'missing'
+        return url_for('static', filename=filename, v=version)
 
     @app.context_processor
     def inject_label_maps():
@@ -33,4 +47,5 @@ def register_template_context(app, csrf_token_func=csrf_token):
             'quote_status_labels': helpers.QUOTE_STATUS_LABELS,
             'quote_import_status_labels': helpers.QUOTE_IMPORT_STATUS_LABELS,
             'csrf_token': csrf_token_func,
+            'static_url': static_url,
         }
