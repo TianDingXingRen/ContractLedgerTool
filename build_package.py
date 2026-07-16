@@ -123,7 +123,7 @@ def main():
     size_mb = zip_path.stat().st_size / (1024 * 1024)
     file_count = len(zf.namelist())
 
-    print(f"\n  安装包已生成:")
+    print("\n  安装包已生成:")
     print(f"  {zip_path}")
     print(f"  大小: {size_mb:.1f} MB  |  文件数: {file_count}")
 

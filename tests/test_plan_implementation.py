@@ -31,8 +31,12 @@ def _assert_inline_scripts_have_valid_syntax(html):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node.js is not installed')
-    scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.I | re.S)
-    for script in (source for source in scripts if source.strip()):
+    scripts = re.findall(r'<script(?P<attrs>\s[^>]*)?>(?P<body>.*?)</script>', html, flags=re.I | re.S)
+    executable_scripts = (
+        body for attrs, body in scripts
+        if body.strip() and 'type="application/json"' not in (attrs or '').lower()
+    )
+    for script in executable_scripts:
         result = subprocess.run(
             [node, '--check', '-'],
             input=script,
@@ -277,10 +281,12 @@ def test_number_field_controls_render_in_template_builder_and_editor(app, client
     create_page = client.get('/create-template')
     assert create_page.status_code == 200
     create_html = create_page.get_data(as_text=True)
-    assert '<option value="number">数字</option>' in create_html
-    assert 'field_number_min_' in create_html
-    assert 'field_number_max_' in create_html
-    assert 'field_number_decimal_' in create_html
+    with open(os.path.join(app.static_folder, 'js', 'template-builder.js'), encoding='utf-8') as f:
+        builder_script = f.read()
+    assert '<option value="number">数字</option>' in builder_script
+    assert 'field_number_min_' in builder_script
+    assert 'field_number_max_' in builder_script
+    assert 'field_number_decimal_' in builder_script
     _assert_inline_scripts_have_valid_syntax(create_html)
 
     tpl = template_def.TemplateDef.create('数字字段渲染测试', '', [{

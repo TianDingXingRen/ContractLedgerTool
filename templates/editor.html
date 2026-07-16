@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}填写合同 - 合同管理工具{% endblock %}
+{% block title %}填写合同 - 采购业务平台{% endblock %}
 {% block breadcrumb %}editor{% endblock %}
 {% block content %}
 
@@ -28,7 +28,7 @@
                         <span class="sm:hidden">保存常用</span>
                     </button>
                     <button type="button" class="btn btn-ghost btn-sm w-full sm:w-auto justify-center" id="previewBtn"
-                            onclick="submitPreview()">
+                            data-editor-action="preview">
                         <i data-lucide="eye" class="w-4 h-4"></i> 预览
                     </button>
                     <button type="submit" class="btn btn-primary btn-sm sm:btn-md col-span-2 sm:col-span-1 w-full sm:w-auto justify-center" id="generateBtn">
@@ -221,7 +221,7 @@
                        placeholder="请输入{{ field.label }}…"
                        value="{{ field.default_value or '' }}"
                        data-field-key="{{ fkey }}"
-                       oninput="onFieldChange({{ fid }}); triggerCalc({{ fid }})">
+                       data-editor-field-id="{{ fid }}">
 
                 {# ── NUMBER ── #}
                 {% elif ft == 'number' %}
@@ -233,20 +233,20 @@
                        max="{{ field.get('max_value') if field.get('max_value') is not none else '' }}"
                        step="{{ '1' if number_decimals == 0 else '0.' ~ ('0' * (number_decimals - 1)) ~ '1' }}"
                        data-field-key="{{ fkey }}"
-                       oninput="onFieldChange({{ fid }}); triggerCalc({{ fid }})">
+                       data-editor-field-id="{{ fid }}">
 
                 {# ── TEXTAREA ── #}
                 {% elif ft == 'textarea' %}
                 <textarea name="field_{{ fid }}" class="field-input textarea textarea-bordered w-full"
                           placeholder="请输入{{ field.label }}…" rows="3"
                           data-field-key="{{ fkey }}"
-                          oninput="onFieldChange({{ fid }}); triggerCalc({{ fid }})">{{ field.default_value or '' }}</textarea>
+                          data-editor-field-id="{{ fid }}">{{ field.default_value or '' }}</textarea>
 
                 {# ── SELECT ── #}
                 {% elif ft == 'select' and field.options %}
                 <select name="field_{{ fid }}" class="field-select select select-bordered w-full"
                         data-field-key="{{ fkey }}"
-                        onchange="onFieldChange({{ fid }}); triggerCalc({{ fid }})">
+                        data-editor-field-id="{{ fid }}">
                     <option value="">— 请选择 —</option>
                     {% for opt in field.options %}
                     <option value="{{ opt }}" {% if opt == field.default_value %}selected{% endif %}>{{ opt }}</option>
@@ -285,16 +285,16 @@
                         <tbody id="table_body_{{ fid }}"><!-- JS generated --></tbody>
                     </table>
                     <div class="table-toolbar flex gap-2 mt-3">
-                        <button type="button" class="btn btn-ghost btn-xs" onclick="addTableRow({{ fid }})">
+                        <button type="button" class="btn btn-ghost btn-xs" data-editor-action="add-row" data-field-id="{{ fid }}">
                             <i data-lucide="plus" class="w-3 h-3"></i> 添加行
                         </button>
-                        <button type="button" class="btn btn-ghost btn-xs" onclick="removeTableRow({{ fid }})"
+                        <button type="button" class="btn btn-ghost btn-xs" data-editor-action="remove-row" data-field-id="{{ fid }}"
                                 id="removeRow_{{ fid }}">- 删除末行</button>
                         <span class="toolbar-sep w-px h-5 bg-base-300 mx-1"></span>
-                        <button type="button" class="btn btn-ghost btn-xs" onclick="addTableColumn({{ fid }})">
+                        <button type="button" class="btn btn-ghost btn-xs" data-editor-action="add-column" data-field-id="{{ fid }}">
                             <i data-lucide="plus" class="w-3 h-3"></i> 添加列
                         </button>
-                        <button type="button" class="btn btn-ghost btn-xs" onclick="removeTableColumn({{ fid }})">
+                        <button type="button" class="btn btn-ghost btn-xs" data-editor-action="remove-column" data-field-id="{{ fid }}">
                             - 删除末列
                         </button>
                     </div>
@@ -330,7 +330,7 @@
                         <h3 class="font-semibold text-base">合同实时预览</h3>
                         <p class="text-xs text-base-content/50 mt-1">左侧填写，右侧同步呈现合同内容效果。</p>
                     </div>
-                    <button type="button" class="btn btn-ghost btn-xs" onclick="submitPreview()">
+                    <button type="button" class="btn btn-ghost btn-xs" data-editor-action="preview">
                         <i data-lucide="eye" class="w-3.5 h-3.5"></i> Word
                     </button>
                 </div>
@@ -441,233 +441,25 @@
 {% endblock %}
 
 {% block scripts %}
+<script id="contractEditorConfig" type="application/json">{{ {
+    'fields': fields,
+    'previewBlocks': preview_blocks or [],
+    'previewWarnings': preview_warnings or [],
+    'fieldCount': field_count,
+    'templateFilename': template_filename or '',
+    'urls': {
+        'saveDefaults': url_for('save_template_defaults'),
+        'generateBatch': url_for('generate_batch'),
+        'generatePreflight': url_for('generate_preflight'),
+        'preview': url_for('template_preview', name=template_filename or '')
+    }
+}|tojson }}</script>
+<script src="{{ static_url('js/editor-state.js') }}"></script>
 <script src="{{ static_url('js/formula-engine.js') }}"></script>
-<script>
-    const fields = {{ fields|tojson }};
-    window.CT_fields = fields;
-    window.CT_previewBlocks = {{ (preview_blocks or [])|tojson }};
-    window.CT_previewWarnings = {{ (preview_warnings or [])|tojson }};
-    window.CT_previewFields = [
-        {% for field in fields %}
-        {% set fid = field.id if field.id is defined and field.id is not none else loop.index0 %}
-        {
-            id: {{ fid|tojson }},
-            key: {{ field.key|tojson }},
-            label: {{ field.label|tojson }},
-            field_type: {{ field.field_type|tojson }},
-            required: {{ (field.required or false)|tojson }},
-            context_before: {{ (field.context_before or '')|tojson }},
-            context_after: {{ (field.context_after or '')|tojson }},
-            options: {{ (field.options or [])|tojson }},
-            columns: {{ (field.columns or [])|tojson }}
-        }{% if not loop.last %},{% endif %}
-        {% endfor %}
-    ];
-    const totalFields = {{ field_count }};
-    const filledCount = document.getElementById('filledCount');
-    const progressFill = document.getElementById('progressFill');
-    const columnsData = {};
-    let currentGeneratedUrl = '';
-    // 这些 URL 必须在 Jinja 渲染阶段生成，再传给作为静态文件的 editor.js
-    window.CT_saveDefaultsUrl = '{{ url_for("save_template_defaults") }}';
-    window.CT_generateBatchUrl = '{{ url_for("generate_batch") }}';
-    window.CT_generatePreflightUrl = '{{ url_for("generate_preflight") }}';
-
-    function escapeHtml(str) {
-        const d = document.createElement('div');
-        d.textContent = str;
-        return d.innerHTML;
-    }
-
-    // ── Init ──
-    document.addEventListener('DOMContentLoaded', function() {
-        {% for field in fields %}
-        {% if field.field_type == 'table' %}
-        initTable({{ field.id }});
-        {% endif %}
-        {% endfor %}
-        recalcAllFields();
-        updateProgress();
-        bindEditorFilters();
-        bindAssistPanel();
-        setEditorFilter('all');
-        _draftRestoring = true;
-        restoreDraft();
-        _draftRestoring = false;
-        bindDraftAutoSave();
-        // icons auto-rendered by icons.js
-    });
-
-    // ── Keyboard shortcuts ──
-    document.addEventListener('keydown', function(e) {
-        // Ctrl+S / Cmd+S: 保存常用填写
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-            e.preventDefault();
-            document.getElementById('saveDefaultsBtn').click();
-            return;
-        }
-        // Ctrl+Enter: 生成合同
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-            e.preventDefault();
-            document.getElementById('generateBtn').click();
-            return;
-        }
-        // Escape: 关闭结果面板
-        if (e.key === 'Escape') {
-            var panel = document.getElementById('generationResultPanel');
-            if (panel && !panel.classList.contains('hidden')) {
-                panel.classList.add('hidden');
-                e.preventDefault();
-            }
-        }
-    });
-
-    // ── Auto-save draft ──
-    var draftKey = 'ct_draft_{{ template_filename or "unknown" }}';
-    var draftTimer;
-    var _draftDirty = false;
-    var _draftRestoring = false;
-
-    function saveDraft() {
-        try {
-            var data = {};
-            document.querySelectorAll('.field-item').forEach(function(item) {
-                if (item.classList.contains('field-calc')) return;
-                var input = item.querySelector('.field-input, .field-select, textarea');
-                var key = item.dataset.fieldKey;
-                if (input && key) {
-                    data[key] = input.value;
-                }
-            });
-            // 保存表格数据
-            Object.keys(columnsData).forEach(function(fid) {
-                var dataEl = document.getElementById('table_data_' + fid);
-                if (dataEl) {
-                    data['_table_' + fid] = dataEl.value;
-                    var colsEl = document.getElementById('table_cols_input_' + fid);
-                    if (colsEl) data['_table_cols_' + fid] = colsEl.value;
-                }
-            });
-            // 保存项目归类
-            var pn = document.getElementById('projectName');
-            if (pn) data['_project_name'] = pn.value;
-            var cs = document.getElementById('coverageStart');
-            if (cs) data['_coverage_start'] = cs.value;
-            var ce = document.getElementById('coverageEnd');
-            if (ce) data['_coverage_end'] = ce.value;
-
-            data['_saved_at'] = new Date().toISOString();
-            localStorage.setItem(draftKey, JSON.stringify(data));
-        } catch(e) {}
-    }
-
-    function restoreDraft() {
-        try {
-            var raw = localStorage.getItem(draftKey);
-            if (!raw) return;
-            var data = JSON.parse(raw);
-            if (!data || !data['_saved_at']) return;
-            var savedAt = new Date(data['_saved_at']);
-            var hours = (Date.now() - savedAt.getTime()) / 3600000;
-            if (hours > 72) { localStorage.removeItem(draftKey); return; }
-
-            var hasContent = false;
-            document.querySelectorAll('.field-item').forEach(function(item) {
-                if (item.classList.contains('field-calc')) return;
-                var input = item.querySelector('.field-input, .field-select, textarea');
-                var key = item.dataset.fieldKey;
-                if (input && key && data[key] !== undefined) {
-                    input.value = data[key];
-                    if (data[key] !== '') hasContent = true;
-                }
-            });
-            // 恢复表格数据
-            Object.keys(columnsData).forEach(function(fid) {
-                if (data['_table_cols_' + fid]) {
-                    document.getElementById('table_cols_input_' + fid).value = data['_table_cols_' + fid];
-                    try {
-                        columnsData[fid] = JSON.parse(data['_table_cols_' + fid]);
-                        renderTableHeader(parseInt(fid));
-                    } catch(e) {}
-                }
-                var tableRaw = data['_table_' + fid] || data['_table_data_' + fid];
-                if (tableRaw) {
-                    document.getElementById('table_data_' + fid).value = tableRaw;
-                    try {
-                        var rows = JSON.parse(tableRaw || '[]');
-                        var tbody = document.getElementById('table_body_' + fid);
-                        if (tbody && Array.isArray(rows) && rows.length > 0) {
-                            tbody.innerHTML = '';
-                            rows.forEach(function(row) { addTableRow(parseInt(fid), row); });
-                            renumberRows(parseInt(fid));
-                            updateTableData(parseInt(fid));
-                            hasContent = true;
-                        }
-                    } catch(e) {}
-                }
-            });
-            // 恢复项目归类
-            var pn = document.getElementById('projectName');
-            if (pn && data['_project_name'] !== undefined) { pn.value = data['_project_name']; }
-            var cs = document.getElementById('coverageStart');
-            if (cs && data['_coverage_start'] !== undefined) { cs.value = data['_coverage_start']; }
-            var ce = document.getElementById('coverageEnd');
-            if (ce && data['_coverage_end'] !== undefined) { ce.value = data['_coverage_end']; }
-
-            if (hasContent) {
-                updateProgress();
-                recalcAllFields();
-            }
-        } catch(e) {}
-    }
-
-    // 自动保存：字段变更后 5 秒触发，且每 30 秒强制一次
-    function scheduleDraftSave() {
-        if (_draftRestoring) return;
-        _draftDirty = true;
-        clearTimeout(draftTimer);
-        draftTimer = setTimeout(function() { saveDraft(); _draftDirty = false; }, 5000);
-    }
-
-    function bindDraftAutoSave() {
-        var form = document.getElementById('editorForm');
-        if (!form || form.dataset.draftBound === '1') return;
-        form.dataset.draftBound = '1';
-        form.addEventListener('input', scheduleDraftSave);
-        form.addEventListener('change', scheduleDraftSave);
-    }
-
-    window.CT_scheduleDraftSave = scheduleDraftSave;
-    setInterval(function() {
-        if (_draftDirty) { saveDraft(); _draftDirty = false; }
-    }, 30000);
-    window.addEventListener('beforeunload', function() {
-        if (_draftDirty) saveDraft();
-    });
-
-    // 生成成功后清除草稿（在 editor.js 的 showGenerationResult 中也会调用）
-    window.clearDraft = function() {
-        clearTimeout(draftTimer);
-        _draftDirty = false;
-        localStorage.removeItem(draftKey);
-    };
-
-    function submitPreview() {
-        var templateName = {{ (template_filename or '')|tojson }};
-        if (!templateName || templateName === 'None') {
-            showToast('请先保存模板后再预览', 'error');
-            return;
-        }
-        var form = document.getElementById('editorForm');
-        var originalAction = form.action;
-        var originalTarget = form.target;
-        form.action = '{{ url_for("template_preview", name=template_filename or "") }}';
-        form.target = '_blank';
-        form.submit();
-        form.action = originalAction;
-        form.target = originalTarget;
-    }
-</script>
-<!-- editor.js 必须在上方内联脚本之后加载：它依赖 columnsData/filledCount 等全局变量 -->
+<script src="{{ static_url('js/editor-generation.js') }}"></script>
 <script src="{{ static_url('js/editor.js') }}"></script>
+<script src="{{ static_url('js/editor-draft.js') }}"></script>
+<script src="{{ static_url('js/editor-table.js') }}"></script>
+<script src="{{ static_url('js/editor-preview.js') }}"></script>
+<script src="{{ static_url('js/editor-bootstrap.js') }}"></script>
 {% endblock %}

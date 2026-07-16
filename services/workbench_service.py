@@ -52,6 +52,7 @@ def _payment_todos(today):
         payment_status='unpaid',
         end_date=today_str,
         page=0,
+        limit=20,
     )
     for row in overdue_or_today[:20]:
         due_date = row.get('due_date') or ''
@@ -75,6 +76,7 @@ def _payment_todos(today):
         start_date=tomorrow,
         end_date=due_soon_end,
         page=0,
+        limit=20,
     )
     for row in due_soon[:20]:
         unpaid = (row.get('due_amount') or 0) - (row.get('paid_amount') or 0)
@@ -90,7 +92,7 @@ def _payment_todos(today):
             badge=row.get('phase_name') or '付款',
         ))
 
-    pending = ledger_store.list_payment_plans(confirm_status='pending', page=0)
+    pending = ledger_store.list_payment_plans(confirm_status='pending', page=0, limit=20)
     for row in pending[:20]:
         todos.append(_todo(
             'payment',
@@ -120,7 +122,7 @@ def _contract_todos(today):
             owner=row.get('owner') or '',
             badge=row.get('contract_no') or '',
         ))
-    for row in ledger_store.get_expiring_contracts(days=30):
+    for row in ledger_store.get_expiring_contracts(days=30, limit=20):
         todos.append(_todo(
             'contract',
             'medium',

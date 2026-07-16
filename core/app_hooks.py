@@ -19,6 +19,14 @@ _rate_limit_lock_global = threading.Lock()
 _RATE_LIMIT_MAX_KEYS = 10000
 
 
+def reset_rate_limit_state():
+    """Clear in-memory rate-limit buckets between isolated app instances."""
+    with _rate_limit_lock_global:
+        _rate_limit_store_global.clear()
+    with _rate_limit_lock_path:
+        _rate_limit_store_path.clear()
+
+
 def _check_single_limit(store, lock, key, max_req, window, now):
     """Check one rate-limit bucket and return (allowed, retry_seconds)."""
     with lock:
@@ -62,6 +70,9 @@ def _check_rate_limit(config):
 def register_security_hooks(app, config):
     """Register CSRF/rate-limit request guards and security response headers."""
 
+    if app.testing:
+        reset_rate_limit_state()
+
     @app.before_request
     def _protect_post_requests():
         if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}:
@@ -93,7 +104,7 @@ def register_security_hooks(app, config):
         else:
             response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Content-Security-Policy'] = (
-            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "default-src 'self'; script-src 'self' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
             "font-src 'self'; connect-src 'self'"
         )

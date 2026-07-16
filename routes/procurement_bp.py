@@ -9,6 +9,8 @@ from decimal import Decimal
 
 from flask import abort, redirect, render_template, request, send_file, session, url_for
 
+from routes.legacy_blueprint import LegacyEndpointBlueprint
+
 import procurement_store
 import template_def
 from services import (
@@ -94,11 +96,12 @@ def _project_section_url(project_id, section):
 
 
 def register(app):
-    @app.route('/procurement')
+    bp = LegacyEndpointBlueprint('procurement', __name__)
+    @bp.route('/procurement')
     def procurement_home():
         return redirect(url_for('procurement_projects'))
 
-    @app.route('/procurement/projects')
+    @bp.route('/procurement/projects')
     def procurement_projects():
         q = request.args.get('q', '').strip()
         status = request.args.get('status', '').strip()
@@ -112,7 +115,7 @@ def register(app):
             project_statuses=procurement_store.PROJECT_STATUSES,
         )
 
-    @app.route('/procurement/history-prices')
+    @bp.route('/procurement/history-prices')
     def procurement_history_prices():
         q = request.args.get('q', '').strip()
         result = historical_price_service.price_assistance(q) if q else {
@@ -126,7 +129,7 @@ def register(app):
             strategy=strategy, money=_money,
         )
 
-    @app.route('/procurement/projects/new', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/new', methods=['GET', 'POST'])
     def procurement_project_new():
         if request.method == 'POST':
             try:
@@ -137,7 +140,7 @@ def register(app):
                 return render_template('procurement/project_form.html', project=None, error=error), 400
         return render_template('procurement/project_form.html', project=None, error='')
 
-    @app.route('/procurement/projects/<int:project_id>/edit', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/edit', methods=['GET', 'POST'])
     def procurement_project_edit(project_id):
         project = _project_or_404(project_id)
         if request.method == 'POST':
@@ -152,7 +155,7 @@ def register(app):
         project['target_price'] = _money(project.get('target_price_minor'))
         return render_template('procurement/project_form.html', project=project, error='')
 
-    @app.route('/procurement/projects/<int:project_id>')
+    @bp.route('/procurement/projects/<int:project_id>')
     def procurement_project_detail(project_id):
         project = procurement_project_service.project_detail(project_id)
         if not project:
@@ -163,7 +166,7 @@ def register(app):
             workflow=workflow, error=request.args.get('error', ''), money=_money,
         )
 
-    @app.route('/procurement/projects/<int:project_id>/workflow/jump', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/workflow/jump', methods=['POST'])
     def procurement_workflow_jump(project_id):
         _project_or_404(project_id)
         target_stage = request.form.get('target_stage', '').strip()
@@ -176,7 +179,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, project_id=project_id)
         return redirect(_stage_redirect_url(project_id, target_stage))
 
-    @app.route('/procurement/projects/<int:project_id>/status', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/status', methods=['POST'])
     def procurement_project_status(project_id):
         try:
             procurement_project_service.transition(
@@ -186,7 +189,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_project_detail', project_id=project_id))
 
-    @app.route('/procurement/projects/<int:project_id>/items', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/items', methods=['POST'])
     def procurement_item_add(project_id):
         try:
             procurement_project_service.add_item(project_id, request.form)
@@ -194,7 +197,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(_project_section_url(project_id, 'items'))
 
-    @app.route('/procurement/projects/<int:project_id>/items/bulk', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/items/bulk', methods=['GET', 'POST'])
     def procurement_items_bulk(project_id):
         project = _project_or_404(project_id)
         if request.method == 'POST':
@@ -217,7 +220,7 @@ def register(app):
             'procurement/items_bulk.html', project=project, pasted_rows='', error=''
         )
 
-    @app.route('/procurement/projects/<int:project_id>/items/export')
+    @bp.route('/procurement/projects/<int:project_id>/items/export')
     def procurement_items_export(project_id):
         try:
             path = project_document_service.export_project_items(project_id)
@@ -228,7 +231,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/procurement/projects/<int:project_id>/items/<int:item_id>/delete', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/items/<int:item_id>/delete', methods=['POST'])
     def procurement_item_delete(project_id, item_id):
         try:
             procurement_store.delete_project_item(project_id, item_id)
@@ -236,7 +239,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_project_detail', project_id=project_id))
 
-    @app.route('/procurement/projects/<int:project_id>/items/<int:item_id>/edit', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/items/<int:item_id>/edit', methods=['GET', 'POST'])
     def procurement_item_edit(project_id, item_id):
         _project_or_404(project_id)
         item = procurement_store.get_project_item(item_id)
@@ -254,7 +257,7 @@ def register(app):
                 ), 400
         return render_template('procurement/item_form.html', project_id=project_id, item=item, error='')
 
-    @app.route('/procurement/projects/<int:project_id>/suppliers', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/suppliers', methods=['POST'])
     def procurement_supplier_add(project_id):
         try:
             procurement_project_service.add_supplier(project_id, request.form)
@@ -262,7 +265,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(_project_section_url(project_id, 'suppliers'))
 
-    @app.route('/procurement/projects/<int:project_id>/quote-template')
+    @bp.route('/procurement/projects/<int:project_id>/quote-template')
     def procurement_quote_template_selected(project_id):
         supplier_id = request.args.get('supplier_id', type=int)
         if not supplier_id:
@@ -279,7 +282,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/procurement/projects/<int:project_id>/suppliers/<int:supplier_id>/delete', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/suppliers/<int:supplier_id>/delete', methods=['POST'])
     def procurement_supplier_delete(project_id, supplier_id):
         try:
             procurement_project_service.delete_supplier(project_id, supplier_id)
@@ -287,7 +290,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_project_detail', project_id=project_id))
 
-    @app.route('/procurement/projects/<int:project_id>/suppliers/<int:supplier_id>/edit', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/suppliers/<int:supplier_id>/edit', methods=['GET', 'POST'])
     def procurement_supplier_edit(project_id, supplier_id):
         _project_or_404(project_id)
         supplier = procurement_store.get_project_supplier(supplier_id)
@@ -307,7 +310,7 @@ def register(app):
             'procurement/supplier_form.html', project_id=project_id, supplier=supplier, error=''
         )
 
-    @app.route('/procurement/projects/<int:project_id>/quote-template/<int:supplier_id>')
+    @bp.route('/procurement/projects/<int:project_id>/quote-template/<int:supplier_id>')
     def procurement_quote_template(project_id, supplier_id):
         try:
             path = quote_service.generate_quote_template(project_id, supplier_id)
@@ -318,7 +321,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/procurement/projects/<int:project_id>/inquiry')
+    @bp.route('/procurement/projects/<int:project_id>/inquiry')
     def procurement_inquiry_document(project_id):
         try:
             path = project_document_service.generate_inquiry_letter(project_id)
@@ -326,7 +329,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
 
-    @app.route('/procurement/projects/<int:project_id>/clarifications/document')
+    @bp.route('/procurement/projects/<int:project_id>/clarifications/document')
     def procurement_clarification_document(project_id):
         try:
             path = project_document_service.generate_clarification_letter(
@@ -336,7 +339,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
 
-    @app.route('/procurement/projects/<int:project_id>/award/document')
+    @bp.route('/procurement/projects/<int:project_id>/award/document')
     def procurement_award_document(project_id):
         try:
             path = project_document_service.generate_award_recommendation(project_id)
@@ -344,7 +347,7 @@ def register(app):
             return _error_redirect('procurement_award', exc, exc_info=True, project_id=project_id)
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
 
-    @app.route('/procurement/files/<int:file_id>/download')
+    @bp.route('/procurement/files/<int:file_id>/download')
     def procurement_file_download(file_id):
         file_record = procurement_store.get_project_file(file_id)
         if not file_record:
@@ -360,7 +363,7 @@ def register(app):
             download_name=file_record.get('original_name') or path.name,
         )
 
-    @app.route('/procurement/projects/<int:project_id>/erp-oa-summary')
+    @bp.route('/procurement/projects/<int:project_id>/erp-oa-summary')
     def procurement_erp_oa_summary(project_id):
         try:
             path = project_document_service.generate_erp_oa_summary(project_id)
@@ -371,7 +374,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/procurement/projects/<int:project_id>/archive')
+    @bp.route('/procurement/projects/<int:project_id>/archive')
     def procurement_project_archive(project_id):
         try:
             path = project_document_service.generate_project_archive(project_id)
@@ -379,7 +382,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return send_file(path, as_attachment=True, download_name=os.path.basename(path), mimetype='application/zip')
 
-    @app.route('/procurement/projects/<int:project_id>/quotes/import', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/quotes/import', methods=['GET', 'POST'])
     def procurement_quote_import(project_id):
         project = _project_or_404(project_id)
         suppliers = procurement_store.list_project_suppliers(project_id)
@@ -413,7 +416,7 @@ def register(app):
             error=request.args.get('error', ''),
         )
 
-    @app.route('/procurement/projects/<int:project_id>/quotes/pdf', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/quotes/pdf', methods=['POST'])
     def procurement_quote_pdf_upload(project_id):
         project = _project_or_404(project_id)
         suppliers = procurement_store.list_project_suppliers(project_id)
@@ -441,7 +444,7 @@ def register(app):
             ), 400
         return redirect(url_for('procurement_project_detail', project_id=project_id))
 
-    @app.route('/procurement/projects/<int:project_id>/quotes/map', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/quotes/map', methods=['GET', 'POST'])
     def procurement_quote_mapping_upload(project_id):
         project = _project_or_404(project_id)
         suppliers = procurement_store.list_project_suppliers(project_id)
@@ -474,7 +477,7 @@ def register(app):
             suppliers=suppliers, error=request.args.get('error', ''),
         )
 
-    @app.route('/procurement/quote-mappings/<int:job_id>', methods=['GET', 'POST'])
+    @bp.route('/procurement/quote-mappings/<int:job_id>', methods=['GET', 'POST'])
     def procurement_quote_mapping(job_id):
         job = procurement_store.get_mapping_job(job_id)
         if not job:
@@ -499,14 +502,14 @@ def register(app):
             error=error,
         )
 
-    @app.route('/procurement/quote-imports/<int:job_id>')
+    @bp.route('/procurement/quote-imports/<int:job_id>')
     def procurement_quote_preview(job_id):
         job = procurement_store.get_import_job(job_id)
         if not job:
             abort(404, description='报价导入任务不存在')
         return render_template('procurement/quote_preview.html', job=job, money=_money)
 
-    @app.route('/procurement/quote-imports/<int:job_id>/confirm', methods=['POST'])
+    @bp.route('/procurement/quote-imports/<int:job_id>/confirm', methods=['POST'])
     def procurement_quote_confirm(job_id):
         job = procurement_store.get_import_job(job_id)
         if not job:
@@ -517,7 +520,7 @@ def register(app):
             return _error_redirect('procurement_quote_import', exc, exc_info=True, project_id=job['project_id'])
         return redirect(url_for('procurement_project_detail', project_id=job['project_id']))
 
-    @app.route('/procurement/projects/<int:project_id>/comparison')
+    @bp.route('/procurement/projects/<int:project_id>/comparison')
     def procurement_comparison(project_id):
         _project_or_404(project_id)
         view = comparison_service.comparison_view(project_id)
@@ -526,7 +529,7 @@ def register(app):
             error=request.args.get('error', ''),
         )
 
-    @app.route('/procurement/projects/<int:project_id>/comparison/run', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/comparison/run', methods=['POST'])
     def procurement_comparison_run(project_id):
         try:
             threshold = Decimal(str(request.form.get('threshold_percent') or 20))
@@ -543,7 +546,7 @@ def register(app):
             return _error_redirect('procurement_comparison', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_comparison', project_id=project_id))
 
-    @app.route('/procurement/projects/<int:project_id>/comparison/export')
+    @bp.route('/procurement/projects/<int:project_id>/comparison/export')
     def procurement_comparison_export(project_id):
         try:
             path = comparison_service.export_comparison_excel(project_id)
@@ -554,7 +557,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/procurement/projects/<int:project_id>/clarifications/generate', methods=['POST'])
+    @bp.route('/procurement/projects/<int:project_id>/clarifications/generate', methods=['POST'])
     def procurement_clarifications_generate(project_id):
         try:
             comparison_service.generate_clarifications(project_id)
@@ -562,7 +565,7 @@ def register(app):
             return _error_redirect('procurement_comparison', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_project_detail', project_id=project_id) + '#clarifications')
 
-    @app.route('/procurement/clarifications/<int:question_id>', methods=['POST'])
+    @bp.route('/procurement/clarifications/<int:question_id>', methods=['POST'])
     def procurement_clarification_update(question_id):
         project_id = int(request.form.get('project_id', 0))
         try:
@@ -571,7 +574,7 @@ def register(app):
             return _error_redirect('procurement_project_detail', exc, exc_info=True, project_id=project_id)
         return redirect(url_for('procurement_project_detail', project_id=project_id) + '#clarifications')
 
-    @app.route('/procurement/projects/<int:project_id>/award', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/award', methods=['GET', 'POST'])
     def procurement_award(project_id):
         project = _project_or_404(project_id)
         quotes = procurement_store.get_latest_quotes(project_id)
@@ -597,7 +600,7 @@ def register(app):
             error=request.args.get('error', ''), money=_money,
         )
 
-    @app.route('/procurement/projects/<int:project_id>/negotiation', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/negotiation', methods=['GET', 'POST'])
     def procurement_negotiation(project_id):
         _project_or_404(project_id)
         if request.method == 'POST':
@@ -616,7 +619,7 @@ def register(app):
             error=error, money=_money,
         )
 
-    @app.route('/procurement/projects/<int:project_id>/negotiation/plan', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/negotiation/plan', methods=['GET', 'POST'])
     def procurement_negotiation_plan(project_id):
         _project_or_404(project_id)
         try:
@@ -647,7 +650,7 @@ def register(app):
             plan=defaults['plan'], error=request.args.get('error', ''),
         )
 
-    @app.route('/procurement/projects/<int:project_id>/negotiation/minutes')
+    @bp.route('/procurement/projects/<int:project_id>/negotiation/minutes')
     def procurement_negotiation_minutes(project_id):
         try:
             path = project_document_service.generate_negotiation_minutes(project_id)
@@ -655,7 +658,7 @@ def register(app):
             return _error_redirect('procurement_negotiation', exc, exc_info=True, project_id=project_id)
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
 
-    @app.route('/procurement/projects/<int:project_id>/negotiation/commitments')
+    @bp.route('/procurement/projects/<int:project_id>/negotiation/commitments')
     def procurement_final_commitments(project_id):
         try:
             path = project_document_service.export_final_commitments(project_id)
@@ -666,7 +669,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/procurement/projects/<int:project_id>/to-contract', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/to-contract', methods=['GET', 'POST'])
     def procurement_to_contract(project_id):
         project = _project_or_404(project_id)
         award = procurement_store.get_latest_award(project_id)
@@ -692,7 +695,7 @@ def register(app):
             templates=templates, error=request.args.get('error', ''), money=_money,
         )
 
-    @app.route('/procurement/projects/<int:project_id>/direct-contract', methods=['GET', 'POST'])
+    @bp.route('/procurement/projects/<int:project_id>/direct-contract', methods=['GET', 'POST'])
     def procurement_direct_contract(project_id):
         project = _project_or_404(project_id)
         project['budget_amount'] = _money(project.get('budget_minor'))
@@ -716,3 +719,5 @@ def register(app):
             'procurement/direct_contract.html', project=project,
             templates=templates, error=request.args.get('error', ''),
         )
+
+    app.register_blueprint(bp)

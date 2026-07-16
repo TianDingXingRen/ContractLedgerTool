@@ -39,12 +39,20 @@ def list_contracts(
     offset = max(0, (page - 1) * per_page)
     sql = f"""
         SELECT c.*,
-               (SELECT COUNT(*) FROM payment_plans p WHERE p.contract_id = c.id) AS plan_count,
-               (SELECT COUNT(*) FROM payment_plans p WHERE p.contract_id = c.id
-                  AND p.confirm_status = 'pending') AS pending_count,
-               (SELECT COUNT(*) FROM payment_plans p WHERE p.contract_id = c.id
-                  AND p.confirm_status = 'confirmed' AND p.payment_status != 'paid') AS payable_count
-        {base_sql}{where}
+               COALESCE(pc.plan_count, 0) AS plan_count,
+               COALESCE(pc.pending_count, 0) AS pending_count,
+               COALESCE(pc.payable_count, 0) AS payable_count
+        FROM contracts c
+        LEFT JOIN (
+            SELECT contract_id,
+                   COUNT(*) AS plan_count,
+                   SUM(CASE WHEN confirm_status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+                   SUM(CASE WHEN confirm_status = 'confirmed' AND payment_status != 'paid'
+                            THEN 1 ELSE 0 END) AS payable_count
+            FROM payment_plans
+            GROUP BY contract_id
+        ) pc ON pc.contract_id = c.id
+        {where}
         ORDER BY c.created_at DESC
         LIMIT ? OFFSET ?
     """
@@ -60,6 +68,24 @@ def list_contracts(
     }
 
 
+def iter_contracts(
+    get_conn, row_to_dict, q='', status='', batch_size=500,
+    include_deleted=False, deleted_only=False,
+):
+    """Yield contracts in bounded pages for large exports."""
+    page = 1
+    while True:
+        result = list_contracts(
+            get_conn, row_to_dict, q=q, status=status, page=page,
+            per_page=batch_size, include_deleted=include_deleted,
+            deleted_only=deleted_only,
+        )
+        yield from result['rows']
+        if page >= result['pages']:
+            return
+        page += 1
+
+
 def list_payment_plans(
     get_conn,
     row_to_dict,
@@ -71,6 +97,7 @@ def list_payment_plans(
     project_name='',
     page=0,
     per_page=20,
+    limit=0,
 ):
     base_sql = """
         FROM payment_plans p
@@ -105,7 +132,7 @@ def list_payment_plans(
         offset = max(0, (page - 1) * per_page)
         sql = f"""
             SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
-                   c.amount AS contract_amount, c.project_name,
+                   c.amount_minor AS contract_amount_minor, c.project_name,
                    c.coverage_start, c.coverage_end
             {base_sql}{where}
             ORDER BY COALESCE(p.due_date, '9999-12-31'), p.id
@@ -124,11 +151,15 @@ def list_payment_plans(
 
     sql = f"""
         SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
-               c.amount AS contract_amount, c.project_name,
+               c.amount_minor AS contract_amount_minor, c.project_name,
                c.coverage_start, c.coverage_end
         {base_sql}{where}
         ORDER BY COALESCE(p.due_date, '9999-12-31'), p.id
     """
+    query_params = list(params)
+    if limit:
+        sql += ' LIMIT ?'
+        query_params.append(max(1, int(limit)))
     with get_conn() as conn:
-        rows = conn.execute(sql, params).fetchall()
+        rows = conn.execute(sql, query_params).fetchall()
     return [row_to_dict(r) for r in rows]

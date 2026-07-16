@@ -1,4 +1,5 @@
 import os
+import re
 import unittest
 
 import app
@@ -6,6 +7,20 @@ import build_installer
 
 
 class FrontendAssetTests(unittest.TestCase):
+    def test_templates_have_no_executable_inline_scripts_or_dom_event_attributes(self):
+        templates_dir = os.path.join(app.RESOURCE_DIR, 'templates')
+        event_attribute = re.compile(r'\son(?:click|change|input|submit|focus|blur)\s*=', re.I)
+        inline_script = re.compile(r'<script(?![^>]*\bsrc=)(?![^>]*type="application/json")[^>]*>', re.I)
+        for root, _dirs, files in os.walk(templates_dir):
+            for filename in files:
+                if not filename.endswith('.html'):
+                    continue
+                path = os.path.join(root, filename)
+                with open(path, encoding='utf-8') as handle:
+                    source = handle.read()
+                self.assertIsNone(event_attribute.search(source), path)
+                self.assertIsNone(inline_script.search(source), path)
+
     def test_base_template_uses_local_vendor_assets(self):
         base_path = os.path.join(app.RESOURCE_DIR, 'templates', 'base.html')
         with open(base_path, 'r', encoding='utf-8') as f:
@@ -22,6 +37,7 @@ class FrontendAssetTests(unittest.TestCase):
 
         local_assets = (
             'css/app.min.css',
+            'brand/procurement-platform-icon.png',
             'js/app-shell.js',
             'vendor/alpine.min.js',
             'js/icons.js',
@@ -30,6 +46,8 @@ class FrontendAssetTests(unittest.TestCase):
             self.assertIn(asset, html)
         self.assertNotIn('vendor/daisyui-full.min.css', html)
         self.assertNotIn('vendor/tailwindcss.js', html)
+        self.assertIn('采购业务平台', html)
+        self.assertNotIn('<div class="sli">CT</div>', html)
 
     def test_base_template_moves_shared_script_to_static_asset(self):
         base_path = os.path.join(app.RESOURCE_DIR, 'templates', 'base.html')
@@ -85,6 +103,7 @@ class FrontendAssetTests(unittest.TestCase):
     def test_local_vendor_assets_are_served(self):
         expected_min_sizes = {
             '/static/css/app.min.css': 50_000,
+            '/static/brand/procurement-platform-icon.png': 20_000,
             '/static/vendor/alpine.min.js': 10_000,
             '/static/js/icons.js': 5_000,
         }
@@ -134,7 +153,8 @@ class FrontendAssetTests(unittest.TestCase):
             finally:
                 response.close()
 
-        self.assertIn("script-src 'self' 'unsafe-inline' 'unsafe-eval'", csp)
+        self.assertIn("script-src 'self' 'unsafe-eval'", csp)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
         self.assertIn("style-src 'self' 'unsafe-inline'", csp)
 
     def test_contract_detail_exposes_resizable_payment_columns(self):
@@ -144,12 +164,15 @@ class FrontendAssetTests(unittest.TestCase):
             html = f.read()
         with open(style_path, 'r', encoding='utf-8') as f:
             css = f.read()
+        behavior_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'contract-detail.js')
+        with open(behavior_path, 'r', encoding='utf-8') as f:
+            behavior = f.read()
 
         self.assertIn('data-testid="payment-plan-table"', html)
         self.assertIn('<colgroup>', html)
         self.assertEqual(html.count('class="col-resize-handle"'), 13)
-        self.assertIn("localStorage.setItem(storageKey", html)
-        self.assertIn("handle.addEventListener('mousedown'", html)
+        self.assertIn("localStorage.setItem(storageKey", behavior)
+        self.assertIn("handle.addEventListener('mousedown'", behavior)
         self.assertIn('.col-resize-handle', css)
         self.assertIn('cursor: col-resize', css)
 

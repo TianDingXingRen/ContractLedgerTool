@@ -7,6 +7,8 @@ from datetime import date, timedelta
 
 from flask import render_template, request, redirect, url_for, send_file, jsonify
 
+from routes.legacy_blueprint import LegacyEndpointBlueprint
+
 import ledger_store
 import xlsx_exporter
 from utils import helpers
@@ -93,7 +95,8 @@ def _payment_row_from_form(idx, form):
 
 
 def register(app):
-    @app.route('/contracts/<int:contract_id>/payments/save', methods=['POST'])
+    bp = LegacyEndpointBlueprint('payments', __name__)
+    @bp.route('/contracts/<int:contract_id>/payments/save', methods=['POST'])
     def payment_plans_save(contract_id):
         if not ledger_store.get_contract(contract_id):
             return '合同记录不存在', 404
@@ -134,7 +137,7 @@ def register(app):
             return str(e), 400
         return redirect(url_for('contract_detail', contract_id=contract_id))
 
-    @app.route('/contracts/<int:contract_id>/payments/confirm-all', methods=['POST'])
+    @bp.route('/contracts/<int:contract_id>/payments/confirm-all', methods=['POST'])
     def payment_plans_confirm_all(contract_id):
         plans = ledger_store.list_payment_plans(contract_id=contract_id, confirm_status='pending')
         confirmable_ids = [plan['id'] for plan in plans if helpers.can_bulk_confirm_payment(plan)]
@@ -142,7 +145,7 @@ def register(app):
             ledger_store.batch_confirm_plans(confirmable_ids, contract_id)
         return redirect(url_for('contract_detail', contract_id=contract_id))
 
-    @app.route('/api/payments/due-soon')
+    @bp.route('/api/payments/due-soon')
     def api_payments_due_soon():
         days = request.args.get('days', 7, type=int)
         days = max(0, min(days or 7, 365))
@@ -172,7 +175,7 @@ def register(app):
             } for p in payments],
         })
 
-    @app.route('/payment-plans')
+    @bp.route('/payment-plans')
     def payment_plan_list():
         view_mode = request.args.get('view', 'work').strip() or 'work'
         if view_mode not in {'work', 'detail'}:
@@ -224,7 +227,7 @@ def register(app):
             view_mode=view_mode,
         )
 
-    @app.route('/payment-plans/batch-confirm', methods=['POST'])
+    @bp.route('/payment-plans/batch-confirm', methods=['POST'])
     def payment_plans_batch_confirm():
         try:
             ids = _parse_plan_ids(request.form.get('ids'))
@@ -235,7 +238,7 @@ def register(app):
         ledger_store.batch_confirm_plans(ids)
         return _payment_redirect(request.form)
 
-    @app.route('/payment-plans/batch-paid', methods=['POST'])
+    @bp.route('/payment-plans/batch-paid', methods=['POST'])
     def payment_plans_batch_paid():
         try:
             ids = _parse_plan_ids(request.form.get('ids'))
@@ -249,7 +252,7 @@ def register(app):
         ledger_store.batch_mark_plans_paid(ids, paid_date)
         return _payment_redirect(request.form)
 
-    @app.route('/payment-plans/<int:plan_id>/quick-update', methods=['POST'])
+    @bp.route('/payment-plans/<int:plan_id>/quick-update', methods=['POST'])
     def payment_plan_quick_update(plan_id):
         action = request.form.get('action', '').strip()
         plan = ledger_store.get_payment_plan(plan_id)
@@ -290,7 +293,7 @@ def register(app):
             return str(e), 400
         return _payment_redirect(request.form)
 
-    @app.route('/payment-plans/export')
+    @bp.route('/payment-plans/export')
     def export_payment_plans():
         filters = _payment_filter_args(request.args)
         plans = ledger_store.list_payment_plans(
@@ -311,7 +314,7 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    @app.route('/payment-plans/export-next-month')
+    @bp.route('/payment-plans/export-next-month')
     def export_next_month_payments():
         start, end = helpers.next_month_range()
         plans = ledger_store.next_month_payment_plans(start, end)
@@ -324,3 +327,5 @@ def register(app):
             download_name=f'下月付款计划_{start}_{end}.xlsx',
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
+
+    app.register_blueprint(bp)

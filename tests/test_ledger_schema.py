@@ -9,7 +9,7 @@ def test_ledger_schema_module_keeps_compatibility_contract():
     assert ledger_store.MIGRATIONS is schema.MIGRATIONS
     versions = [version for version, _forward, _rollback in schema.MIGRATIONS]
     assert versions == sorted(versions)
-    assert versions[-1] >= 8
+    assert versions[-1] == schema.CURRENT_SCHEMA_VERSION
 
 
 def test_init_db_uses_extracted_schema(tmp_path):
@@ -43,9 +43,17 @@ def test_init_db_uses_extracted_schema(tmp_path):
                 'SELECT MAX(version) AS version FROM schema_version'
             ).fetchone()['version']
 
-        assert {'contracts', 'payment_plans', 'contract_history', 'schema_version'} <= tables
+        assert {
+            'contracts',
+            'payment_plans',
+            'contract_history',
+            'contract_generation_jobs',
+            'schema_version',
+        } <= tables
         assert 'idx_contracts_contract_no_unique' in indexes
+        assert 'idx_generation_jobs_active_output' in indexes
         assert schema_version == ledger_store.MIGRATIONS[-1][0]
+        assert ledger_store.needs_migration() is False
         assert os.path.isfile(ledger_store.DB_PATH)
     finally:
         ledger_store.close_connections()

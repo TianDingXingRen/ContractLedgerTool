@@ -45,7 +45,6 @@ class EndToEndTest(unittest.TestCase):
 
         cls.field_values = {}
         for idx, f in enumerate(cls.fields):
-            fid = f.get('id', idx)
             key = f['key']
             if f['field_type'] == 'table':
                 row = {}

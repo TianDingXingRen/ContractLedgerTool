@@ -508,6 +508,16 @@ def _rows_to_dicts(rows):
     return [dict(row) for row in rows]
 
 
+def _fetch_dicts(cursor, batch_size=500):
+    """Consume a large SQLite result in bounded batches."""
+    result = []
+    while True:
+        rows = cursor.fetchmany(batch_size)
+        if not rows:
+            return result
+        result.extend(dict(row) for row in rows)
+
+
 def _amount(value):
     try:
         return round(float(value or 0), 2)
@@ -568,12 +578,12 @@ def build_handover_data(owner, include_closed=False, today=None):
 
     with ledger_store.get_conn() as conn:
         contract_where = ' AND '.join(_contract_filters(include_closed))
-        contracts = _rows_to_dicts(conn.execute(
+        contracts = _fetch_dicts(conn.execute(
             f"""
             SELECT c.*,
                    COUNT(p.id) AS plan_count,
-                   COALESCE(SUM(p.due_amount), 0) AS due_total,
-                   COALESCE(SUM(p.paid_amount), 0) AS paid_total,
+                   COALESCE(SUM(p.due_amount_minor), 0) AS due_total_minor,
+                   COALESCE(SUM(p.paid_amount_minor), 0) AS paid_total_minor,
                    SUM(CASE WHEN p.payment_status != 'paid' AND p.confirm_status != 'void'
                             THEN 1 ELSE 0 END) AS unpaid_plan_count
             FROM contracts c
@@ -583,10 +593,10 @@ def build_handover_data(owner, include_closed=False, today=None):
             ORDER BY c.updated_at DESC, c.id DESC
             """,
             (owner,),
-        ).fetchall())
+        ))
 
         payment_where = ' AND '.join(_payment_filters(include_closed))
-        payments = _rows_to_dicts(conn.execute(
+        payments = _fetch_dicts(conn.execute(
             f"""
             SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty,
                    c.owner, c.project_name
@@ -596,10 +606,10 @@ def build_handover_data(owner, include_closed=False, today=None):
             ORDER BY COALESCE(p.due_date, ''), p.id
             """,
             (owner,),
-        ).fetchall())
+        ))
 
         project_where = ' AND '.join(_project_filters(include_closed))
-        projects = _rows_to_dicts(conn.execute(
+        projects = _fetch_dicts(conn.execute(
             f"""
             SELECT p.*,
                    (SELECT COUNT(*) FROM project_items i WHERE i.project_id = p.id) AS item_count,
@@ -614,10 +624,10 @@ def build_handover_data(owner, include_closed=False, today=None):
             ORDER BY p.updated_at DESC, p.id DESC
             """,
             (owner,),
-        ).fetchall())
+        ))
 
         file_where = ' AND '.join(_project_filters(include_closed))
-        project_files = _rows_to_dicts(conn.execute(
+        project_files = _fetch_dicts(conn.execute(
             f"""
             SELECT f.*, p.project_no, p.project_name
             FROM project_files f
@@ -626,12 +636,16 @@ def build_handover_data(owner, include_closed=False, today=None):
             ORDER BY f.created_at DESC, f.id DESC
             """,
             (owner,),
-        ).fetchall())
+        ))
 
     for row in contracts:
         row['status_label'] = CONTRACT_STATUS_LABELS.get(row.get('status'), row.get('status') or '')
-        row['amount'] = _amount(row.get('amount'))
-        row['unpaid_amount'] = round(_amount(row.get('due_total')) - _amount(row.get('paid_total')), 2)
+        row['amount'] = _minor_to_amount(row.get('amount_minor'))
+        row['unpaid_amount'] = round(
+            _minor_to_amount(row.get('due_total_minor'))
+            - _minor_to_amount(row.get('paid_total_minor')),
+            2,
+        )
         row['docx_path'] = _rel_path(row.get('docx_path'))
 
     for row in payments:
@@ -641,8 +655,8 @@ def build_handover_data(owner, include_closed=False, today=None):
         row['payment_status_label'] = PAYMENT_STATUS_LABELS.get(
             row.get('payment_status'), row.get('payment_status') or ''
         )
-        row['due_amount'] = _amount(row.get('due_amount'))
-        row['paid_amount'] = _amount(row.get('paid_amount'))
+        row['due_amount'] = _minor_to_amount(row.get('due_amount_minor'))
+        row['paid_amount'] = _minor_to_amount(row.get('paid_amount_minor'))
         row['unpaid_amount'] = round(row['due_amount'] - row['paid_amount'], 2)
 
     for row in projects:

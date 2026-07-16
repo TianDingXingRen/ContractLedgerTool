@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from flask import render_template, request, redirect, url_for, session, jsonify, send_file
 
+from routes.legacy_blueprint import LegacyEndpointBlueprint
+
 import template_def
 import field_eval
 from services.contract_preview_service import editor_preview_model
@@ -96,6 +98,7 @@ def _try_convert_doc_to_docx(doc_path):
 
 
 def register(app):
+    bp = LegacyEndpointBlueprint('templates', __name__)
     # ── 模板保存的辅助函数（从 template_manual_save 提取）──
 
     def _parse_field_location(idx, field_type):
@@ -265,7 +268,7 @@ def register(app):
 
     # ── 路由定义 ──
 
-    @app.route('/create-template')
+    @bp.route('/create-template')
     def create_template():
         style_sid = request.args.get('style_sid')
         if not style_sid:
@@ -289,7 +292,7 @@ def register(app):
             detected_fields=detected_fields,
         )
 
-    @app.route('/template/upload-style', methods=['POST'])
+    @bp.route('/template/upload-style', methods=['POST'])
     def upload_style():
         if 'file' not in request.files:
             return '未选择文件', 400
@@ -343,7 +346,7 @@ def register(app):
 
         return redirect(url_for('create_template'))
 
-    @app.route('/template/manual-save', methods=['POST'])
+    @bp.route('/template/manual-save', methods=['POST'])
     def template_manual_save():
         template_name = request.form.get('template_name', '').strip()
         if not template_name:
@@ -402,7 +405,7 @@ def register(app):
 
         return redirect(url_for('template_editor', name=os.path.basename(path)))
 
-    @app.route('/templates')
+    @bp.route('/templates')
     def list_templates():
         templates = template_def.list_templates()
         category_filter = request.args.get('category', '').strip()
@@ -410,7 +413,7 @@ def register(app):
             templates = [t for t in templates if t.get('category', '') == category_filter]
         return render_template('list.html', templates=templates)
 
-    @app.route('/template/<name>')
+    @bp.route('/template/<name>')
     def template_editor(name):
         try:
             path = helpers.safe_template_path(name)
@@ -452,7 +455,7 @@ def register(app):
             batch_allowed=True,
         )
 
-    @app.route('/template/<name>/preview', methods=['POST'])
+    @bp.route('/template/<name>/preview', methods=['POST'])
     def template_preview(name):
         if not name or name == 'None' or name == '未命名':
             return '模板名称无效，请先保存模板', 400
@@ -494,12 +497,12 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         )
 
-    @app.route('/template/<filename>/delete', methods=['POST'])
+    @bp.route('/template/<filename>/delete', methods=['POST'])
     def template_delete(filename):
         template_def.delete_template(os.path.basename(filename))
         return redirect(url_for('list_templates'))
 
-    @app.route('/template/<filename>/copy', methods=['POST'])
+    @bp.route('/template/<filename>/copy', methods=['POST'])
     def template_copy(filename):
         new_filename = template_def.copy_template(filename)
         if not new_filename:
@@ -507,7 +510,7 @@ def register(app):
         get_logger().info('Copied template %s -> %s', filename, new_filename)
         return redirect(url_for('list_templates'))
 
-    @app.route('/template/<name>/versions')
+    @bp.route('/template/<name>/versions')
     def template_versions(name):
         if name.endswith('.contract-template'):
             template_name = name[:-len('.contract-template')]
@@ -517,7 +520,7 @@ def register(app):
         return render_template('versions.html',
             template_name=template_name, versions=versions)
 
-    @app.route('/template/<name>/versions/<version_filename>/restore', methods=['POST'])
+    @bp.route('/template/<name>/versions/<version_filename>/restore', methods=['POST'])
     def template_version_restore(name, version_filename):
         template_name = name[:-len('.contract-template')] if name.endswith('.contract-template') else name
         try:
@@ -526,7 +529,7 @@ def register(app):
             return safe_error(e, '版本文件不存在', 404)
         return redirect(url_for('list_templates'))
 
-    @app.route('/template-defaults', methods=['POST'])
+    @bp.route('/template-defaults', methods=['POST'])
     def save_template_defaults():
         sid = session.get('sid')
         if not sid:
@@ -612,3 +615,5 @@ def register(app):
             'message': '预制内容已保存到模板',
             'warnings': warnings_list,
         })
+
+    app.register_blueprint(bp)

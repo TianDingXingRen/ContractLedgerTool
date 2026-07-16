@@ -6,7 +6,7 @@ from datetime import date, timedelta
 def next_month_payment_plans(get_conn, row_to_dict, start_date, end_date):
     sql = """
         SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
-               c.amount AS contract_amount, c.project_name,
+               c.amount_minor AS contract_amount_minor, c.project_name,
                c.coverage_start, c.coverage_end
         FROM payment_plans p
         JOIN contracts c ON c.id = p.contract_id
@@ -29,16 +29,19 @@ def get_contract_stats(get_conn):
             "SELECT COUNT(*) FROM contracts WHERE deleted_at = '' OR deleted_at IS NULL"
         ).fetchone()[0]
         status_rows = conn.execute(
-            "SELECT status, COUNT(*), COALESCE(SUM(amount),0) FROM contracts WHERE deleted_at = '' OR deleted_at IS NULL GROUP BY status"
+            "SELECT status, COUNT(*), COALESCE(SUM(amount_minor),0) FROM contracts WHERE deleted_at = '' OR deleted_at IS NULL GROUP BY status"
         ).fetchall()
         total_amount = conn.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM contracts WHERE deleted_at = '' OR deleted_at IS NULL"
+            "SELECT COALESCE(SUM(amount_minor),0) FROM contracts WHERE deleted_at = '' OR deleted_at IS NULL"
         ).fetchone()[0]
-    by_status = {row[0]: {'count': row[1], 'amount': row[2]} for row in status_rows}
+    by_status = {
+        row[0]: {'count': row[1], 'amount': float(row[2] or 0) / 100}
+        for row in status_rows
+    }
     return {
         'total': total,
         'by_status': by_status,
-        'total_amount': total_amount or 0,
+        'total_amount': float(total_amount or 0) / 100,
     }
 
 
@@ -46,17 +49,17 @@ def get_payment_stats(get_conn):
     """Return payment totals for dashboard cards."""
     with get_conn() as conn:
         due = conn.execute(
-            """SELECT COALESCE(SUM(p.due_amount),0) FROM payment_plans p
+            """SELECT COALESCE(SUM(p.due_amount_minor),0) FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
                WHERE p.confirm_status = 'confirmed' AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()[0]
         paid = conn.execute(
-            """SELECT COALESCE(SUM(p.paid_amount),0) FROM payment_plans p
+            """SELECT COALESCE(SUM(p.paid_amount_minor),0) FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
                WHERE p.confirm_status = 'confirmed' AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()[0]
         pending = conn.execute(
-            """SELECT COUNT(*), COALESCE(SUM(p.due_amount),0)
+            """SELECT COUNT(*), COALESCE(SUM(p.due_amount_minor),0)
                FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
                WHERE p.confirm_status = 'pending' AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
@@ -70,11 +73,11 @@ def get_payment_stats(get_conn):
                  AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()[0]
     return {
-        'total_due': due or 0,
-        'total_paid': paid or 0,
-        'total_unpaid': ((due or 0) - (paid or 0)),
+        'total_due': float(due or 0) / 100,
+        'total_paid': float(paid or 0) / 100,
+        'total_unpaid': float((due or 0) - (paid or 0)) / 100,
         'pending_count': pending[0] or 0,
-        'pending_amount': pending[1] or 0,
+        'pending_amount': float(pending[1] or 0) / 100,
         'pending_missing_date': pending_missing_date or 0,
     }
 
@@ -84,7 +87,7 @@ def get_monthly_payments(get_conn, year, month):
     ym = f'{year}-{month:02d}'
     with get_conn() as conn:
         row = conn.execute(
-            """SELECT COUNT(*), COALESCE(SUM(p.due_amount - COALESCE(p.paid_amount,0)),0)
+            """SELECT COUNT(*), COALESCE(SUM(p.due_amount_minor - COALESCE(p.paid_amount_minor,0)),0)
                FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
                WHERE (c.deleted_at = '' OR c.deleted_at IS NULL)
@@ -93,10 +96,10 @@ def get_monthly_payments(get_conn, year, month):
                  AND p.due_date LIKE ?""",
             (ym + '%',)
         ).fetchone()
-    return {'count': row[0], 'amount': row[1] or 0}
+    return {'count': row[0], 'amount': float(row[1] or 0) / 100}
 
 
-def get_expiring_contracts(get_conn, row_to_dict, days=30, today=None):
+def get_expiring_contracts(get_conn, row_to_dict, days=30, today=None, limit=0):
     """Return signed/active contracts expiring within N days."""
     today = today or date.today()
     end = today + timedelta(days=days)
@@ -108,13 +111,16 @@ def get_expiring_contracts(get_conn, row_to_dict, days=30, today=None):
           AND expiry_date >= ? AND expiry_date <= ?
         ORDER BY expiry_date
     """
+    params = [today.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')]
+    if limit:
+        sql += ' LIMIT ?'
+        params.append(max(1, int(limit)))
     with get_conn() as conn:
-        rows = conn.execute(sql, (
-            today.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [row_to_dict(r) for r in rows]
 
 
-def get_due_soon_payments(get_conn, row_to_dict, days=7, today=None):
+def get_due_soon_payments(get_conn, row_to_dict, days=7, today=None, limit=0):
     """Return confirmed unpaid payment plans due within N days."""
     today = today or date.today()
     end = today + timedelta(days=days)
@@ -130,9 +136,12 @@ def get_due_soon_payments(get_conn, row_to_dict, days=7, today=None):
           AND p.due_date >= ? AND p.due_date <= ?
         ORDER BY p.due_date
     """
+    params = [today.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')]
+    if limit:
+        sql += ' LIMIT ?'
+        params.append(max(1, int(limit)))
     with get_conn() as conn:
-        rows = conn.execute(sql, (
-            today.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [row_to_dict(r) for r in rows]
 
 

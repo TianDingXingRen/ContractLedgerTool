@@ -173,7 +173,7 @@
     var fid = parseInt(el.id.replace('calc_', ''));
     var formula = el.dataset.formula;
     var decimals = parseInt(el.dataset.decimals || 2);
-    var context = buildCalcContext(window.CT_fields || []);
+    var context = buildCalcContext((window.ContractEditor && window.ContractEditor.config.fields) || []);
     try {
       var result = safeEval(formula, context);
       if (typeof result === 'number') { result = result.toFixed(decimals); }
@@ -188,7 +188,7 @@
   }
 
   function triggerCalc(changedId) {
-    var fieldDefs = window.CT_fields || [];
+    var fieldDefs = (window.ContractEditor && window.ContractEditor.config.fields) || [];
     var changedField = fieldDefs.find(function (f) { return f.id === changedId; });
     if (!changedField || !changedField.key) return;
     var changedKey = changedField.key;
@@ -199,8 +199,10 @@
     });
   }
 
-  window.CT_safeEval = safeEval;
-  window.CT_recalcField = recalcField;
-  window.CT_recalcAllFields = recalcAllFields;
-  window.CT_triggerCalc = triggerCalc;
+  window.ContractFormulaEngine = Object.freeze({
+    safeEval: safeEval,
+    recalcField: recalcField,
+    recalcAllFields: recalcAllFields,
+    triggerCalc: triggerCalc,
+  });
 })();

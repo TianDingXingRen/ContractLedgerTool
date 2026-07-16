@@ -12,6 +12,8 @@ from decimal import Decimal
 
 from docx import Document
 
+from utils.field_utils import normalize_date
+
 # 付款计划提取上限（防止异常文档产生海量计划条目）
 MAX_EXTRACTED_PLANS = 30
 
@@ -282,7 +284,6 @@ def _extract_days(text):
 
 
 def _extract_date(text, sign_date=''):
-    from utils.helpers import normalize_date
     result = normalize_date(text)
     if result:
         return result

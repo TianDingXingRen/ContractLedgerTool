@@ -367,16 +367,16 @@ class OperationsUiTests(unittest.TestCase):
         self.assertIn('data-testid="editor-live-preview"', html)
         self.assertIn('contract-preview-page', html)
         self.assertIn('livePreviewSummary', html)
-        self.assertIn('window.CT_previewBlocks', html)
-        self.assertIn('window.CT_previewWarnings', html)
+        self.assertIn('id="contractEditorConfig"', html)
+        self.assertIn('"previewBlocks"', html)
+        self.assertIn('"previewWarnings"', html)
         self.assertIn('data-testid="editor-missing-fields"', html)
         self.assertIn('data-testid="editor-structure-list"', html)
         self.assertIn('id="fieldNavigator"', html)
         self.assertIn('data-filter="required"', html)
         self.assertIn('data-filter="calc"', html)
         self.assertIn('data-testid="generation-result"', html)
-        self.assertIn('window.CT_previewFields', html)
-        self.assertIn('context_before', html)
+        self.assertIn('"fields"', html)
         self.assertIn('生成设置', html)
         self.assertIn('/static/js/editor.js', html)
         editor_script = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js')
@@ -385,10 +385,10 @@ class OperationsUiTests(unittest.TestCase):
             self.assertIn('function showGenerationResult', editor_js)
             self.assertIn('function renderLivePreview', editor_js)
             self.assertIn('function bindAssistPanel', editor_js)
-        with open(os.path.join(app.RESOURCE_DIR, 'templates', 'editor.html'), 'r', encoding='utf-8') as f:
-            editor_html_source = f.read()
-        self.assertIn("data['_table_' + fid]", editor_html_source)
-        self.assertIn("data['_table_' + fid] || data['_table_data_' + fid]", editor_html_source)
+        with open(os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor-draft.js'), 'r', encoding='utf-8') as f:
+            editor_draft = f.read()
+        self.assertIn("data['_table_' + fid]", editor_draft)
+        self.assertIn("data['_table_' + fid] || data['_table_data_' + fid]", editor_draft)
         self.assertNotIn('window.location.href = result.detailUrl', html)
 
     def test_create_template_table_editor_uses_stacked_column_cards(self):
@@ -400,9 +400,12 @@ class OperationsUiTests(unittest.TestCase):
             finally:
                 response.close()
 
-        self.assertIn('col-default-wrap', html)
-        self.assertIn('col-formula-wrap', html)
-        self.assertIn('refreshColumnRemoveButtons', html)
+        builder_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'template-builder.js')
+        with open(builder_path, 'r', encoding='utf-8') as f:
+            builder = f.read()
+        self.assertIn('col-default-wrap', builder)
+        self.assertIn('col-formula-wrap', builder)
+        self.assertIn('refreshColumnRemoveButtons', builder)
         self.assertNotIn('max-w-2xl', html)
 
     def test_builder_preview_expands_with_page(self):

@@ -1,6 +1,14 @@
 """Award recommendation and contract-link persistence helpers."""
 
 import json
+from contextlib import nullcontext
+
+from .constants import (
+    AWARD_CONFIRMED_STATUS,
+    CONTRACT_CREATED_STATUS,
+    DEFAULT_CONTRACT_ROLLBACK_STATUS,
+    PROJECT_STATUSES,
+)
 
 
 def create_award_recommendation(
@@ -42,8 +50,8 @@ def create_award_recommendation(
             (project_id, recommendation_id),
         )
         conn.execute(
-            "UPDATE procurement_projects SET status = 'award_confirmed', updated_at = ? WHERE id = ?",
-            (now, project_id),
+            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
+            (AWARD_CONFIRMED_STATUS, now, project_id),
         )
         audit(conn, 'award_recommendation', recommendation_id, 'confirm', after=data)
         return recommendation_id
@@ -89,8 +97,8 @@ def create_split_award_recommendation(get_conn, audit, now_func, project_id, dat
             (project_id, recommendation_id),
         )
         conn.execute(
-            "UPDATE procurement_projects SET status = 'award_confirmed', updated_at = ? WHERE id = ?",
-            (now, project_id),
+            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
+            (AWARD_CONFIRMED_STATUS, now, project_id),
         )
         audit(
             conn, 'award_recommendation', recommendation_id, 'confirm_split',
@@ -169,9 +177,12 @@ def mark_data_sheet_in_editor(get_conn, now_func, sheet_id):
         )
 
 
-def complete_contract_link(get_conn, audit, now_func, sheet_id, contract_id):
+def complete_contract_link(
+    get_conn, audit, now_func, sheet_id, contract_id, *, connection=None
+):
     now = now_func()
-    with get_conn() as conn:
+    manager = nullcontext(connection) if connection is not None else get_conn()
+    with manager as conn:
         sheet = conn.execute(
             'SELECT * FROM contract_data_sheets WHERE id = ?', (sheet_id,)
         ).fetchone()
@@ -205,8 +216,8 @@ def complete_contract_link(get_conn, audit, now_func, sheet_id, contract_id):
             (now, sheet['recommendation_id']),
         )
         conn.execute(
-            "UPDATE procurement_projects SET status = 'contract_created', updated_at = ? WHERE id = ?",
-            (now, sheet['project_id']),
+            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
+            (CONTRACT_CREATED_STATUS, now, sheet['project_id']),
         )
         conn.execute(
             """INSERT OR IGNORE INTO procurement_contract_refs
@@ -223,10 +234,11 @@ def complete_contract_link(get_conn, audit, now_func, sheet_id, contract_id):
 
 def add_contract_ref(
     get_conn, audit, now_func, project_id, contract_id, source_type='direct_contract',
-    source_id=None,
+    source_id=None, *, connection=None,
 ):
     now = now_func()
-    with get_conn() as conn:
+    manager = nullcontext(connection) if connection is not None else get_conn()
+    with manager as conn:
         project = conn.execute(
             'SELECT * FROM procurement_projects WHERE id = ?', (project_id,)
         ).fetchone()
@@ -242,13 +254,54 @@ def add_contract_ref(
             (project_id, contract_id, source_type or 'direct_contract', source_id, now),
         )
         conn.execute(
-            "UPDATE procurement_projects SET status = 'contract_created', updated_at = ? WHERE id = ?",
-            (now, project_id),
+            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
+            (CONTRACT_CREATED_STATUS, now, project_id),
         )
         audit(
             conn, 'project', project_id, 'contract_ref_create',
             after={'contract_id': contract_id, 'source_type': source_type, 'source_id': source_id},
         )
+        return project['status']
+
+
+def remove_contract_ref(
+    get_conn, audit, now_func, project_id, contract_id, restore_status=None
+):
+    """Compensate a failed generation after a direct procurement link was created."""
+    now = now_func()
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM procurement_contract_refs WHERE project_id = ? AND contract_id = ?",
+            (project_id, contract_id),
+        )
+        if cur.rowcount == 0:
+            return 0
+
+        remaining = conn.execute(
+            """SELECT 1 FROM procurement_contract_refs WHERE project_id = ?
+               UNION ALL
+               SELECT 1 FROM project_contract_links WHERE project_id = ?
+               LIMIT 1""",
+            (project_id, project_id),
+        ).fetchone()
+        if not remaining:
+            target_status = (
+                restore_status
+                if restore_status in PROJECT_STATUSES
+                else DEFAULT_CONTRACT_ROLLBACK_STATUS
+            )
+            conn.execute(
+                """UPDATE procurement_projects
+                   SET status = CASE WHEN status = ? THEN ? ELSE status END,
+                       updated_at = ?
+                   WHERE id = ?""",
+                (CONTRACT_CREATED_STATUS, target_status, now, project_id),
+            )
+        audit(
+            conn, 'project', project_id, 'contract_ref_rollback',
+            before={'contract_id': contract_id},
+        )
+        return cur.rowcount
 
 
 def get_project_contract_links(get_conn, project_id):

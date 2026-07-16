@@ -6,6 +6,7 @@ def test_procurement_schema_module_exposes_init_parts():
     assert schema.SCHEMA_VERSION_INSERT_SQL.startswith('INSERT OR IGNORE')
     assert ('award_recommendations', 'is_split', 'INTEGER NOT NULL DEFAULT 0') in schema.V2_COLUMN_MIGRATIONS
     assert 'procurement_contract_refs' in schema.V3_CONTRACT_REFS_SQL
+    assert schema.CURRENT_SCHEMA_VERSION == 4
 
 
 def test_procurement_init_db_uses_extracted_schema(tmp_path):
@@ -65,7 +66,8 @@ def test_procurement_init_db_uses_extracted_schema(tmp_path):
         assert 'idx_procurement_contract_refs_project' in indexes
         assert {'is_split', 'supplier_summary'} <= award_columns
         assert {'supplier_id', 'quote_id'} <= item_columns
-        assert schema_version == 3
+        assert schema_version == procurement_store.schema.CURRENT_SCHEMA_VERSION
+        assert procurement_store.needs_migration() is False
     finally:
         ledger_store.close_connections()
         ledger_store.DATA_DIR = old_data_dir

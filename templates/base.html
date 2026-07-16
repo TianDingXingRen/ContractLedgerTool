@@ -3,16 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/svg+xml" href="{{ static_url('favicon.svg') }}">
-    <title>{% block title %}合同管理工具{% endblock %}</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ static_url('brand/procurement-platform-icon.png') }}">
+    <title>{% block title %}采购业务平台{% endblock %}</title>
     <link href="{{ static_url('css/app.min.css') }}" rel="stylesheet">
+    <script src="{{ static_url('js/api-client.js') }}"></script>
     <script src="{{ static_url('js/app-shell.js') }}"></script>
     <script defer src="{{ static_url('vendor/alpine.min.js') }}"></script>
     <script defer src="{{ static_url('js/icons.js') }}"></script>
     <link rel="stylesheet" href="{{ static_url('style.css') }}">
 </head>
 <body class="min-h-screen bg-base-200">
-<aside class="sp" id="sp"><div class="slw"><div class="sli">CT</div><a href="{{ url_for('index') }}" class="slt">合同生成工具</a></div>
+<aside class="sp" id="sp"><div class="slw"><a href="{{ url_for('index') }}" class="sli" aria-label="返回采购业务平台首页"><img src="{{ static_url('brand/procurement-platform-icon.png') }}" alt="" width="32" height="32"></a><a href="{{ url_for('index') }}" class="slt">采购业务平台</a></div>
 <nav class="snw">
 <div class="nsw"><div class="nst">主要功能</div>
 <a href="{{ url_for('index') }}" class="nl {{ 'act' if request.endpoint == 'index' }}"><i data-lucide="layout-grid"></i> 工作台</a>
@@ -35,7 +37,7 @@
 </aside>
 
 <div class="tf">
-<div style="display:flex;align-items:center;gap:12px"><button class="stb" onclick="document.getElementById('sp').classList.toggle('open')"><i data-lucide="menu" style="width:20px;height:20px"></i></button><div class="tbr">合同生成工具 / <strong>{% block breadcrumb %}工作台{% endblock %}</strong></div></div>
+<div style="display:flex;align-items:center;gap:12px"><button class="stb" type="button" data-shell-action="toggle-sidebar"><i data-lucide="menu" style="width:20px;height:20px"></i></button><div class="tbr">采购业务平台 / <strong>{% block breadcrumb %}工作台{% endblock %}</strong></div></div>
 <div style="display:flex;align-items:center;gap:8px"><button class="bgx" title="切换暗色模式" @click="theme = theme === 'light' ? 'dark' : 'light'"><i :data-lucide="theme === 'light' ? 'moon' : 'sun'" style="width:15px;height:15px"></i></button><a href="{{ url_for('diagnostics') }}" class="bgx"><i data-lucide="info" style="width:15px;height:15px"></i></a></div>
 </div>
 <div class="ma">

@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 
 from utils.logger import get_logger
@@ -12,9 +13,21 @@ from utils.constants import (
 )
 from . import backups as backup_ops
 from . import dashboard_queries
+from . import document_paths
+from . import generation_jobs
 from . import list_queries
+from . import money_fields
 from . import project_reports
-from .schema import LEDGER_INDEX_SQL, LEDGER_TABLE_SQL, MIGRATIONS, SCHEMA_VERSION_SQL
+from .schema import (
+    CURRENT_SCHEMA_VERSION,
+    DOCUMENT_PATH_MIGRATION_VERSION,
+    FRESH_DATABASE_INDEX_SQL,
+    LEDGER_INDEX_SQL,
+    LEDGER_TABLE_SQL,
+    MIGRATION_BACKFILLS,
+    MIGRATIONS,
+    SCHEMA_VERSION_SQL,
+)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -51,6 +64,8 @@ def _backup_dir():
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 DB_PATH = os.path.join(DATA_DIR, 'contracts.db')
 BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
+
+_ACTIVE_CONNECTION = ContextVar('ledger_active_connection', default=None)
 
 # 所有允许的状态值（从 Enum 自动导出）
 CONTRACT_STATUSES = {s.value for s in ContractStatus}
@@ -95,11 +110,60 @@ def _validate_choice(value, allowed, label):
     return value
 
 
+def _runtime_base_dir():
+    return document_paths.runtime_base_dir(DATA_DIR, DB_PATH)
+
+
+def portable_docx_path(path):
+    """Return a runtime-relative path when the document belongs to this install."""
+    return document_paths.to_portable(path, _runtime_base_dir())
+
+
+def resolve_docx_path(path):
+    """Resolve stored relative paths and rebase legacy absolute output paths."""
+    return document_paths.resolve(path, _runtime_base_dir())
+
+
+def create_generation_job(job_id, output_path, staging_path):
+    return generation_jobs.create(
+        get_conn, portable_docx_path, job_id, output_path, staging_path
+    )
+
+
+def update_generation_job(job_id, state, **kwargs):
+    return generation_jobs.update(get_conn, job_id, state, **kwargs)
+
+
+def get_generation_job(job_id):
+    return generation_jobs.get(get_conn, job_id)
+
+
+def list_unfinished_generation_jobs():
+    return generation_jobs.list_unfinished(get_conn)
+
+
+def get_generation_job_state_counts():
+    return generation_jobs.state_counts(get_conn)
+
+
+def _amount_pair(value, *, allow_none=True):
+    return money_fields.amount_pair(value, allow_none=allow_none)
+
+
+def _normalize_docx_paths_in_db(conn):
+    return document_paths.normalize_contract_paths(conn, _runtime_base_dir())
+
+
 @contextmanager
 def get_conn():
+    active = _ACTIVE_CONNECTION.get()
+    if active is not None:
+        yield active
+        return
     os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute('PRAGMA foreign_keys = ON')
+    conn.execute('PRAGMA busy_timeout = 30000')
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -112,13 +176,22 @@ def get_conn():
 
 
 def init_db():
+    fresh_database = not os.path.isfile(DB_PATH) or os.path.getsize(DB_PATH) == 0
     with get_conn() as conn:
         conn.executescript(LEDGER_TABLE_SQL)
         _ensure_legacy_contract_columns(conn)
         conn.executescript(LEDGER_INDEX_SQL)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute(SCHEMA_VERSION_SQL)
-    # 确保迁移在 init 后立即执行
+        if fresh_database:
+            conn.executescript(FRESH_DATABASE_INDEX_SQL)
+            conn.execute(
+                'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
+                (CURRENT_SCHEMA_VERSION, _now()),
+            )
+            return
+    # Existing databases are upgraded only after the compatibility columns and
+    # base indexes required by the migration runner are available.
     run_migrations()
 
 
@@ -181,6 +254,50 @@ def _deduplicate_contract_numbers(conn):
             )
 
 
+def get_schema_version():
+    """Return the installed ledger schema version without changing the database."""
+    if not os.path.isfile(DB_PATH) or os.path.getsize(DB_PATH) == 0:
+        return 0
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
+        ).fetchone()
+        if not table:
+            return 0
+        row = conn.execute('SELECT MAX(version) FROM schema_version').fetchone()
+        return int(row[0] or 0) if row else 0
+    finally:
+        conn.close()
+
+
+@contextmanager
+def read_snapshot():
+    """Reuse one query-only SQLite snapshot across nested store calls."""
+    active = _ACTIVE_CONNECTION.get()
+    if active is not None:
+        yield active
+        return
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute('PRAGMA foreign_keys = ON')
+    conn.execute('PRAGMA busy_timeout = 30000')
+    conn.execute('PRAGMA query_only = ON')
+    conn.row_factory = sqlite3.Row
+    conn.execute('BEGIN')
+    token = _ACTIVE_CONNECTION.set(conn)
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        _ACTIVE_CONNECTION.reset(token)
+        conn.close()
+
+
+def needs_migration():
+    return get_schema_version() < CURRENT_SCHEMA_VERSION
+
+
 def run_migrations():
     # 先读取当前版本（只读，不需要事务保护）
     with get_conn() as conn:
@@ -189,10 +306,12 @@ def run_migrations():
         current = row[0] if row and row[0] is not None else 0
 
     # 每个迁移版本使用独立事务，避免后续版本失败时回滚已成功的迁移
-    for version, forward_sql, rollback_sql in MIGRATIONS:
+    for version, forward_sql, _rollback_sql in MIGRATIONS:
         if version <= current:
             continue
         with get_conn() as conn:
+            savepoint = f'ledger_migration_v{version}'
+            conn.execute(f'SAVEPOINT {savepoint}')
             try:
                 if version == 8:
                     _deduplicate_contract_numbers(conn)
@@ -204,18 +323,20 @@ def run_migrations():
                 else:
                     raise
             except Exception as e:
+                conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                conn.execute(f'RELEASE SAVEPOINT {savepoint}')
                 get_logger().error('数据库迁移 v%d 失败: %s', version, e)
-                if rollback_sql:
-                    try:
-                        conn.execute(rollback_sql)
-                        get_logger().warning('已回滚迁移 v%d', version)
-                    except Exception as rb_e:
-                        get_logger().error('回滚迁移 v%d 失败: %s', version, rb_e)
                 raise
+            backfill_sql = MIGRATION_BACKFILLS.get(version)
+            if backfill_sql:
+                conn.execute(backfill_sql)
+            if version == DOCUMENT_PATH_MIGRATION_VERSION:
+                _normalize_docx_paths_in_db(conn)
             conn.execute(
                 'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
                 (version, _now()),
             )
+            conn.execute(f'RELEASE SAVEPOINT {savepoint}')
 
 
 def close_connections():
@@ -233,7 +354,10 @@ def close_connections():
 # ── Backup ──
 
 def get_all_docx_paths():
-    return backup_ops.get_all_docx_paths(get_conn, DB_PATH)
+    return [
+        resolve_docx_path(path)
+        for path in backup_ops.get_all_docx_paths(get_conn, DB_PATH)
+    ]
 
 
 def _check_db_integrity(quick=True):
@@ -257,11 +381,21 @@ def backup_path(filename):
 
 
 def restore_backup(filename):
-    return backup_ops.restore_backup(DB_PATH, DATA_DIR, BACKUP_DIR, filename, create_backup)
+    close_connections()
+    restored = backup_ops.restore_backup(
+        DB_PATH, DATA_DIR, BACKUP_DIR, filename, create_backup
+    )
+    init_db()
+    return restored
 
 
 def row_to_dict(row):
-    return dict(row) if row is not None else None
+    result = money_fields.with_public_amounts(row)
+    if result is None:
+        return None
+    if 'docx_path' in result:
+        result['docx_path'] = resolve_docx_path(result.get('docx_path'))
+    return result
 
 
 def create_contract(summary, field_values, docx_path):
@@ -274,50 +408,60 @@ def create_contract(summary, field_values, docx_path):
     return contract_id
 
 
-def create_contract_with_plans(summary, field_values, docx_path, plans):
+def _create_contract_with_plans_impl(conn, summary, field_values, docx_path, plans):
+    now = _now()
+    status = _validate_choice(summary.get('status') or 'draft', CONTRACT_STATUSES, '合同状态')
+    values_json = json.dumps(field_values or {}, ensure_ascii=False, default=str)
+    amount_minor, amount = _amount_pair(summary.get('amount'))
+    stored_docx_path = portable_docx_path(docx_path)
+    cur = conn.execute(
+        """
+        INSERT INTO contracts (
+            contract_no, title, counterparty, amount, amount_minor, sign_date, owner,
+            status, template_name, docx_path, values_json, expiry_date,
+            project_name, coverage_start, coverage_end, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            summary.get('contract_no'),
+            summary.get('title') or '未命名合同',
+            summary.get('counterparty'),
+            amount,
+            amount_minor,
+            summary.get('sign_date'),
+            summary.get('owner'),
+            status,
+            summary.get('template_name'),
+            stored_docx_path,
+            values_json,
+            summary.get('expiry_date') or '',
+            summary.get('project_name') or '',
+            summary.get('coverage_start'),
+            summary.get('coverage_end'),
+            now,
+            now,
+        ),
+    )
+    contract_id = cur.lastrowid
+    for plan in plans or []:
+        _insert_payment_plan_impl(conn, contract_id, plan)
+    return contract_id, len(plans or [])
+
+
+def create_contract_with_plans(summary, field_values, docx_path, plans, conn=None):
     """在单个事务中创建合同并批量插入付款计划，保证原子性。
 
     返回 (contract_id, plan_count)。
     """
-    now = _now()
-    status = _validate_choice(summary.get('status') or 'draft', CONTRACT_STATUSES, '合同状态')
-    values_json = json.dumps(field_values or {}, ensure_ascii=False, default=str)
     try:
-        with get_conn() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO contracts (
-                    contract_no, title, counterparty, amount, sign_date, owner,
-                    status, template_name, docx_path, values_json, expiry_date,
-                    project_name, coverage_start, coverage_end, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    summary.get('contract_no'),
-                    summary.get('title') or '未命名合同',
-                    summary.get('counterparty'),
-                    summary.get('amount'),
-                    summary.get('sign_date'),
-                    summary.get('owner'),
-                    status,
-                    summary.get('template_name'),
-                    docx_path,
-                    values_json,
-                    summary.get('expiry_date') or '',
-                    summary.get('project_name') or '',
-                    summary.get('coverage_start'),
-                    summary.get('coverage_end'),
-                    now,
-                    now,
-                ),
+        if conn is not None:
+            return _create_contract_with_plans_impl(
+                conn, summary, field_values, docx_path, plans
             )
-            contract_id = cur.lastrowid
-            plan_count = 0
-            if plans:
-                for plan in plans:
-                    _insert_payment_plan_impl(conn, contract_id, plan)
-                    plan_count += 1
-            return contract_id, plan_count
+        with get_conn() as managed_conn:
+            return _create_contract_with_plans_impl(
+                managed_conn, summary, field_values, docx_path, plans
+            )
     except sqlite3.IntegrityError as e:
         if 'contract_no' in str(e).lower() or 'idx_contracts_contract_no_unique' in str(e).lower():
             raise ValueError('合同编号已存在') from e
@@ -331,6 +475,12 @@ def update_contract(contract_id, data):
         if key in data:
             if key == 'status':
                 data[key] = _validate_choice(data[key], CONTRACT_STATUSES, '合同状态')
+            if key == 'amount':
+                amount_minor, amount = _amount_pair(data[key])
+                data[key] = amount
+                assignments.extend(['amount = ?', 'amount_minor = ?'])
+                values.extend([amount, amount_minor])
+                continue
             assignments.append(f'{key} = ?')
             values.append(data[key])
     if not assignments:
@@ -402,6 +552,14 @@ def list_contracts(q='', status='', page=1, per_page=20, include_deleted=False, 
     )
 
 
+def iter_contracts(q='', status='', batch_size=500, include_deleted=False,
+                   deleted_only=False):
+    return list_queries.iter_contracts(
+        get_conn, row_to_dict, q=q, status=status, batch_size=batch_size,
+        include_deleted=include_deleted, deleted_only=deleted_only,
+    )
+
+
 def list_project_names():
     """Return existing project names, most recently updated first."""
     return project_reports.list_project_names(get_conn)
@@ -455,10 +613,11 @@ def _insert_payment_plan_impl(conn, contract_id, plan):
         """
         INSERT INTO payment_plans (
             contract_id, phase_name, payment_type, trigger_event, trigger_days,
-            expected_trigger_date, due_date, ratio, due_amount, paid_amount,
+            expected_trigger_date, due_date, ratio, due_amount, due_amount_minor,
+            paid_amount, paid_amount_minor,
             paid_date, condition_text, source_text, confidence, confirm_status,
             payment_status, remark, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             contract_id,
@@ -470,7 +629,9 @@ def _insert_payment_plan_impl(conn, contract_id, plan):
             plan.get('due_date'),
             plan.get('ratio'),
             plan.get('due_amount'),
+            plan.get('due_amount_minor'),
             plan.get('paid_amount') or 0,
+            plan.get('paid_amount_minor') or 0,
             plan.get('paid_date'),
             plan.get('condition_text'),
             plan.get('source_text'),
@@ -487,26 +648,11 @@ def _insert_payment_plan_impl(conn, contract_id, plan):
 
 def _normalize_payment_consistency(plan):
     """校验金额/日期关系，并由金额统一推导付款状态。"""
-    row = dict(plan)
-    due_amount = row.get('due_amount')
-    paid_amount = row.get('paid_amount') or 0
-    if due_amount is not None and due_amount < 0:
-        raise ValueError('应付金额不能为负数')
-    if paid_amount < 0:
-        raise ValueError('已付金额不能为负数')
-    if due_amount is not None and paid_amount > due_amount:
-        raise ValueError('已付金额不能大于应付金额')
-    if paid_amount > 0 and not str(row.get('paid_date') or '').strip():
-        raise ValueError('填写已付金额后必须填写实付日期')
+    return money_fields.normalize_payment_consistency(plan)
 
-    if paid_amount <= 0:
-        row['payment_status'] = 'unpaid'
-        row['paid_date'] = ''
-    elif due_amount is not None and paid_amount >= due_amount:
-        row['payment_status'] = 'paid'
-    else:
-        row['payment_status'] = 'partial'
-    return row
+
+def _append_plan_assignment(assignments, values, key, row):
+    money_fields.append_plan_assignment(assignments, values, key, row)
 
 
 def save_payment_plan_changes(contract_id, changes):
@@ -528,17 +674,25 @@ def save_payment_plan_changes(contract_id, changes):
                         raise ValueError('付款计划不存在或不属于当前合同')
                 continue
 
-            row = _normalize_payment_consistency(change.get('data') or {})
+            incoming = change.get('data') or {}
             if plan_id:
+                existing = conn.execute(
+                    'SELECT * FROM payment_plans WHERE id = ? AND contract_id = ?',
+                    (plan_id, contract_id),
+                ).fetchone()
+                if not existing:
+                    raise ValueError('付款计划不存在或不属于当前合同')
+                row = row_to_dict(existing)
+                row.update(incoming)
+                row = _normalize_payment_consistency(row)
                 assignments = []
                 values = []
                 for key in PLAN_UPDATE_FIELDS:
-                    if key not in row:
+                    if key not in incoming and key not in {'payment_status', 'paid_date'}:
                         continue
                     if key in PLAN_FIELD_VALIDATORS:
                         row[key] = _validate_choice(row[key], *PLAN_FIELD_VALIDATORS[key])
-                    assignments.append(f'{key} = ?')
-                    values.append(row[key])
+                    _append_plan_assignment(assignments, values, key, row)
                 assignments.append('updated_at = ?')
                 values.extend([_now(), plan_id, contract_id])
                 cur = conn.execute(
@@ -549,17 +703,18 @@ def save_payment_plan_changes(contract_id, changes):
                 if cur.rowcount == 0:
                     raise ValueError('付款计划不存在或不属于当前合同')
             else:
+                row = _normalize_payment_consistency(incoming)
                 _insert_payment_plan_impl(conn, contract_id, row)
 
 
 def list_payment_plans(contract_id=None, confirm_status='', payment_status='',
                        start_date='', end_date='', project_name='', page=0,
-                       per_page=20):
+                       per_page=20, limit=0):
     return list_queries.list_payment_plans(
         get_conn, row_to_dict, contract_id=contract_id,
         confirm_status=confirm_status, payment_status=payment_status,
         start_date=start_date, end_date=end_date, project_name=project_name,
-        page=page, per_page=per_page,
+        page=page, per_page=per_page, limit=limit,
     )
 
 
@@ -593,7 +748,7 @@ def update_payment_plan(plan_id, data, contract_id=None):
         ).fetchone()
         if not existing:
             return 0
-        merged = dict(existing)
+        merged = row_to_dict(existing)
         merged.update({key: data[key] for key in PLAN_UPDATE_FIELDS if key in data})
         merged = _normalize_payment_consistency(merged)
         assignments = []
@@ -603,8 +758,7 @@ def update_payment_plan(plan_id, data, contract_id=None):
                 continue
             if key in PLAN_FIELD_VALIDATORS:
                 merged[key] = _validate_choice(merged[key], *PLAN_FIELD_VALIDATORS[key])
-            assignments.append(f'{key} = ?')
-            values.append(merged[key])
+            _append_plan_assignment(assignments, values, key, merged)
         assignments.append('updated_at = ?')
         values.append(_now())
         values.extend(lookup_values)
@@ -652,7 +806,7 @@ def batch_mark_plans_paid(plan_ids, paid_date):
             ).fetchone()
             if not row:
                 continue
-            plan = dict(row)
+            plan = row_to_dict(row)
             due_amount = plan.get('due_amount')
             if due_amount is None:
                 continue
@@ -663,11 +817,11 @@ def batch_mark_plans_paid(plan_ids, paid_date):
             })
             cur = conn.execute(
                 """UPDATE payment_plans
-                   SET paid_amount = ?, paid_date = ?, payment_status = ?,
+                   SET paid_amount = ?, paid_amount_minor = ?, paid_date = ?, payment_status = ?,
                        updated_at = ?
                    WHERE id = ?""",
                 (
-                    updated['paid_amount'], updated['paid_date'],
+                    updated['paid_amount'], updated['paid_amount_minor'], updated['paid_date'],
                     updated['payment_status'], now, plan_id,
                 ),
             )
@@ -706,14 +860,18 @@ def get_monthly_payments(year, month):
     return dashboard_queries.get_monthly_payments(get_conn, year, month)
 
 
-def get_expiring_contracts(days=30):
+def get_expiring_contracts(days=30, limit=0):
     """获取 N 天内到期的合同（已签订/履行中，未软删除）"""
-    return dashboard_queries.get_expiring_contracts(get_conn, row_to_dict, days)
+    return dashboard_queries.get_expiring_contracts(
+        get_conn, row_to_dict, days, limit=limit
+    )
 
 
-def get_due_soon_payments(days=7):
+def get_due_soon_payments(days=7, limit=0):
     """N 天内到期、已确认、未付清的付款计划"""
-    return dashboard_queries.get_due_soon_payments(get_conn, row_to_dict, days)
+    return dashboard_queries.get_due_soon_payments(
+        get_conn, row_to_dict, days, limit=limit
+    )
 
 
 def get_recent_contracts(limit=5):

@@ -1,6 +1,6 @@
 /**
  * editor.js - 合同填写页面的表格编辑器和交互逻辑
- * 由 editor.html 加载，依赖 window.CT_fields 等全局变量
+ * 核心编辑行为；启动配置、草稿、API、表格事件与预览入口由独立模块提供。
  */
 'use strict';
 
@@ -8,11 +8,11 @@
     var assistRenderQueued = false;
 
     function getPreviewFields() {
-        return window.CT_previewFields || window.CT_fields || [];
+        return editorConfig.fields || [];
     }
 
     function getPreviewBlocks() {
-        return window.CT_previewBlocks || [];
+        return editorConfig.previewBlocks || [];
     }
 
     function normalizeFieldId(id) {
@@ -600,12 +600,12 @@
         cols.forEach(function(col, ci) {
             html += '<th class="bg-base-200">';
             html += '<span class="th-wrap inline-flex items-center gap-1">';
-            html += '<input type="text" class="th-input input input-ghost input-xs w-20 font-semibold" value="' + escapeHtml(col.label) + '" onchange="updateColumnLabel(' + fid + ',' + ci + ',this.value)">';
+            html += '<input type="text" class="th-input input input-ghost input-xs w-20 font-semibold" value="' + escapeHtml(col.label) + '" data-editor-action="column-label" data-field-id="' + fid + '" data-column-index="' + ci + '">';
             html += '<code class="var-code table-var-code badge badge-xs font-mono">' + escapeHtml(col.key || ('col_' + ci)) + '</code>';
             if (col.field_type === 'calculated') {
                 html += ' <span class="calc-tag badge badge-warning badge-xs">自动</span>';
             }
-            html += '<button type="button" class="th-del-btn btn btn-ghost btn-xs px-1 text-base-content/30 hover:text-error" onclick="removeTableColumnAt(' + fid + ',' + ci + ')">&times;</button>';
+            html += '<button type="button" class="th-del-btn btn btn-ghost btn-xs px-1 text-base-content/30 hover:text-error" data-editor-action="remove-column-at" data-field-id="' + fid + '" data-column-index="' + ci + '">&times;</button>';
             html += '</span></th>';
         });
         html += '<th class="row-action-col w-10"></th></tr>';
@@ -690,7 +690,7 @@
         });
         syncColumnsInput(fid);
         scheduleAssistRender();
-        if (window.CT_scheduleDraftSave) window.CT_scheduleDraftSave();
+        if (typeof scheduleDraftSave === 'function') scheduleDraftSave();
     }
 
     function generateColumnKey(fid) {
@@ -768,7 +768,7 @@
         });
         // Delete button
         const actionTd = document.createElement('td');
-        actionTd.innerHTML = '<button type="button" class="btn btn-ghost btn-xs text-error" onclick="removeThisRow(this)"><i data-lucide="x" class="w-3 h-3"></i></button>';
+        actionTd.innerHTML = '<button type="button" class="btn btn-ghost btn-xs text-error" data-editor-action="remove-this-row"><i data-lucide="x" class="w-3 h-3"></i></button>';
         tr.appendChild(actionTd);
         tbody.appendChild(tr);
         // icons auto-rendered by icons.js
@@ -845,7 +845,7 @@
         document.getElementById('table_data_' + fid).value = JSON.stringify(rows);
         if (typeof triggerCalc === 'function') triggerCalc(fid);
         scheduleAssistRender();
-        if (window.CT_scheduleDraftSave) window.CT_scheduleDraftSave();
+        if (typeof scheduleDraftSave === 'function') scheduleDraftSave();
     }
 
     // ── Excel 粘贴支持：将表格 cell input 的 paste 事件拦截并分发到多单元格 ──
@@ -921,9 +921,9 @@
     });
 
     // ── Calculated fields (from formula-engine.js) ──
-    var baseTriggerCalc = window.CT_triggerCalc;
-    var baseRecalcField = window.CT_recalcField;
-    var baseRecalcAllFields = window.CT_recalcAllFields;
+    var baseTriggerCalc = window.ContractFormulaEngine.triggerCalc;
+    var baseRecalcField = window.ContractFormulaEngine.recalcField;
+    var baseRecalcAllFields = window.ContractFormulaEngine.recalcAllFields;
 
     function triggerCalc(changedId) {
         if (typeof baseTriggerCalc === 'function') baseTriggerCalc(changedId);
@@ -945,7 +945,7 @@
     }
 
     // ── Safe eval (from formula-engine.js) ──
-    var safeEval = window.CT_safeEval;
+    var safeEval = window.ContractFormulaEngine.safeEval;
 
     // ── Save defaults ──
     document.getElementById('saveDefaultsBtn').addEventListener('click', function() {
@@ -956,16 +956,7 @@
         });
         btn.disabled = true;
         btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> 保存中…';
-        fetch(window.CT_saveDefaultsUrl, {
-            method: 'POST',
-            body: new FormData(document.getElementById('editorForm'))
-        })
-        .then(function(response) {
-            return response.json().then(function(data) {
-                if (!response.ok || !data.success) throw new Error(data.message || '保存失败');
-                return data;
-            });
-        })
+        window.ContractEditor.generation.saveDefaults(document.getElementById('editorForm'))
         .then(function(data) { showToast(data.message || '预制内容已保存', 'success'); })
         .catch(function(err) { showToast(err.message || '保存失败', 'error'); console.error(err); })
         .finally(function() { btn.disabled = false; btn.innerHTML = originalText; });
@@ -974,29 +965,11 @@
     var pendingPreflight = null;
 
     function generationActionUrl(isBatch, form) {
-        return isBatch ? window.CT_generateBatchUrl : form.action;
+        return isBatch ? editorConfig.urls.generateBatch : form.action;
     }
 
     function runPreflight(form, isBatch) {
-        var formData = new FormData(form);
-        formData.append('_generation_mode', isBatch ? 'batch' : 'single');
-        return fetch(window.CT_generatePreflightUrl, { method: 'POST', body: formData })
-            .then(function(response) {
-                return response.text().then(function(text) {
-                    var payload;
-                    try {
-                        payload = JSON.parse(text || '{}');
-                    } catch(e) {
-                        payload = {
-                            ok: false,
-                            blocking: [text.substring(0, 300) || '生成前复核失败'],
-                            warnings: []
-                        };
-                    }
-                    payload._statusOk = response.ok;
-                    return payload;
-                });
-            });
+        return window.ContractEditor.generation.preflight(form, isBatch);
     }
 
     function listHtml(items) {
@@ -1060,7 +1033,7 @@
         setGenerating(btn, '<span class="loading loading-spinner"></span> 生成中…');
         overlay.classList.add('active');
 
-        fetch(actionUrl, { method: 'POST', body: formData })
+        window.ContractEditor.generation.generate(actionUrl, formData)
         .then(function(response) {
             if (!response.ok) {
                 return response.text().then(function(text) {
@@ -1080,6 +1053,8 @@
             var pdfUrl = response.headers.get('X-PDF-Url') || '';
             var genErrors = response.headers.get('X-Generation-Errors') || '';
             var ledgerError = response.headers.get('X-Ledger-Error') || '';
+            try { genErrors = decodeURIComponent(genErrors); } catch(e) {}
+            try { ledgerError = decodeURIComponent(ledgerError); } catch(e) {}
             var filename = isZip ? '批量合同.zip' : '合同.docx';
             var match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s"']+)/i);
             if (match) { try { filename = decodeURIComponent(match[1]); } catch(e) {} }
@@ -1234,8 +1209,8 @@
         currentGeneratedUrl = blobUrl;
 
         // 清除草稿（生成成功后无需保留）
-        if (typeof window.clearDraft === 'function') {
-            window.clearDraft();
+        if (window.ContractEditor.draft) {
+            window.ContractEditor.draft.clear();
         }
 
         const panel = document.getElementById('generationResultPanel');
@@ -1274,7 +1249,7 @@
         document.getElementById('generationResultPanel').classList.add('hidden');
     });
 
-    Object.assign(window, {
+    window.ContractEditor.core = Object.freeze({
         onFieldChange,
         updateProgress,
         bindEditorFilters,

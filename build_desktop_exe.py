@@ -20,6 +20,7 @@ DESKTOP = Path(os.environ['USERPROFILE']) / 'Desktop'
 RES_DIR = ROOT / 'build' / 'desktop_exe_resources'
 EXE_NAME = 'ContractLedgerTool'
 OUTPUT_DIR = ROOT / 'dist' / 'desktop_exe'
+ICON_PATH = ROOT / 'design' / 'icon-options' / 'app-icon.ico'
 
 
 def build_exe():
@@ -33,6 +34,7 @@ def build_exe():
 
     cmd = build_pyinstaller_cmd(
         ROOT / 'app.py', EXE_NAME, dist_path, work_path, spec_path, RES_DIR,
+        icon_path=ICON_PATH,
     )
     print('\n[build] PyInstaller --onefile ...')
     subprocess.check_call(cmd, cwd=str(ROOT))
@@ -63,25 +65,25 @@ def main():
     for s in manifest['skipped']:
         print(f'  [skip] {s}')
 
-    print(f'\n[2/3] Building with PyInstaller ...')
+    print('\n[2/3] Building with PyInstaller ...')
     exe_path = build_exe()
     exe_size = round(exe_path.stat().st_size / (1024 * 1024), 2)
     print(f'  -> {exe_path} ({exe_size} MB)')
 
-    print(f'\n[3/3] Copying to Desktop ...')
+    print('\n[3/3] Copying to Desktop ...')
     dest_path, dest_size = copy_to_desktop(exe_path, manifest['version'])
 
     shutil.rmtree(RES_DIR, ignore_errors=True)
 
     print(f'\n{"=" * 55}')
-    print(f'  Done!  EXE on Desktop:')
+    print('  Done!  EXE on Desktop:')
     print(f'  {dest_path}')
     print(f'  Size: {dest_size:.1f} MB')
-    print(f'')
-    print(f'  Usage:')
+    print()
+    print('  Usage:')
     print(f'  1. Double-click {dest_path.name}')
-    print(f'  2. Server starts, browser opens http://127.0.0.1:5000/')
-    print(f'  3. Close console window to stop')
+    print('  2. Server starts, browser opens http://127.0.0.1:5000/')
+    print('  3. Close console window to stop')
     print(f'{"=" * 55}')
     print(f'\n  Included: {len(manifest["templates"])} templates, {len(manifest["uploads"])} source docs')
     if manifest['skipped']:

@@ -256,12 +256,8 @@ def parse_contract_classification(form):
     }
 
 
-def create_ledger_record(tpl, fields, field_values, output_path, classification=None):
-    """创建合同台账记录（合同 + 付款计划在同一事务中完成）。
-
-    先提取付款计划文本（DOCX 读取在事务外完成），
-    然后在单个数据库事务中创建合同记录和付款计划。
-    """
+def prepare_ledger_record(tpl, fields, field_values, document_path, classification=None):
+    """Build the ledger summary and extracted plans without opening a transaction."""
     summary = infer_contract_summary(tpl, fields, field_values)
     if classification:
         summary.update({
@@ -271,18 +267,29 @@ def create_ledger_record(tpl, fields, field_values, output_path, classification=
         })
     # 付款计划提取在事务外完成（需要读取 DOCX 文件）
     try:
-        doc_text = payment_extractor.extract_docx_text(output_path)
+        doc_text = payment_extractor.extract_docx_text(document_path)
         plans = payment_extractor.extract_payment_plans(
             doc_text,
             contract_amount=summary.get('amount'),
             sign_date=summary.get('sign_date') or '',
         )
     except Exception:
-        get_logger().error('Payment text extraction failed for %s', output_path, exc_info=True)
+        get_logger().error('Payment text extraction failed for %s', document_path, exc_info=True)
         plans = []
+    return summary, plans
+
+
+def create_ledger_record(
+    tpl, fields, field_values, output_path, classification=None, *, conn=None,
+    document_path=None,
+):
+    """Create one contract and its payment plans in the supplied transaction."""
+    summary, plans = prepare_ledger_record(
+        tpl, fields, field_values, document_path or output_path, classification
+    )
     # 合同创建与付款计划插入在同一事务中完成
     contract_id, plan_count = ledger_store.create_contract_with_plans(
-        summary, field_values, output_path, plans,
+        summary, field_values, output_path, plans, conn=conn,
     )
     if plan_count:
         get_logger().info('Created contract %d with %d payment plans', contract_id, plan_count)

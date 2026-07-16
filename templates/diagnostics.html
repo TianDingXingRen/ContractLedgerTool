@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}诊断信息 - 合同管理工具{% endblock %}
+{% block title %}诊断信息 - 采购业务平台{% endblock %}
 {% block breadcrumb %}diagnostics{% endblock %}
 {% block content %}
 
@@ -96,6 +96,23 @@
 
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">
         <div class="flex items-center justify-between gap-2 mb-3">
+            <h3 class="font-semibold text-sm">生成完整性</h3>
+            <span id="generationIntegrityBadge"
+                  class="badge badge-sm {{ 'badge-success' if diagnostics.generation_integrity.ok else 'badge-warning' }}">
+                {{ '正常' if diagnostics.generation_integrity.ok else '需检查' }}
+            </span>
+        </div>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt class="text-base-content/50">未完成任务</dt><dd data-diagnostics-field="generation-unfinished">{{ diagnostics.generation_integrity.unfinished }}</dd>
+            <dt class="text-base-content/50">需人工处理</dt><dd data-diagnostics-field="generation-attention">{{ diagnostics.generation_integrity.attention }}</dd>
+            <dt class="text-base-content/50">已自动恢复</dt><dd data-diagnostics-field="generation-recovered">{{ diagnostics.generation_integrity.recovered }}</dd>
+            <dt class="text-base-content/50">缺失文档</dt><dd data-diagnostics-field="generation-missing">{{ diagnostics.generation_integrity.missing_documents }}</dd>
+            <dt class="text-base-content/50">暂存文件</dt><dd data-diagnostics-field="generation-staging">{{ diagnostics.generation_integrity.staging_files }}</dd>
+        </dl>
+    </section>
+
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4">
+        <div class="flex items-center justify-between gap-2 mb-3">
             <h3 class="font-semibold text-sm">PDF 支持</h3>
             <button type="button" class="btn btn-ghost btn-xs" id="pdfCheckBtn">重新检测 PDF</button>
         </div>
@@ -116,98 +133,7 @@
     {% endif %}
 </section>
 
-<script id="diagnosticsPayload" type="application/json">{{ diagnostics|tojson }}</script>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    let payload = JSON.parse(document.getElementById('diagnosticsPayload').textContent || '{}');
-    const toast = document.getElementById('diagnosticsToast');
-
-    function showMessage(message, type) {
-        toast.textContent = message;
-        toast.className = 'alert mb-3 text-sm ' + (type === 'error' ? 'alert-error' : 'alert-success');
-        toast.classList.remove('hidden');
-        window.setTimeout(function() { toast.classList.add('hidden'); }, 2600);
-    }
-
-    function diagnosticsText(data) {
-        return JSON.stringify(data, null, 2);
-    }
-
-    document.getElementById('copyDiagnosticsBtn').addEventListener('click', function() {
-        const text = diagnosticsText(payload);
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(function() {
-                showMessage('诊断信息已复制', 'success');
-            }).catch(function() {
-                showMessage('复制失败，请使用浏览器手动复制页面内容', 'error');
-            });
-        } else {
-            showMessage('当前浏览器不支持自动复制', 'error');
-        }
-    });
-
-    function applyDiagnostics(data) {
-        payload = data;
-        const autostart = data.autostart || {};
-        const badge = document.getElementById('autostartDiagnosticBadge');
-        badge.textContent = autostart.enabled ? '已开启' : '未开启';
-        badge.classList.toggle('badge-success', !!autostart.enabled);
-        badge.classList.toggle('badge-ghost', !autostart.enabled);
-        document.getElementById('autostartDiagnosticDescription').textContent = autostart.description || '-';
-        document.getElementById('autostartTaskState').textContent = autostart.task_state || '-';
-        ['templates', 'contracts', 'backups'].forEach(function(key) {
-            const target = document.querySelector('[data-diagnostics-field="' + key + '"]');
-            if (target && data.counts) target.textContent = data.counts[key];
-        });
-    }
-
-    function refreshDiagnostics(label) {
-        return fetch('{{ url_for("api_diagnostics") }}', { headers: { 'Accept': 'application/json' } })
-            .then(function(response) {
-                return response.json().then(function(data) {
-                    if (!response.ok) throw new Error(data.message || '诊断检测失败');
-                    return data;
-                });
-            })
-            .then(function(data) {
-                applyDiagnostics(data);
-                if (label) showMessage(label, 'success');
-                return data;
-            })
-            .catch(function(err) { showMessage(err.message || '检测失败', 'error'); });
-    }
-
-    document.getElementById('refreshDiagnosticsBtn').addEventListener('click', function() {
-        refreshDiagnostics('诊断信息已刷新');
-    });
-    document.getElementById('pdfCheckBtn').addEventListener('click', function() {
-        refreshDiagnostics('PDF 环境已重新检测');
-    });
-    refreshDiagnostics('');
-
-    document.querySelectorAll('.diagnostics-folder-form').forEach(function(form) {
-        form.addEventListener('submit', function(event) {
-            event.preventDefault();
-            fetch(form.action, {
-                method: 'POST',
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-Token': form.querySelector('[name="csrf_token"]').value,
-                    'Accept': 'application/json'
-                },
-                body: new FormData(form)
-            })
-            .then(function(response) {
-                return response.json().then(function(data) {
-                    if (!response.ok || !data.success) throw new Error(data.message || '打开目录失败');
-                    return data;
-                });
-            })
-            .then(function(data) { showMessage('已请求打开目录：' + data.path, 'success'); })
-            .catch(function(err) { showMessage(err.message || '打开目录失败', 'error'); });
-        });
-    });
-});
-</script>
+<script id="diagnosticsPayload" type="application/json" data-api-url="{{ url_for('api_diagnostics') }}">{{ diagnostics|tojson }}</script>
+<script src="{{ static_url('js/diagnostics.js') }}"></script>
 
 {% endblock %}

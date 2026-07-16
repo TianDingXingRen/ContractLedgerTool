@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}付款计划 - 合同管理工具{% endblock %}
+{% block title %}付款计划 - 采购业务平台{% endblock %}
 {% block breadcrumb %}payment_plans{% endblock %}
 {% block content %}
 
@@ -118,11 +118,11 @@
         <span style="color:var(--apple-text3);font-size:12px">日期</span>
         <input type="date" name="start_date" value="{{ start_date }}" placeholder="开始"
                style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 8px;font-size:13px;width:90px;text-align:center;color:var(--apple-text);background:var(--apple-bg);outline:none"
-               onfocus="this.style.borderColor='var(--apple-blue)'" onblur="this.style.borderColor='var(--apple-sep)'">
+               class="payment-filter-input">
         <span style="color:var(--apple-text3)">—</span>
         <input type="date" name="end_date" value="{{ end_date }}" placeholder="结束"
                style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 8px;font-size:13px;width:90px;text-align:center;color:var(--apple-text);background:var(--apple-bg);outline:none"
-               onfocus="this.style.borderColor='var(--apple-blue)'" onblur="this.style.borderColor='var(--apple-sep)'">
+               class="payment-filter-input">
         <button type="submit" class="apple-btn apple-btn-primary" style="padding:6px 16px;font-size:12px">筛选</button>
         {% if confirm_status or payment_status or start_date or end_date or project_name %}
         <a href="{{ url_for('payment_plan_list') }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px;color:var(--apple-red)">清除</a>

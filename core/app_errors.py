@@ -5,7 +5,9 @@ from __future__ import annotations
 import threading
 
 from flask import render_template
+from werkzeug.exceptions import HTTPException
 
+from core.domain_errors import DomainError
 from utils.errors import api_error, wants_json
 from utils.logger import get_logger
 
@@ -45,6 +47,12 @@ def register_error_handlers(app):
 
     @app.errorhandler(Exception)
     def handle_unhandled(e):
+        if isinstance(e, HTTPException):
+            code = int(e.code or 500)
+            message = str(e.description or e.name or '请求处理失败')
+            if wants_json():
+                return api_error(message, code)
+            return render_template('error.html', code=code, message=message), code
         if getattr(error_handler_guard, 'active', False):
             return '500 Internal Server Error', 500
         error_handler_guard.active = True
@@ -55,3 +63,9 @@ def register_error_handlers(app):
             return render_template('error.html', code=500, message='服务器内部错误，请稍后再试'), 500
         finally:
             error_handler_guard.active = False
+    @app.errorhandler(DomainError)
+    def handle_domain_error(e):
+        code = int(e.status_code or 400)
+        if wants_json():
+            return api_error(e.public_message, code)
+        return render_template('error.html', code=code, message=e.public_message), code

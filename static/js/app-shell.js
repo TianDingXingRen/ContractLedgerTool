@@ -224,6 +224,13 @@ function toastCenter() {
     });
   }, true);
 
+  document.addEventListener('click', (event) => {
+    const toggle = event.target.closest('[data-shell-action="toggle-sidebar"]');
+    if (!toggle) return;
+    const sidebar = document.getElementById('sp');
+    if (sidebar) sidebar.classList.toggle('open');
+  });
+
   window.showToast = showToast;
   window.confirmAction = confirmAction;
   window.showNotice = showNotice;

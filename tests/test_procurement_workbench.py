@@ -839,4 +839,4 @@ def test_procurement_schema_is_idempotent_and_preserves_contracts(app):
     assert ledger_store.get_contract(contract_id)['contract_no'] == 'PROC-MIG-001'
     with ledger_store.get_conn() as conn:
         version = conn.execute('SELECT MAX(version) FROM procurement_schema_version').fetchone()[0]
-    assert version == 3
+        assert version == procurement_store.schema.CURRENT_SCHEMA_VERSION

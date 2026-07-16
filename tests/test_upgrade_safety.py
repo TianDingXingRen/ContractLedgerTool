@@ -99,6 +99,10 @@ def test_app_upgrade_backs_up_legacy_database_before_migration(tmp_path):
             upgraded_row = conn.execute(
                 'SELECT contract_no, title, values_json FROM contracts'
             ).fetchone()
+            amount_minor = conn.execute(
+                'SELECT amount_minor FROM contracts WHERE contract_no = ?',
+                ('LEGACY-001',),
+            ).fetchone()[0]
             integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
             migrated_columns = {
                 row[1] for row in conn.execute('PRAGMA table_info(contracts)')
@@ -108,7 +112,17 @@ def test_app_upgrade_backs_up_legacy_database_before_migration(tmp_path):
         assert 'deleted_at' not in backup_columns
         assert upgraded_row == backup_row
         assert integrity == 'ok'
-        assert {'deleted_at', 'expiry_date', 'project_name'} <= migrated_columns
+        assert amount_minor == 1_234_567
+        assert {'deleted_at', 'expiry_date', 'project_name', 'amount_minor'} <= migrated_columns
+
+        app_module.reset_runtime()
+        app_module.create_app(
+            runtime_base_dir=runtime_dir,
+            resource_dir=original_resources,
+            run_maintenance=False,
+            testing=True,
+        )
+        assert len(list((data_dir / 'backups').glob('*before_upgrade.db'))) == 1
     finally:
         app_module.reset_runtime()
         app_module.configure_runtime_paths(original_base, original_resources)
@@ -145,3 +159,41 @@ def test_packaged_asset_upgrade_never_overwrites_user_files(tmp_path):
     assert user_template.read_text(encoding='utf-8') == 'user-template'
     assert user_upload.read_text(encoding='utf-8') == 'user-document'
     assert (paths.base_dir / '.installed_version').read_text(encoding='utf-8') == '2.0.0'
+
+
+def test_app_startup_recovers_interrupted_generation_job(tmp_path):
+    import app as app_module
+    import ledger_store
+
+    runtime_dir = tmp_path / 'runtime'
+    original_base = app_module.BASE_DIR
+    original_resources = app_module.RESOURCE_DIR
+    try:
+        app_module.create_app(
+            runtime_base_dir=runtime_dir,
+            resource_dir=original_resources,
+            run_maintenance=False,
+            testing=True,
+        )
+        output = runtime_dir / 'output' / 'interrupted.docx'
+        staging = runtime_dir / 'output' / '.staging' / 'job-startup.docx'
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        staging.write_bytes(b'interrupted')
+        ledger_store.create_generation_job('job-startup', str(output), str(staging))
+        ledger_store.update_generation_job('job-startup', 'staged')
+
+        app_module.reset_runtime()
+        app_module.create_app(
+            runtime_base_dir=runtime_dir,
+            resource_dir=original_resources,
+            run_maintenance=False,
+            testing=True,
+        )
+
+        job = ledger_store.get_generation_job('job-startup')
+        assert job['state'] == 'recovered'
+        assert not staging.exists()
+        assert len(list((runtime_dir / 'output' / '.recovery').iterdir())) == 1
+    finally:
+        app_module.reset_runtime()
+        app_module.configure_runtime_paths(original_base, original_resources)

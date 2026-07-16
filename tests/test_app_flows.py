@@ -2,12 +2,12 @@
 """Route-level regression tests for the Flask contract tool."""
 
 import io
-import json
 import os
 import tempfile
 import unittest
 import uuid
 import zipfile
+from unittest import mock
 
 from docx import Document
 
@@ -110,6 +110,34 @@ class AppFlowTests(unittest.TestCase):
             first_text = _docx_text(zf.read(names[0]))
 
         self.assertIn('测试甲公司', first_text)
+
+    def test_batch_zip_failure_discards_created_contract(self):
+        form = {'batch_counterparties': '测试甲公司'}
+        for index, field in enumerate(self.test_tpl.data.get('fields', [])):
+            fid = field.get('id', index)
+            form[f'field_{fid}'] = f'测试值{fid}'
+
+        sid = uuid.uuid4().hex
+        helpers.save_session_data(sid, {
+            'template_name': self.test_tpl.name,
+            'template_path': self.test_template_path,
+            'stored_name': '',
+            'step': 'editor',
+        })
+
+        with app.app.test_client() as client, \
+                mock.patch.object(helpers, 'create_ledger_record', return_value=123), \
+                mock.patch('routes.contracts_bp.zipfile.ZipFile.write', side_effect=OSError('disk full')), \
+                mock.patch('routes.contracts_bp._discard_generated_contract') as discard:
+            with client.session_transaction() as sess:
+                sess['sid'] = sid
+                sess['_csrf_token'] = 'test-token'
+            form['csrf_token'] = 'test-token'
+            response = client.post('/generate-batch', data=form)
+
+        self.assertEqual(response.status_code, 500)
+        discard.assert_called_once()
+        self.assertEqual(discard.call_args.args[0], 123)
 
 
 if __name__ == '__main__':

@@ -305,7 +305,7 @@ contact_sheet_html = f'''<!DOCTYPE html>
 
 contact_path = BASE / "contact-sheet.html"
 contact_path.write_text(contact_sheet_html, encoding="utf-8")
-print(f"Created: contact-sheet.html")
+print("Created: contact-sheet.html")
 
 # ── Choices.md ────────────────────────────────────────────────────────
 choices_md = """# Icon Choices - 合同生成工具 (Contract Generation Tool)
@@ -336,7 +336,7 @@ choices_md = """# Icon Choices - 合同生成工具 (Contract Generation Tool)
 """
 
 (BASE / "choices.md").write_text(choices_md, encoding="utf-8")
-print(f"Created: choices.md")
+print("Created: choices.md")
 
 print("\n=== All assets generated! ===")
 for f in sorted(BASE.glob("*")):

@@ -11,6 +11,7 @@ CONFIG_DEFAULTS = {
     "HOST": "127.0.0.1",
     "PORT": 5000,
     "DEBUG": False,
+    "ALLOW_REMOTE": False,
     "MAX_CONTENT_LENGTH_MB": 50,
     "CLEANUP_DAYS": 7,
     "LOG_LEVEL": "INFO",
@@ -43,6 +44,7 @@ class Config:
     HOST = '127.0.0.1'
     PORT = 5000
     DEBUG = False
+    ALLOW_REMOTE = False
     MAX_CONTENT_LENGTH_MB = 50
     CLEANUP_DAYS = 7
     RATE_LIMITS = {
@@ -116,12 +118,12 @@ class Config:
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            for key in ('HOST', 'PORT', 'DEBUG', 'MAX_CONTENT_LENGTH_MB',
+            for key in ('HOST', 'PORT', 'DEBUG', 'ALLOW_REMOTE', 'MAX_CONTENT_LENGTH_MB',
                         'CLEANUP_DAYS', 'LOG_LEVEL', 'SESSION_TTL_HOURS',
                         'OUTPUT_CLEANUP_DAYS'):
                 if key in data:
                     val = data[key]
-                    if key == 'DEBUG':
+                    if key in {'DEBUG', 'ALLOW_REMOTE'}:
                         # 统一转为 bool：JSON bool 已是 bool，字符串也需兼容
                         val = bool(val) if not isinstance(val, str) else val.lower() in ('1', 'true', 'yes')
                     elif key in self._INT_BOUNDS:
@@ -153,7 +155,7 @@ class Config:
             logging.getLogger('contract_tool').warning('config.json 解析失败，将使用默认配置')
 
     def _load_env(self):
-        for key in ('HOST', 'PORT', 'DEBUG', 'MAX_CONTENT_LENGTH_MB',
+        for key in ('HOST', 'PORT', 'DEBUG', 'ALLOW_REMOTE', 'MAX_CONTENT_LENGTH_MB',
                     'CLEANUP_DAYS', 'LOG_LEVEL', 'SESSION_TTL_HOURS',
                     'OUTPUT_CLEANUP_DAYS'):
             env_val = os.environ.get(f'CT_{key}')
@@ -164,7 +166,7 @@ class Config:
                 val = self._validate_int(env_val, min_v, max_v, f'CT_{key}')
                 if val is not None:
                     setattr(self, key, val)
-            elif key == 'DEBUG':
+            elif key in {'DEBUG', 'ALLOW_REMOTE'}:
                 setattr(self, key, env_val.lower() in ('1', 'true', 'yes'))
             elif key == 'LOG_LEVEL':
                 val = env_val.upper()

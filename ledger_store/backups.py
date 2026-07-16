@@ -1,12 +1,20 @@
 """Backup and restore helpers for the ledger database."""
 
 import os
+import re
 import shutil
 import sqlite3
 from datetime import date, datetime
 
 from utils.logger import get_logger
 from utils.security import path_within
+
+
+_SCHEDULED_BACKUP_RE = re.compile(r'^contracts_\d{4}-\d{2}-\d{2}\.db$')
+
+
+def _is_scheduled_backup(filename):
+    return bool(_SCHEDULED_BACKUP_RE.fullmatch(filename or ''))
 
 
 def get_all_docx_paths(get_conn, db_path):
@@ -48,7 +56,7 @@ def backup_database(get_conn, db_path, backup_dir, max_backups=7):
     if not os.path.exists(target_path):
         _copy_database(db_path, target_path)
     rows = sorted(
-        [name for name in os.listdir(backup_dir) if name.endswith('.db')],
+        [name for name in os.listdir(backup_dir) if _is_scheduled_backup(name)],
         reverse=True,
     )
     for old in rows[max_backups:]:

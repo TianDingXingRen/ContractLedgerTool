@@ -4,6 +4,7 @@ import math
 import os
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -109,8 +110,86 @@ def export_payment_plans(path, rows, title='下月付款计划'):
     return path
 
 
-def export_contracts(path, contracts, title='合同台账'):
+def _export_contracts_streaming(path, contracts, title):
+    """Write a large contract iterable without retaining worksheet cells."""
+    headers = ['序号', '所属项目', '覆盖范围', '合同编号', '合同名称', '对方单位', '金额',
+               '签订日期', '负责人', '状态', '创建时间', '付款计划数']
+    col_widths = [6, 22, 16, 18, 26, 24, 14, 14, 14, 12, 14, 14]
+    status_labels = {
+        'draft': '草稿', 'signed': '已签订', 'active': '履行中',
+        'completed': '已完成', 'void': '已作废',
+    }
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet(title=title[:31])
+    for ci, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = width
+
+    title_cells = [WriteOnlyCell(ws, value=title)] + [WriteOnlyCell(ws) for _ in headers[1:]]
+    title_cells[0].font = _TITLE_FONT
+    title_cells[0].alignment = Alignment(horizontal='center')
+    ws.append(title_cells)
+    ws.append([None] * len(headers))
+    header_cells = []
+    for header in headers:
+        cell = WriteOnlyCell(ws, value=header)
+        cell.font = _HEADER_FONT
+        cell.fill = _HEADER_FILL
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = _THIN_BORDER
+        header_cells.append(cell)
+    ws.append(header_cells)
+
+    total_amount = 0
+    row_count = 0
+    for row_count, contract in enumerate(contracts, 1):
+        amount = _num(contract.get('amount'))
+        total_amount += amount
+        values = [
+            row_count,
+            contract.get('project_name') or '',
+            (f"{contract.get('coverage_start')}–{contract.get('coverage_end')}号"
+             if contract.get('coverage_start') is not None
+             and contract.get('coverage_end') is not None else ''),
+            contract.get('contract_no') or '',
+            contract.get('title') or '',
+            contract.get('counterparty') or '',
+            amount,
+            contract.get('sign_date') or '',
+            contract.get('owner') or '',
+            status_labels.get(contract.get('status'), contract.get('status', '')),
+            (contract.get('created_at') or '')[:10],
+            contract.get('plan_count', 0),
+        ]
+        cells = []
+        for ci, value in enumerate(values, 1):
+            cell = WriteOnlyCell(ws, value=value)
+            cell.font = _NORMAL_FONT
+            cell.border = _THIN_BORDER
+            if ci == 7:
+                cell.number_format = '#,##0.00'
+            cells.append(cell)
+        ws.append(cells)
+
+    summary = ['合计' if row_count else '（无数据）', None, None, None, None, None,
+               round(total_amount, 2) if row_count else None, None, None, None, None, None]
+    summary_cells = []
+    for ci, value in enumerate(summary, 1):
+        cell = WriteOnlyCell(ws, value=value)
+        cell.border = _THIN_BORDER
+        if ci == 1:
+            cell.font = _HEADER_FONT
+        if ci == 7:
+            cell.number_format = '#,##0.00'
+        summary_cells.append(cell)
+    ws.append(summary_cells)
+    wb.save(path)
+    return path
+
+
+def export_contracts(path, contracts, title='合同台账', streaming=False):
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    if streaming:
+        return _export_contracts_streaming(path, contracts, title)
     wb = Workbook()
     ws = wb.active
     ws.title = title[:31]

@@ -4,7 +4,19 @@ import os
 import platform
 import sys
 
-from flask import request, redirect, url_for, session, jsonify, render_template, send_file, abort
+from flask import (
+    abort,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
+
+from routes.legacy_blueprint import LegacyEndpointBlueprint
 
 import ledger_store
 import pdf_exporter
@@ -74,6 +86,9 @@ def _diagnostics_payload(include_autostart=True):
         contract_total = -1
         get_logger().warning('诊断页无法获取合同统计：%s', e)
     backups = ledger_store.list_backups()
+    generation_integrity = current_app.extensions[
+        'contract_tool'
+    ].generation_recovery.diagnostics()
     return {
         'app': {
             'python': sys.version.split()[0],
@@ -100,6 +115,8 @@ def _diagnostics_payload(include_autostart=True):
         },
         'autostart': autostart,
         'pdf': pdf_exporter.diagnose_environment(),
+        'generation_integrity': generation_integrity,
+        'recent_logs': _tail_lines(log_path),
     }
 
 
@@ -125,11 +142,12 @@ def _open_folder(path):
 
 
 def register(app):
-    @app.route('/api/autostart/status')
+    bp = LegacyEndpointBlueprint('settings', __name__)
+    @bp.route('/api/autostart/status')
     def autostart_status_api():
         return _autostart_json()
 
-    @app.route('/autostart/enable', methods=['POST'])
+    @bp.route('/autostart/enable', methods=['POST'])
     def autostart_enable():
         try:
             helpers.enable_autostart()
@@ -142,7 +160,7 @@ def register(app):
                 return _autostart_json(error='开启自启动失败')
             return redirect(url_for('index', autostart_error='开启自启动失败'))
 
-    @app.route('/autostart/disable', methods=['POST'])
+    @bp.route('/autostart/disable', methods=['POST'])
     def autostart_disable():
         try:
             helpers.disable_autostart()
@@ -155,18 +173,18 @@ def register(app):
                 return _autostart_json(error='关闭自启动失败')
             return redirect(url_for('index', autostart_error='关闭自启动失败'))
 
-    @app.route('/diagnostics')
+    @bp.route('/diagnostics')
     def diagnostics():
         return render_template(
             'diagnostics.html',
             diagnostics=_diagnostics_payload(include_autostart=False),
         )
 
-    @app.route('/api/diagnostics')
+    @bp.route('/api/diagnostics')
     def api_diagnostics():
         return jsonify(_diagnostics_payload())
 
-    @app.route('/diagnostics/open-folder', methods=['POST'])
+    @bp.route('/diagnostics/open-folder', methods=['POST'])
     def diagnostics_open_folder():
         key = request.form.get('folder', '').strip()
         try:
@@ -177,7 +195,7 @@ def register(app):
             get_logger().error('打开文件夹失败: %s', e, exc_info=True)
             return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
 
-    @app.route('/backups')
+    @bp.route('/backups')
     def backups():
         return render_template(
             'backups.html',
@@ -186,7 +204,7 @@ def register(app):
             handover_owners=handover_service.list_handover_owners(),
         )
 
-    @app.route('/backups/create', methods=['POST'])
+    @bp.route('/backups/create', methods=['POST'])
     def backup_create():
         try:
             backup = ledger_store.create_backup()
@@ -199,7 +217,7 @@ def register(app):
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
             return redirect(url_for('backups', error=GENERIC_ERROR))
 
-    @app.route('/backups/<filename>/restore', methods=['POST'])
+    @bp.route('/backups/<filename>/restore', methods=['POST'])
     def backup_restore(filename):
         try:
             ledger_store.restore_backup(filename)
@@ -212,7 +230,7 @@ def register(app):
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
             return redirect(url_for('backups', error=GENERIC_ERROR))
 
-    @app.route('/backups/<filename>/download')
+    @bp.route('/backups/<filename>/download')
     def backup_download(filename):
         try:
             path = ledger_store.backup_path(filename)
@@ -225,7 +243,7 @@ def register(app):
             mimetype='application/octet-stream',
         )
 
-    @app.route('/backups/full/create', methods=['POST'])
+    @bp.route('/backups/full/create', methods=['POST'])
     def full_backup_create():
         try:
             package = handover_service.create_full_backup_package(
@@ -240,7 +258,7 @@ def register(app):
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
             return redirect(url_for('backups', error=GENERIC_ERROR))
 
-    @app.route('/backups/full/upload', methods=['POST'])
+    @bp.route('/backups/full/upload', methods=['POST'])
     def full_backup_upload():
         try:
             package = handover_service.upload_full_backup_package(request.files.get('file'))
@@ -259,7 +277,7 @@ def register(app):
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
             return redirect(url_for('backups', error=GENERIC_ERROR))
 
-    @app.route('/backups/full/<filename>/download')
+    @bp.route('/backups/full/<filename>/download')
     def full_backup_download(filename):
         try:
             path = handover_service.full_package_path(filename)
@@ -272,7 +290,7 @@ def register(app):
             mimetype='application/zip',
         )
 
-    @app.route('/backups/full/<filename>/restore', methods=['POST'])
+    @bp.route('/backups/full/<filename>/restore', methods=['POST'])
     def full_backup_restore(filename):
         try:
             result = handover_service.restore_full_backup_package(filename)
@@ -291,7 +309,7 @@ def register(app):
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
             return redirect(url_for('backups', error=GENERIC_ERROR))
 
-    @app.route('/backups/handover/export', methods=['POST'])
+    @bp.route('/backups/handover/export', methods=['POST'])
     def handover_export():
         owner = request.form.get('owner', '').strip()
         include_closed = request.form.get('include_closed') == '1'
@@ -321,7 +339,9 @@ def register(app):
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
             return redirect(url_for('backups', error=GENERIC_ERROR))
 
-    @app.route('/reset', methods=['POST'])
+    @bp.route('/reset', methods=['POST'])
     def reset():
         session.pop('sid', None)
         return redirect(url_for('index'))
+
+    app.register_blueprint(bp)

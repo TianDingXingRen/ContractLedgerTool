@@ -8,7 +8,9 @@ ledger store.
 from __future__ import annotations
 
 import json
+import os
 import re
+import sqlite3
 from datetime import datetime
 
 import ledger_store
@@ -17,21 +19,16 @@ from . import comparison_workflow
 from . import project_components
 from . import project_queries
 from . import quote_jobs
+from .constants import PROJECT_STATUSES
 from .schema import (
+    CURRENT_SCHEMA_VERSION,
     PROCUREMENT_SCHEMA_SQL,
     SCHEMA_VERSION_INSERT_SQL,
     V2_COLUMN_MIGRATIONS,
     V3_CONTRACT_REFS_INDEX_SQL,
     V3_CONTRACT_REFS_SQL,
+    V4_INDEX_STATEMENTS,
 )
-
-
-PROJECT_STATUSES = {
-    'draft', 'documents_ready', 'inquiry_sent', 'quotes_received',
-    'clarifying', 'negotiating', 'award_draft', 'award_confirmed',
-    'contract_draft', 'contract_created', 'archived',
-}
-
 
 def _now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -69,14 +66,75 @@ def init_db():
     """Create the procurement schema idempotently."""
     with ledger_store.get_conn() as conn:
         now = _now()
+        fresh_schema = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'procurement_projects'"
+        ).fetchone() is None
         conn.executescript(PROCUREMENT_SCHEMA_SQL)
+        if fresh_schema:
+            conn.execute(SCHEMA_VERSION_INSERT_SQL, (CURRENT_SCHEMA_VERSION, now))
+            return
         conn.execute(SCHEMA_VERSION_INSERT_SQL, (1, now))
-        for table_name, column_name, column_sql in V2_COLUMN_MIGRATIONS:
-            _ensure_column(conn, table_name, column_name, column_sql)
-        conn.execute(SCHEMA_VERSION_INSERT_SQL, (2, now))
-        conn.execute(V3_CONTRACT_REFS_SQL)
-        conn.execute(V3_CONTRACT_REFS_INDEX_SQL)
-        conn.execute(SCHEMA_VERSION_INSERT_SQL, (3, now))
+        current = int(conn.execute(
+            'SELECT COALESCE(MAX(version), 0) FROM procurement_schema_version'
+        ).fetchone()[0] or 0)
+        if current < 2:
+            conn.execute('SAVEPOINT procurement_migration_v2')
+            try:
+                for table_name, column_name, column_sql in V2_COLUMN_MIGRATIONS:
+                    _ensure_column(conn, table_name, column_name, column_sql)
+                conn.execute(SCHEMA_VERSION_INSERT_SQL, (2, now))
+                conn.execute('RELEASE SAVEPOINT procurement_migration_v2')
+            except Exception:
+                conn.execute('ROLLBACK TO SAVEPOINT procurement_migration_v2')
+                conn.execute('RELEASE SAVEPOINT procurement_migration_v2')
+                raise
+        if current < 3:
+            conn.execute('SAVEPOINT procurement_migration_v3')
+            try:
+                conn.execute(V3_CONTRACT_REFS_SQL)
+                conn.execute(V3_CONTRACT_REFS_INDEX_SQL)
+                conn.execute(SCHEMA_VERSION_INSERT_SQL, (3, now))
+                conn.execute('RELEASE SAVEPOINT procurement_migration_v3')
+            except Exception:
+                conn.execute('ROLLBACK TO SAVEPOINT procurement_migration_v3')
+                conn.execute('RELEASE SAVEPOINT procurement_migration_v3')
+                raise
+        if current < 4:
+            conn.execute('SAVEPOINT procurement_migration_v4')
+            try:
+                for statement in V4_INDEX_STATEMENTS:
+                    conn.execute(statement)
+                conn.execute(SCHEMA_VERSION_INSERT_SQL, (4, now))
+                conn.execute('RELEASE SAVEPOINT procurement_migration_v4')
+            except Exception:
+                conn.execute('ROLLBACK TO SAVEPOINT procurement_migration_v4')
+                conn.execute('RELEASE SAVEPOINT procurement_migration_v4')
+                raise
+
+
+def get_schema_version():
+    """Return the installed procurement schema version without creating tables."""
+    db_path = ledger_store.DB_PATH
+    if not os.path.isfile(db_path) or os.path.getsize(db_path) == 0:
+        return 0
+    conn = sqlite3.connect(db_path)
+    try:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'procurement_schema_version'"
+        ).fetchone()
+        if not table:
+            return 0
+        row = conn.execute(
+            'SELECT COALESCE(MAX(version), 0) FROM procurement_schema_version'
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+    finally:
+        conn.close()
+
+
+def needs_migration():
+    return get_schema_version() < CURRENT_SCHEMA_VERSION
 
 
 def create_project(data):
@@ -425,16 +483,26 @@ def mark_data_sheet_in_editor(sheet_id):
     return award_contracts.mark_data_sheet_in_editor(ledger_store.get_conn, _now, sheet_id)
 
 
-def complete_contract_link(sheet_id, contract_id):
+def complete_contract_link(sheet_id, contract_id, *, conn=None):
     return award_contracts.complete_contract_link(
-        ledger_store.get_conn, _audit, _now, sheet_id, contract_id
+        ledger_store.get_conn, _audit, _now, sheet_id, contract_id,
+        connection=conn,
     )
 
 
-def add_contract_ref(project_id, contract_id, source_type='direct_contract', source_id=None):
+def add_contract_ref(
+    project_id, contract_id, source_type='direct_contract', source_id=None, *, conn=None
+):
     return award_contracts.add_contract_ref(
         ledger_store.get_conn, _audit, _now, project_id, contract_id,
-        source_type=source_type, source_id=source_id,
+        source_type=source_type, source_id=source_id, connection=conn,
+    )
+
+
+def remove_contract_ref(project_id, contract_id, restore_status=None):
+    return award_contracts.remove_contract_ref(
+        ledger_store.get_conn, _audit, _now, project_id, contract_id,
+        restore_status=restore_status,
     )
 
 

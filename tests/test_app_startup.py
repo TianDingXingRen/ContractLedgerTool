@@ -1,4 +1,6 @@
-from core.app_startup import should_open_browser
+import pytest
+
+from core.app_startup import should_open_browser, validate_bind_host
 
 
 def test_should_not_open_browser_when_disabled():
@@ -31,3 +33,14 @@ def test_should_wait_for_reloader_when_debugging():
         debug=True,
         environ={},
     ) is False
+
+
+@pytest.mark.parametrize('host', ['127.0.0.1', '::1', 'localhost'])
+def test_local_bind_hosts_are_allowed(host):
+    assert validate_bind_host(host) == host
+
+
+def test_remote_bind_requires_explicit_opt_in():
+    with pytest.raises(ValueError, match='CT_ALLOW_REMOTE'):
+        validate_bind_host('0.0.0.0')
+    assert validate_bind_host('0.0.0.0', allow_remote=True) == '0.0.0.0'

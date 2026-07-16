@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-import os, tempfile, unittest
+import os
+import tempfile
+import unittest
 from docx import Document
 from docx.oxml.ns import qn
-import docx_builder, field_eval
+import docx_builder
+import field_eval
 from utils.security import MAX_TABLE_ROWS
 
 

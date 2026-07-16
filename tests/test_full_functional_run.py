@@ -346,7 +346,7 @@ def run():
         bk = backups[0]
         fname = bk['filename']
         r = get(f'/backups/{fname}/download')
-        check(f'下载备份 200', r.status_code == 200)
+        check('下载备份 200', r.status_code == 200)
         r.close()
 
     # ── 17. 自启动状态 ──

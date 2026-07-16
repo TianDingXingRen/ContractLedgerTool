@@ -47,11 +47,11 @@ body{
 .slw{padding:18px 20px 14px;display:flex;align-items:center;gap:10px}
 .sli{
   width:32px;height:32px;border-radius:8px;
-  background:linear-gradient(135deg,#2870C8,#8858C0);
   display:flex;align-items:center;justify-content:center;
-  color:#fff;font-size:15px;font-weight:700;
-  box-shadow:0 2px 8px rgba(40,112,200,0.25);
+  flex:0 0 32px;overflow:hidden;text-decoration:none;
+  box-shadow:0 3px 10px rgba(16,94,196,0.3);
 }
+.sli img{width:32px;height:32px;display:block;object-fit:contain}
 .slt{
   color:#F5F5F7;font-size:14px;font-weight:600;
   letter-spacing:-0.3px;text-decoration:none;
@@ -1182,3 +1182,6 @@ body.column-resizing {
 [data-theme="dark"] .workbench-action,
 [data-theme="dark"] .workbench-signal,
 [data-theme="dark"] .ledger-view-switch{background:rgba(255,255,255,.05)}
+.payment-filter-input:focus {
+  border-color: var(--apple-blue) !important;
+}
