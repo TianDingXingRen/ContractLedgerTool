@@ -68,6 +68,72 @@ function Install-StagedExecutable($Staged, $Destination) {
     }
 }
 
+function New-InstallRollbackSnapshot($InstallDir, $ManagedFiles) {
+    $snapshot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "ContractLedgerTool-install-rollback-" + [guid]::NewGuid().ToString("N")
+    )
+    New-Item -ItemType Directory -Force -Path $snapshot | Out-Null
+    foreach ($name in $ManagedFiles) {
+        $source = Join-Path $InstallDir $name
+        if (Test-Path -LiteralPath $source) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $snapshot $name) -Force
+        }
+    }
+    return $snapshot
+}
+
+function Restore-InstallRollbackSnapshot($Snapshot, $InstallDir, $ManagedFiles) {
+    foreach ($name in $ManagedFiles) {
+        $backup = Join-Path $Snapshot $name
+        $destination = Join-Path $InstallDir $name
+        Set-WritableIfExists $destination
+        if (Test-Path -LiteralPath $backup) {
+            Copy-Item -LiteralPath $backup -Destination $destination -Force
+        } elseif (Test-Path -LiteralPath $destination) {
+            Remove-Item -LiteralPath $destination -Force
+        }
+    }
+
+    foreach ($suffix in @(".new", ".previous")) {
+        $temporaryExe = (Join-Path $InstallDir "ContractLedgerTool.exe") + $suffix
+        if (Test-Path -LiteralPath $temporaryExe) {
+            Set-WritableIfExists $temporaryExe
+            Remove-Item -LiteralPath $temporaryExe -Force
+        }
+    }
+}
+
+function Remove-InstallRollbackSnapshot($Snapshot) {
+    if (Test-Path -LiteralPath $Snapshot) {
+        try {
+            Remove-Item -LiteralPath $Snapshot -Recurse -Force
+        } catch {
+            Write-Host "Could not remove rollback snapshot $Snapshot : $_" -ForegroundColor Yellow
+        }
+    }
+}
+
+function Invoke-InstalledAppSelfCheck($AppExe) {
+    Write-Step "Verifying installed application"
+    $output = @(& $AppExe --self-check 2>&1)
+    $exitCode = $LASTEXITCODE
+    foreach ($line in $output) {
+        Write-Host $line
+    }
+    if ($exitCode -ne 0) {
+        throw "Installed application self-check failed (exit code: $exitCode)."
+    }
+
+    try {
+        $result = $output[-1] | ConvertFrom-Json
+    } catch {
+        throw "Installed application self-check did not return valid JSON."
+    }
+    if (-not $result.ok -or $result.http_status -ne 200 -or $result.integrity_check -ne "ok") {
+        throw "Installed application self-check reported an unhealthy runtime."
+    }
+}
+
 function Stop-ProcessIfRunning($ProcessId, $Reason) {
     if (-not $ProcessId -or $ProcessId -eq $PID) {
         return
@@ -341,30 +407,58 @@ Write-Step "Installing offline application files"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $AppExe = Join-Path $InstallDir "ContractLedgerTool.exe"
-$StagedAppExe = Stage-AppExecutable $AppExeSource $AppExe
-Stop-PreviousVersions $InstallDir $AppExe $Port
-$ResolvedPort = Resolve-InstallPort $Port
-if ($ResolvedPort -ne $Port) {
-    Write-Host "Port $Port is busy; using port $ResolvedPort instead." -ForegroundColor Yellow
-    $Port = $ResolvedPort
+$ManagedFiles = @(
+    "ContractLedgerTool.exe",
+    "start.ps1",
+    "stop.ps1",
+    "setup_autostart.ps1",
+    "setup_autostart_remove.ps1"
+)
+$RollbackSnapshot = New-InstallRollbackSnapshot $InstallDir $ManagedFiles
+
+try {
+    $StagedAppExe = Stage-AppExecutable $AppExeSource $AppExe
+    Stop-PreviousVersions $InstallDir $AppExe $Port
+    $ResolvedPort = Resolve-InstallPort $Port
+    if ($ResolvedPort -ne $Port) {
+        Write-Host "Port $Port is busy; using port $ResolvedPort instead." -ForegroundColor Yellow
+        $Port = $ResolvedPort
+    }
+    Install-StagedExecutable $StagedAppExe $AppExe
+
+    foreach ($script in @("start.ps1", "stop.ps1", "setup_autostart.ps1", "setup_autostart_remove.ps1")) {
+        $src = Join-Path $PackageRoot $script
+        if (Test-Path -LiteralPath $src) {
+            $dst = Join-Path $InstallDir $script
+            Set-WritableIfExists $dst
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+        }
+    }
+
+    Invoke-InstalledAppSelfCheck $AppExe
+    foreach ($dir in @("data", "output", "sessions", "uploads", "templates", "static", "logs")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir $dir) | Out-Null
+    }
+} catch {
+    $installError = $_
+    Write-Step "Installation failed; restoring previous version"
+    try {
+        Restore-InstallRollbackSnapshot $RollbackSnapshot $InstallDir $ManagedFiles
+        Write-Host "Previous application files were restored." -ForegroundColor Yellow
+    } catch {
+        Write-Host "Automatic rollback failed: $_" -ForegroundColor Red
+    }
+    throw $installError
+} finally {
+    Remove-InstallRollbackSnapshot $RollbackSnapshot
 }
-if (-not $SkipSystemIntegrationCleanup) {
-    Clear-ExistingAutostart
-}
-Install-StagedExecutable $StagedAppExe $AppExe
+
+# Destructive cleanup and system integration changes happen only after the new
+# executable passes its isolated HTTP and SQLite self-check.
 Clear-LegacyProgramFiles $InstallDir
 
-foreach ($script in @("start.ps1", "stop.ps1", "setup_autostart.ps1", "setup_autostart_remove.ps1")) {
-    $src = Join-Path $PackageRoot $script
-    if (Test-Path -LiteralPath $src) {
-        $dst = Join-Path $InstallDir $script
-        Set-WritableIfExists $dst
-        Copy-Item -LiteralPath $src -Destination $dst -Force
-    }
-}
-
-foreach ($dir in @("data", "output", "sessions", "uploads", "templates", "static", "logs")) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir $dir) | Out-Null
+if (-not $SkipSystemIntegrationCleanup) {
+    Clear-ExistingAutostart
 }
 
 if (-not $NoAutostart) {
