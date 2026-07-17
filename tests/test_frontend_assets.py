@@ -243,14 +243,16 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('"-NoPrompt"', script)
         self.assertIn('.venv', script)
 
-    def test_offline_installer_build_outputs_desktop_exe_only(self):
+    def test_offline_installer_build_outputs_single_release_exe_only(self):
         build_script_path = os.path.join(app.RESOURCE_DIR, 'build_installer.py')
         with open(build_script_path, 'r', encoding='utf-8') as f:
             script = f.read()
 
-        self.assertIn('desktop_exe', script)
-        self.assertIn('DESKTOP / f', script)
+        self.assertIn('RELEASE_DIR', script)
+        self.assertIn('clean_legacy_dist_outputs', script)
         self.assertIn('write_version=True', script)
+        self.assertNotIn('DESKTOP / f', script)
+        self.assertNotIn("'desktop_exe': str", script)
         self.assertNotIn('zip_dir(stage', script)
         self.assertNotIn("'zip': str", script)
 

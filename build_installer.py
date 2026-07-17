@@ -7,10 +7,9 @@ not need Python, pip, or internet access.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
-from datetime import datetime
-from pathlib import Path
 
 from _pyinstaller_common import (
     ROOT, reset_dir, copy_file, copy_tree, build_pyinstaller_cmd,
@@ -19,13 +18,84 @@ from _pyinstaller_common import (
 
 
 DIST = ROOT / 'dist'
+RELEASE_DIR = DIST / 'release'
 ASSETS = ROOT / 'installer_assets'
 APP_RES_DIR = ROOT / 'build' / 'offline_app_resources'
+APP_DIST_DIR = ROOT / 'build' / 'offline_app_dist'
+INSTALLER_STAGE_DIR = ROOT / 'build' / 'offline_installer_package'
 SIGN_SCRIPT = ROOT / 'scripts' / 'sign_installer.ps1'
 ICON_PATH = ROOT / 'design' / 'icon-options' / 'app-icon.ico'
 APP_EXE_NAME = 'ContractLedgerTool'
 INSTALLER_EXE_NAME = 'ContractLedgerTool_OfflineInstaller'
-DESKTOP = Path(os.environ.get('USERPROFILE', str(Path.home()))) / 'Desktop'
+
+LEGACY_DIST_DIR_PATTERNS = (
+    'ContractLedgerTool_OfflineInstaller_*',
+    'ContractLedgerTool_OnlineInstaller_*',
+    'ContractLedgerTool_EXE_*',
+    'test_install_*',
+)
+LEGACY_DIST_DIR_NAMES = {
+    'ContractLedgerTool',
+    'desktop_exe',
+    'exe',
+    'installer_exe',
+    'offline_app_exe',
+}
+LEGACY_DIST_FILE_PATTERNS = (
+    'ContractLedgerTool_OfflineInstaller_*.zip',
+    'ContractLedgerTool_OnlineInstaller_*.zip',
+    'ContractLedgerTool_EXE_*.zip',
+)
+LEGACY_DIST_FILE_NAMES = {
+    'ContractLedgerTool_v1.0.zip',
+    'ContractTool_Setup.exe',
+    'installer.sed',
+    'package.zip',
+    'setup.bat',
+    'stub.bat',
+}
+
+
+def _dist_child(path):
+    dist_root = DIST.resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(dist_root)
+    except ValueError as exc:
+        raise RuntimeError(f'Refusing to clean path outside dist: {resolved}') from exc
+    return resolved
+
+
+def _remove_dist_path(path):
+    target = _dist_child(path)
+    if not target.exists():
+        return False
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    return True
+
+
+def clean_legacy_dist_outputs():
+    """Keep dist focused on the single publishable offline installer."""
+    DIST.mkdir(parents=True, exist_ok=True)
+    removed = []
+    candidates = []
+    for pattern in LEGACY_DIST_DIR_PATTERNS:
+        candidates.extend(path for path in DIST.glob(pattern) if path.is_dir())
+    candidates.extend(DIST / name for name in LEGACY_DIST_DIR_NAMES)
+    for pattern in LEGACY_DIST_FILE_PATTERNS:
+        candidates.extend(path for path in DIST.glob(pattern) if path.is_file())
+    candidates.extend(DIST / name for name in LEGACY_DIST_FILE_NAMES)
+
+    for path in sorted(set(candidates), key=lambda item: str(item).lower()):
+        try:
+            if _remove_dist_path(path):
+                removed.append(str(path))
+        except Exception as exc:
+            print(f'SKIP legacy cleanup: {path} ({exc})')
+    return removed
 
 
 def normalize_powershell_encoding(root):
@@ -69,7 +139,7 @@ def prepare_app_resources():
 
 
 def build_app_exe():
-    dist_path = DIST / 'offline_app_exe'
+    dist_path = APP_DIST_DIR
     work_path = ROOT / 'build' / 'offline_app_pyinstaller'
     spec_path = ROOT / 'build' / 'offline_app_spec'
     reset_dir(dist_path)
@@ -154,12 +224,12 @@ def build_installer_exe(stage):
     bootstrap = ROOT / 'build' / 'offline_installer_bootstrap.py'
     write_bootstrap(bootstrap)
 
-    dist_path = DIST / 'installer_exe'
+    dist_path = RELEASE_DIR
     work_path = ROOT / 'build' / 'installer_pyinstaller'
     spec_path = ROOT / 'build' / 'installer_spec'
-    dist_path.mkdir(parents=True, exist_ok=True)
-    work_path.mkdir(parents=True, exist_ok=True)
-    spec_path.mkdir(parents=True, exist_ok=True)
+    reset_dir(dist_path)
+    reset_dir(work_path)
+    reset_dir(spec_path)
 
     cmd = [
         sys.executable, '-m', 'PyInstaller',
@@ -188,8 +258,8 @@ def build_installer_exe(stage):
 
 
 def main():
-    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    stage = DIST / f'ContractLedgerTool_OfflineInstaller_{stamp}'
+    removed = clean_legacy_dist_outputs()
+    stage = INSTALLER_STAGE_DIR
 
     app_manifest = prepare_app_resources()
     app_exe = build_app_exe()
@@ -202,18 +272,16 @@ def main():
     normalize_powershell_encoding(stage)
 
     exe_path = build_installer_exe(stage)
-    DESKTOP.mkdir(parents=True, exist_ok=True)
-    desktop_exe = DESKTOP / f'{INSTALLER_EXE_NAME}_{stamp}.exe'
-    copy_file(exe_path, desktop_exe)
 
     manifest = {
         'mode': 'offline',
         'exe': str(exe_path),
-        'desktop_exe': str(desktop_exe),
+        'release_dir': str(RELEASE_DIR),
         'stage': str(stage),
         'app_exe': str(app_exe),
         'exe_size_mb': round(exe_path.stat().st_size / 1024 / 1024, 2),
         'app_exe_size_mb': round(app_exe.stat().st_size / 1024 / 1024, 2),
+        'legacy_dist_removed': len(removed),
         **app_manifest,
     }
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
