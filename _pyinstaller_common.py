@@ -6,9 +6,9 @@ build_desktop_exe / build_installer / build_package 共用此模块，
 """
 
 import json
+import re
 import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 
@@ -124,9 +124,28 @@ def verify_compiled_frontend():
         )
 
 
+SEMVER_PATTERN = re.compile(
+    r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
+    r'(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
+)
+
+
+def project_version():
+    """Return the validated, stable release version from the repository."""
+    version_path = ROOT / 'version.txt'
+    if not version_path.is_file():
+        raise RuntimeError('缺少 version.txt，无法构建可追溯发布包')
+    version = version_path.read_text(encoding='utf-8').strip()
+    if not SEMVER_PATTERN.fullmatch(version):
+        raise RuntimeError(f'version.txt 不是有效的语义版本：{version!r}')
+    return version
+
+
 def write_version_file(target_dir, version_str=None):
-    """写入 version.txt。"""
-    version = version_str or datetime.now().strftime('%Y%m%d.%H%M%S')
+    """Write the stable semantic version into packaged resources."""
+    version = version_str or project_version()
+    if not SEMVER_PATTERN.fullmatch(version):
+        raise RuntimeError(f'打包版本不是有效的语义版本：{version!r}')
     (target_dir / 'version.txt').write_text(version, encoding='utf-8')
     return version
 

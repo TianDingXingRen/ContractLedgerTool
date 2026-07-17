@@ -5,6 +5,7 @@ The installer embeds a PyInstaller-built application EXE, so target machines do
 not need Python, pip, or internet access.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -131,10 +132,17 @@ def sign_file(path):
     subprocess.check_call(cmd, cwd=str(ROOT))
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
+
+
 def prepare_app_resources():
-    # Offline installers should always carry a fresh resource version so an
-    # upgrade cannot be skipped because a previous install wrote the same
-    # .installed_version marker.
+    # Release versions are stable and traceable. Rebuilding changed resources
+    # requires an intentional version bump instead of a timestamp-only build ID.
     return _prepare_resources(APP_RES_DIR, write_version=True)
 
 
@@ -281,6 +289,9 @@ def main():
         'app_exe': str(app_exe),
         'exe_size_mb': round(exe_path.stat().st_size / 1024 / 1024, 2),
         'app_exe_size_mb': round(app_exe.stat().st_size / 1024 / 1024, 2),
+        'exe_sha256': file_sha256(exe_path),
+        'app_exe_sha256': file_sha256(app_exe),
+        'code_signing_requested': should_sign(),
         'legacy_dist_removed': len(removed),
         **app_manifest,
     }

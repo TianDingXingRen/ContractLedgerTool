@@ -38,7 +38,9 @@ _FAST_TEST_MODULES = {
 _PACKAGING_TEST_MODULES = {
     'test_demo_data_entrypoint.py',
     'test_dependency_lock.py',
+    'test_installer_rollback.py',
     'test_packaged_self_check.py',
+    'test_release_engineering.py',
     'test_worktree_scope.py',
 }
 

@@ -22,3 +22,24 @@ markers = [
 "tests/test_full_functional_run.py" = ["E702"]
 "tests/test_ledger_crud.py" = ["E701", "E702"]
 "tests/test_samples_run.py" = ["E701", "E702"]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "build_*.py",
+    "_pyinstaller_common.py",
+    "conftest.py",
+    "demo_flow_data.py",
+    "design/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

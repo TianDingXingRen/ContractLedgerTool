@@ -242,6 +242,10 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('Local URL:', script)
         self.assertIn('"-NoPrompt"', script)
         self.assertIn('.venv', script)
+        self.assertIn('New-InstallRollbackSnapshot', script)
+        self.assertIn('Restore-InstallRollbackSnapshot', script)
+        self.assertIn('Invoke-InstalledAppSelfCheck', script)
+        self.assertIn('Installation failed; restoring previous version', script)
 
     def test_offline_installer_build_outputs_single_release_exe_only(self):
         build_script_path = os.path.join(app.RESOURCE_DIR, 'build_installer.py')
@@ -255,6 +259,25 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertNotIn("'desktop_exe': str", script)
         self.assertNotIn('zip_dir(stage', script)
         self.assertNotIn("'zip': str", script)
+        self.assertIn("'exe_sha256': file_sha256(exe_path)", script)
+        self.assertIn("'app_exe_sha256': file_sha256(app_exe)", script)
+
+    def test_release_signing_requires_sha256_timestamp_and_strict_verification(self):
+        signing_path = os.path.join(
+            app.RESOURCE_DIR,
+            'scripts',
+            'sign_installer.ps1',
+        )
+        with open(signing_path, 'r', encoding='utf-8') as f:
+            script = f.read()
+
+        self.assertIn('SIGNTOOL_PATH', script)
+        self.assertIn('"/fd", "SHA256"', script)
+        self.assertIn('@("/tr", $TimestampServer, "/td", "SHA256")', script)
+        self.assertIn('& $signTool verify /pa /all /v $resolvedFile', script)
+        self.assertIn('$signature.Status -ne "Valid"', script)
+        self.assertIn('$signature.TimeStamperCertificate', script)
+        self.assertNotIn('"UnknownError"', script)
 
     def test_offline_installer_preserves_runtime_database(self):
         installer_path = os.path.join(app.RESOURCE_DIR, 'installer_assets', 'install.ps1')

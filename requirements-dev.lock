@@ -1,0 +1,20 @@
+-r requirements.lock
+
+# Reproducible quality and release toolchain.
+pytest==9.0.3
+iniconfig==2.3.0
+pluggy==1.6.0
+Pygments==2.20.0
+colorama==0.4.6
+ruff==0.15.20
+coverage==7.15.2
+pytest-cov==7.1.0
+playwright==1.61.0
+greenlet==3.5.3
+pyee==13.0.1
+pyinstaller==6.20.0
+altgraph==0.17.5
+pefile==2024.8.26
+pyinstaller-hooks-contrib==2026.5
+pywin32-ctypes==0.2.3
+setuptools==82.0.1

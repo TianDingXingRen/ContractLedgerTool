@@ -125,10 +125,28 @@ $env:CT_TESSERACT_CMD = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
 ## 测试
 
 ```powershell
-python -m pytest -q --basetemp .pytest_basetemp
+python -m pip install -r requirements-dev.lock
+python scripts/quality_gate.py commit
+python scripts/quality_gate.py ci
 ```
 
-测试运行时会使用隔离的数据目录，不读写正式合同、台账和配置。
+`commit` 门禁运行架构预算、Ruff 和 fast 测试；`ci` 额外运行完整测试、
+70% 生产代码覆盖率、JavaScript 语法检查和 CSS 可重复构建。测试使用隔离的
+数据目录，不读写正式合同、台账和配置。
+
+## 安装升级与发布
+
+离线安装器会先保存现有程序文件，暂存并校验新 EXE，然后运行隔离的 HTTP、
+SQLite 和 schema 自检。只有自检通过才提交安装；复制、自检或替换失败时会自动
+恢复上一版本。`data`、合同文件、模板和备份不属于程序文件回滚范围，不会被覆盖。
+
+发布版本以 `version.txt` 为唯一来源，并在 `CHANGELOG.md` 中保留对应版本记录。
+推送匹配版本的标签（例如 `v1.0.0`）后，GitHub Release 工作流会执行完整门禁、
+构建唯一离线安装包并发布产物。本地发布验收命令为：
+
+```powershell
+python scripts/quality_gate.py release --build-installer
+```
 
 ## 前端样式开发
 
