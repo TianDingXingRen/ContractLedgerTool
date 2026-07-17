@@ -18,6 +18,7 @@ from . import generation_jobs
 from . import list_queries
 from . import money_fields
 from . import project_reports
+from .payment_plans import PaymentPlanRepository
 from .schema import (
     CURRENT_SCHEMA_VERSION,
     DOCUMENT_PATH_MIGRATION_VERSION,
@@ -398,6 +399,20 @@ def row_to_dict(row):
     return result
 
 
+_PAYMENT_PLANS = PaymentPlanRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+    validate_choice=_validate_choice,
+    payment_types=PAYMENT_TYPES,
+    confidence_levels=CONFIDENCE_LEVELS,
+    confirm_statuses=CONFIRM_STATUSES,
+    payment_statuses=PAYMENT_STATUSES,
+    update_fields=PLAN_UPDATE_FIELDS,
+    field_validators=PLAN_FIELD_VALIDATORS,
+)
+
+
 def create_contract(summary, field_values, docx_path):
     """创建合同记录（不含付款计划），返回 contract_id。
 
@@ -586,133 +601,39 @@ def get_project_progress_stats():
 
 def insert_payment_plan(contract_id, plan):
     """插入单条付款计划（公开接口，使用独立事务）"""
-    with get_conn() as conn:
-        return _insert_payment_plan_impl(conn, contract_id, plan)
+    return _PAYMENT_PLANS.insert(contract_id, plan)
 
 
 def insert_payment_plans(contract_id, plans):
     """批量插入付款计划 —— 在单个事务内完成，保证原子性。"""
-    if not plans:
-        return []
-    with get_conn() as conn:
-        ids = []
-        for plan in plans:
-            ids.append(_insert_payment_plan_impl(conn, contract_id, plan))
-        return ids
+    return _PAYMENT_PLANS.insert_many(contract_id, plans)
 
 
 def _insert_payment_plan_impl(conn, contract_id, plan):
     """在已有连接中插入单条付款计划（由 insert_payment_plans 调用）"""
-    plan = _normalize_payment_consistency(plan)
-    now = _now()
-    payment_type = _validate_choice(plan.get('payment_type') or 'conditional', PAYMENT_TYPES, '付款类型')
-    confidence = _validate_choice(plan.get('confidence') or 'low', CONFIDENCE_LEVELS, '置信度')
-    confirm_status = _validate_choice(plan.get('confirm_status') or 'pending', CONFIRM_STATUSES, '确认状态')
-    payment_status = _validate_choice(plan.get('payment_status') or 'unpaid', PAYMENT_STATUSES, '付款状态')
-    cur = conn.execute(
-        """
-        INSERT INTO payment_plans (
-            contract_id, phase_name, payment_type, trigger_event, trigger_days,
-            expected_trigger_date, due_date, ratio, due_amount, due_amount_minor,
-            paid_amount, paid_amount_minor,
-            paid_date, condition_text, source_text, confidence, confirm_status,
-            payment_status, remark, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            contract_id,
-            plan.get('phase_name'),
-            payment_type,
-            plan.get('trigger_event'),
-            plan.get('trigger_days'),
-            plan.get('expected_trigger_date'),
-            plan.get('due_date'),
-            plan.get('ratio'),
-            plan.get('due_amount'),
-            plan.get('due_amount_minor'),
-            plan.get('paid_amount') or 0,
-            plan.get('paid_amount_minor') or 0,
-            plan.get('paid_date'),
-            plan.get('condition_text'),
-            plan.get('source_text'),
-            confidence,
-            confirm_status,
-            payment_status,
-            plan.get('remark'),
-            now,
-            now,
-        ),
-    )
-    return cur.lastrowid
+    return _PAYMENT_PLANS.insert_impl(conn, contract_id, plan)
 
 
 def _normalize_payment_consistency(plan):
     """校验金额/日期关系，并由金额统一推导付款状态。"""
-    return money_fields.normalize_payment_consistency(plan)
+    return _PAYMENT_PLANS.normalize_consistency(plan)
 
 
 def _append_plan_assignment(assignments, values, key, row):
-    money_fields.append_plan_assignment(assignments, values, key, row)
+    _PAYMENT_PLANS.append_assignment(assignments, values, key, row)
 
 
 def save_payment_plan_changes(contract_id, changes):
     """在一个事务中保存付款计划的新增、修改和删除。"""
-    with get_conn() as conn:
-        contract = conn.execute('SELECT id FROM contracts WHERE id = ?', (contract_id,)).fetchone()
-        if not contract:
-            raise ValueError('合同记录不存在')
-
-        for change in changes:
-            plan_id = change.get('id')
-            if change.get('delete'):
-                if plan_id:
-                    cur = conn.execute(
-                        'DELETE FROM payment_plans WHERE id = ? AND contract_id = ?',
-                        (plan_id, contract_id),
-                    )
-                    if cur.rowcount == 0:
-                        raise ValueError('付款计划不存在或不属于当前合同')
-                continue
-
-            incoming = change.get('data') or {}
-            if plan_id:
-                existing = conn.execute(
-                    'SELECT * FROM payment_plans WHERE id = ? AND contract_id = ?',
-                    (plan_id, contract_id),
-                ).fetchone()
-                if not existing:
-                    raise ValueError('付款计划不存在或不属于当前合同')
-                row = row_to_dict(existing)
-                row.update(incoming)
-                row = _normalize_payment_consistency(row)
-                assignments = []
-                values = []
-                for key in PLAN_UPDATE_FIELDS:
-                    if key not in incoming and key not in {'payment_status', 'paid_date'}:
-                        continue
-                    if key in PLAN_FIELD_VALIDATORS:
-                        row[key] = _validate_choice(row[key], *PLAN_FIELD_VALIDATORS[key])
-                    _append_plan_assignment(assignments, values, key, row)
-                assignments.append('updated_at = ?')
-                values.extend([_now(), plan_id, contract_id])
-                cur = conn.execute(
-                    f"UPDATE payment_plans SET {', '.join(assignments)} "
-                    "WHERE id = ? AND contract_id = ?",
-                    values,
-                )
-                if cur.rowcount == 0:
-                    raise ValueError('付款计划不存在或不属于当前合同')
-            else:
-                row = _normalize_payment_consistency(incoming)
-                _insert_payment_plan_impl(conn, contract_id, row)
+    return _PAYMENT_PLANS.save_changes(contract_id, changes)
 
 
 def list_payment_plans(contract_id=None, confirm_status='', payment_status='',
                        start_date='', end_date='', project_name='', page=0,
                        per_page=20, limit=0):
-    return list_queries.list_payment_plans(
-        get_conn, row_to_dict, contract_id=contract_id,
-        confirm_status=confirm_status, payment_status=payment_status,
+    return _PAYMENT_PLANS.list(
+        contract_id=contract_id, confirm_status=confirm_status,
+        payment_status=payment_status,
         start_date=start_date, end_date=end_date, project_name=project_name,
         page=page, per_page=per_page, limit=limit,
     )
@@ -720,123 +641,25 @@ def list_payment_plans(contract_id=None, confirm_status='', payment_status='',
 
 def get_payment_plan(plan_id):
     """Return a payment plan with basic contract context."""
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty,
-                   c.owner, c.project_name, c.coverage_start, c.coverage_end
-            FROM payment_plans p
-            JOIN contracts c ON c.id = p.contract_id
-            WHERE p.id = ? AND (c.deleted_at = '' OR c.deleted_at IS NULL)
-            """,
-            (plan_id,),
-        ).fetchone()
-    return row_to_dict(row)
+    return _PAYMENT_PLANS.get(plan_id)
 
 
 def update_payment_plan(plan_id, data, contract_id=None):
-    if not any(key in data for key in PLAN_UPDATE_FIELDS):
-        return
-    with get_conn() as conn:
-        where = 'id = ?'
-        lookup_values = [plan_id]
-        if contract_id is not None:
-            where += ' AND contract_id = ?'
-            lookup_values.append(contract_id)
-        existing = conn.execute(
-            f'SELECT * FROM payment_plans WHERE {where}', lookup_values
-        ).fetchone()
-        if not existing:
-            return 0
-        merged = row_to_dict(existing)
-        merged.update({key: data[key] for key in PLAN_UPDATE_FIELDS if key in data})
-        merged = _normalize_payment_consistency(merged)
-        assignments = []
-        values = []
-        for key in PLAN_UPDATE_FIELDS:
-            if key not in data and key not in {'payment_status', 'paid_date'}:
-                continue
-            if key in PLAN_FIELD_VALIDATORS:
-                merged[key] = _validate_choice(merged[key], *PLAN_FIELD_VALIDATORS[key])
-            _append_plan_assignment(assignments, values, key, merged)
-        assignments.append('updated_at = ?')
-        values.append(_now())
-        values.extend(lookup_values)
-        cur = conn.execute(
-            f"UPDATE payment_plans SET {', '.join(assignments)} WHERE {where}",
-            values,
-        )
-        return cur.rowcount
+    return _PAYMENT_PLANS.update(plan_id, data, contract_id=contract_id)
 
 
 def batch_confirm_plans(plan_ids, contract_id=None):
     """在单个事务中批量确认付款计划，保证原子性。"""
-    if not plan_ids:
-        return 0
-    now = _now()
-    with get_conn() as conn:
-        count = 0
-        for plan_id in plan_ids:
-            where = 'id = ? AND confirm_status = ?'
-            params = [plan_id, 'pending']
-            if contract_id is not None:
-                where += ' AND contract_id = ?'
-                params.append(contract_id)
-            cur = conn.execute(
-                f"UPDATE payment_plans SET confirm_status = 'confirmed', updated_at = ? WHERE {where}",
-                [now] + params,
-            )
-            count += cur.rowcount
-        return count
+    return _PAYMENT_PLANS.batch_confirm(plan_ids, contract_id=contract_id)
 
 
 def batch_mark_plans_paid(plan_ids, paid_date):
     """Mark confirmed unpaid plans as fully paid in one transaction."""
-    if not plan_ids:
-        return 0
-    now = _now()
-    with get_conn() as conn:
-        count = 0
-        for plan_id in plan_ids:
-            row = conn.execute(
-                """SELECT * FROM payment_plans
-                   WHERE id = ? AND confirm_status = 'confirmed'
-                     AND payment_status != 'paid'""",
-                (plan_id,),
-            ).fetchone()
-            if not row:
-                continue
-            plan = row_to_dict(row)
-            due_amount = plan.get('due_amount')
-            if due_amount is None:
-                continue
-            updated = _normalize_payment_consistency({
-                **plan,
-                'paid_amount': due_amount,
-                'paid_date': paid_date,
-            })
-            cur = conn.execute(
-                """UPDATE payment_plans
-                   SET paid_amount = ?, paid_amount_minor = ?, paid_date = ?, payment_status = ?,
-                       updated_at = ?
-                   WHERE id = ?""",
-                (
-                    updated['paid_amount'], updated['paid_amount_minor'], updated['paid_date'],
-                    updated['payment_status'], now, plan_id,
-                ),
-            )
-            count += cur.rowcount
-        return count
+    return _PAYMENT_PLANS.batch_mark_paid(plan_ids, paid_date)
 
 
 def delete_payment_plan(plan_id, contract_id=None):
-    sql = 'DELETE FROM payment_plans WHERE id = ?'
-    params = [plan_id]
-    if contract_id is not None:
-        sql += ' AND contract_id = ?'
-        params.append(contract_id)
-    with get_conn() as conn:
-        conn.execute(sql, params)
+    return _PAYMENT_PLANS.delete(plan_id, contract_id=contract_id)
 
 
 def next_month_payment_plans(start_date, end_date):
