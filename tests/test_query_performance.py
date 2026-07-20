@@ -111,3 +111,24 @@ def test_dashboard_and_list_scale_targets(tmp_db):
     assert len(result['rows']) == 20
     assert dashboard_elapsed < 0.25
     assert list_elapsed < 0.15
+
+
+@pytest.mark.slow
+def test_large_dataset_performance_budget(tmp_db):
+    procurement_store.init_db()
+    _seed_scale_data(contract_count=10_000, payment_count=100_000)
+
+    started = time.perf_counter()
+    snapshot = build_dashboard_snapshot()
+    dashboard_elapsed = time.perf_counter() - started
+
+    started = time.perf_counter()
+    result = ledger_store.list_contracts(q='PERF-99', page=1, per_page=20)
+    filtered_list_elapsed = time.perf_counter() - started
+
+    assert snapshot['contract_stats']['total'] == 10_000
+    assert result['total'] > 0
+    # Budgets are intentionally tolerant of shared GitHub Windows runners while
+    # still detecting accidental full-table Python processing.
+    assert dashboard_elapsed < 2.0
+    assert filtered_list_elapsed < 0.5

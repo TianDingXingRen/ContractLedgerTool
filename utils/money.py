@@ -34,6 +34,8 @@ def to_minor(value: Union[str, float, Decimal, int, None], *, allow_none: bool =
             number = Decimal(raw)
         except InvalidOperation as exc:
             raise ValueError(f'金额格式无效: {raw!r}') from exc
+    if not number.is_finite():
+        raise ValueError('金额必须是有限数值')
     if number < 0:
         raise ValueError('金额不能为负数')
     return int((number * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))

@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 import procurement_store
 from services import procurement_file_service
 from utils.logger import get_logger
+from utils.security import validate_office_archive
 
 
 MAPPING_FIELDS = [
@@ -110,6 +111,8 @@ def create_mapping_job(project_id, supplier_id, quote_round, file_storage):
     saved = procurement_file_service.save_upload(project, 'supplier_quote', file_storage)
     source_type, extractor = extractors[extension]
     try:
+        if extension in {'.xlsx', '.docx'}:
+            validate_office_archive(saved['absolute_path'])
         tables, diagnostics = extractor(saved['absolute_path'])
         if not tables:
             raise ValueError('；'.join(diagnostics) or '文件中未识别到可映射的表格')

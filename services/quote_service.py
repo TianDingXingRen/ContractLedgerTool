@@ -13,6 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 import procurement_store
 from services import procurement_file_service
 from utils.logger import get_logger
+from utils.security import validate_office_archive
 
 
 FORMAT_VERSION = '1.0'
@@ -305,11 +306,12 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
     if int(quote_round) < 1:
         raise ValueError('报价轮次必须大于等于 1')
     saved = procurement_file_service.save_upload(project, 'supplier_quote', file_storage)
-    payload, errors, warnings = parse_standard_quote(
-        saved['absolute_path'], project_id, supplier_id, int(quote_round)
-    )
-    payload['size_bytes'] = saved['size_bytes']
     try:
+        validate_office_archive(saved['absolute_path'])
+        payload, errors, warnings = parse_standard_quote(
+            saved['absolute_path'], project_id, supplier_id, int(quote_round)
+        )
+        payload['size_bytes'] = saved['size_bytes']
         return procurement_store.create_import_job({
             'project_id': project_id,
             'supplier_id': supplier_id,

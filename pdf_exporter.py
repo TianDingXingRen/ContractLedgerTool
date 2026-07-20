@@ -15,6 +15,7 @@ from importlib.util import find_spec
 _log = logging.getLogger('contract_tool')
 
 COM_TIMEOUT = 30  # 秒
+PDF_HEADER = b'%PDF-'
 
 
 _WINWORD_PATHS = [
@@ -71,12 +72,25 @@ def convert_docx_to_pdf(docx_path, pdf_path=None):
 
     # 优先尝试 Word COM
     try:
-        return _convert_via_word_com(abs_docx, abs_pdf)
+        result = _convert_via_word_com(abs_docx, abs_pdf)
+        return _validate_pdf_output(result)
     except (ImportError, RuntimeError) as word_err:
         _log.warning('Word COM 转换失败，尝试 LibreOffice 回退: %s', word_err)
 
     # 回退：LibreOffice headless
-    return _convert_via_libreoffice(abs_docx, abs_pdf)
+    result = _convert_via_libreoffice(abs_docx, abs_pdf)
+    return _validate_pdf_output(result)
+
+
+def _validate_pdf_output(path):
+    """Ensure external converters actually produced a non-empty PDF."""
+    if not path or not os.path.isfile(path):
+        raise RuntimeError('PDF 转换未生成输出文件')
+    with open(path, 'rb') as stream:
+        header = stream.read(len(PDF_HEADER))
+    if header != PDF_HEADER or os.path.getsize(path) <= len(PDF_HEADER):
+        raise RuntimeError('PDF 转换输出无效')
+    return path
 
 
 def _convert_via_libreoffice(docx_path, pdf_path):
