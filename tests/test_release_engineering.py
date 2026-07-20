@@ -43,8 +43,33 @@ def test_ci_and_release_workflows_use_the_shared_quality_gate():
     assert 'python scripts/quality_gate.py release --build-installer' in release
     assert 'RELEASE_TAG:' in release
     assert 'ContractLedgerTool_OfflineInstaller.exe' in release
+    assert 'python scripts/generate_sbom.py' in release
+    assert 'ContractLedgerTool.sbom.cdx.json' in release
+    assert 'SHA256SUMS' in release
+    assert 'actions/attest@v4' in release
     assert 'gh release create' in release
     assert 'CODESIGN_' not in release
+
+
+def test_open_source_governance_files_are_present():
+    expected = [
+        'LICENSE',
+        'NOTICE',
+        'CONTRIBUTING.md',
+        'SECURITY.md',
+        '.github/CODEOWNERS',
+        '.github/dependabot.yml',
+        '.github/pull_request_template.md',
+        '.github/ISSUE_TEMPLATE/bug_report.yml',
+        '.github/ISSUE_TEMPLATE/feature_request.yml',
+        '.github/workflows/codeql.yml',
+    ]
+    for relative_path in expected:
+        assert (ROOT / relative_path).is_file(), relative_path
+
+    notice = (ROOT / 'NOTICE').read_text(encoding='utf-8')
+    assert 'Copyright (c) 2026 Shao' in notice
+    assert 'MIT License' in notice
 
 
 def test_release_configuration_uses_single_version_source():

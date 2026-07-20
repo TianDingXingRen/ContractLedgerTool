@@ -1,5 +1,9 @@
 # 合同生成工具
 
+[![CI](https://github.com/TianDingXingRen/ContractLedgerTool/actions/workflows/ci.yml/badge.svg)](https://github.com/TianDingXingRen/ContractLedgerTool/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/TianDingXingRen/ContractLedgerTool/actions/workflows/codeql.yml/badge.svg)](https://github.com/TianDingXingRen/ContractLedgerTool/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 基于模板的合同文档批量生成工具，支持 DOCX 模板制作、字段填充、批量生成、台账管理和付款计划跟踪。
 
 ## 功能
@@ -24,7 +28,7 @@
 ## 安装
 
 ```bash
-git clone <仓库地址>
+git clone https://github.com/TianDingXingRen/ContractLedgerTool.git
 cd 合同生成工具
 pip install -r requirements.txt
 ```
@@ -148,6 +152,13 @@ SQLite 和 schema 自检。只有自检通过才提交安装；复制、自检�
 python scripts/quality_gate.py release --build-installer
 ```
 
+每个 GitHub Release 同时提供 `SHA256SUMS`、CycloneDX SBOM 和 GitHub 构建来源证明。下载后可验证：
+
+```powershell
+(Get-FileHash -Algorithm SHA256 .\ContractLedgerTool_OfflineInstaller.exe).Hash
+gh attestation verify .\ContractLedgerTool_OfflineInstaller.exe -R TianDingXingRen/ContractLedgerTool
+```
+
 ## 前端样式开发
 
 运行版使用已经编译好的 `static/css/app.min.css`，不在浏览器中执行 Tailwind 编译。修改模板中的 Tailwind/DaisyUI 类名后，需要重新生成并提交 CSS：
@@ -167,6 +178,8 @@ Node.js 只用于开发和发布构建；安装后的合同工具不依赖 Node.
 - 输入长度和类型校验
 - 内存速率限制
 - Session SameSite=Strict
+
+未修复的安全漏洞请不要提交公开 Issue；请按 [安全策略](SECURITY.md) 使用 GitHub 私密漏洞报告。参与开发、测试和提交 Pull Request 的流程见 [贡献指南](CONTRIBUTING.md)。
 
 ## 许可证
 

@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -46,11 +48,34 @@ jobs:
       - name: Run release gate and build single installer
         run: python scripts/quality_gate.py release --build-installer
 
+      - name: Generate SBOM and checksum
+        shell: pwsh
+        run: |
+          python scripts/generate_sbom.py
+          $artifactName = "ContractLedgerTool_OfflineInstaller.exe"
+          $artifactPath = Join-Path "dist/release" $artifactName
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
+          "$digest  $artifactName" | Set-Content -Encoding ascii "dist/release/SHA256SUMS"
+
+      - name: Attest installer provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release/ContractLedgerTool_OfflineInstaller.exe
+
+      - name: Attest installer SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release/ContractLedgerTool_OfflineInstaller.exe
+          sbom-path: dist/release/ContractLedgerTool.sbom.cdx.json
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: ContractLedgerTool-${{ github.ref_name }}
-          path: dist/release/ContractLedgerTool_OfflineInstaller.exe
+          path: |
+            dist/release/ContractLedgerTool_OfflineInstaller.exe
+            dist/release/ContractLedgerTool.sbom.cdx.json
+            dist/release/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
 
@@ -61,6 +86,8 @@ jobs:
         run: |
           gh release create "$env:GITHUB_REF_NAME" `
             "dist\release\ContractLedgerTool_OfflineInstaller.exe" `
+            "dist\release\ContractLedgerTool.sbom.cdx.json" `
+            "dist\release\SHA256SUMS" `
             --title "$env:GITHUB_REF_NAME" `
             --generate-notes `
             --verify-tag
