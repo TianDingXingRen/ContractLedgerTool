@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
-import sqlite3
 import tempfile
 import uuid
 import zipfile
 from datetime import date, datetime
-from pathlib import PurePosixPath
 
 import ledger_store
 import template_def
 import xlsx_exporter
+from services.handover_archive import (
+    add_directory as _add_directory,
+    add_file as _add_file,
+    copy_database as _copy_database,
+    member_allowed,
+    normalize_archive_name as _normalize_archive_name,
+    safe_label as _safe_label,
+    sha256_zip_member as _sha256_zip_member,
+    validate_sqlite_file as _validate_sqlite_file,
+)
 from utils import helpers
 from utils.labels import (
     CONTRACT_STATUS_LABELS,
@@ -84,120 +91,8 @@ def _restore_targets():
     }
 
 
-def _safe_label(value, default='handover'):
-    label = helpers.safe_filename_part(str(value or '').strip(), default)[:36]
-    return label or default
-
-
-def _archive_name(*parts):
-    return '/'.join(str(part).strip('/\\') for part in parts if str(part).strip('/\\'))
-
-
-def _normalize_archive_name(name):
-    raw = str(name or '')
-    if not raw or '\\' in raw:
-        raise ValueError('数据包内文件路径无效')
-    path = PurePosixPath(raw.strip('/'))
-    if path.is_absolute() or not path.parts:
-        raise ValueError('数据包内文件路径无效')
-    if any(part in {'', '.', '..'} for part in path.parts):
-        raise ValueError('数据包内文件路径无效')
-    if ':' in path.parts[0]:
-        raise ValueError('数据包内文件路径无效')
-    return str(path)
-
-
 def _member_allowed(name):
-    if name == MANIFEST_NAME:
-        return True
-    for root in _restore_targets():
-        if name == root or name.startswith(root + '/'):
-            return True
-    return False
-
-
-def _sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _sha256_zip_member(zf, name):
-    h = hashlib.sha256()
-    with zf.open(name) as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _copy_database(db_path, target_path):
-    if not os.path.isfile(db_path):
-        raise FileNotFoundError('数据库文件不存在')
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    src = sqlite3.connect(db_path)
-    try:
-        src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        dst = sqlite3.connect(target_path)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
-
-
-def _validate_sqlite_file(path):
-    conn = None
-    try:
-        conn = sqlite3.connect(path)
-        row = conn.execute('PRAGMA quick_check').fetchone()
-        if row is None or row[0] != 'ok':
-            detail = row[0] if row else 'unreadable'
-            raise ValueError(f'数据库校验失败: {detail}')
-    except sqlite3.DatabaseError as exc:
-        raise ValueError(f'数据包内数据库无效: {exc}') from exc
-    finally:
-        if conn:
-            conn.close()
-
-
-def _add_file(zf, source_path, archive_path, records):
-    if not os.path.isfile(source_path) or os.path.islink(source_path):
-        return False
-    archive_path = _normalize_archive_name(archive_path)
-    zf.write(source_path, archive_path)
-    stat = os.stat(source_path)
-    records.append({
-        'path': archive_path,
-        'size': stat.st_size,
-        'sha256': _sha256_file(source_path),
-    })
-    return True
-
-
-def _add_directory(zf, source_dir, archive_root, records):
-    archive_root = _normalize_archive_name(archive_root)
-    root_info = {'path': archive_root, 'kind': 'dir', 'present': os.path.isdir(source_dir)}
-    if not root_info['present']:
-        return root_info
-    zf.writestr(archive_root + '/', b'')
-    for current, dirs, files in os.walk(source_dir):
-        dirs[:] = [
-            dirname for dirname in dirs
-            if not os.path.islink(os.path.join(current, dirname))
-        ]
-        rel_dir = os.path.relpath(current, source_dir)
-        if rel_dir != '.':
-            zf.writestr(_archive_name(archive_root, rel_dir.replace(os.sep, '/')) + '/', b'')
-        for filename in files:
-            source_path = os.path.join(current, filename)
-            if os.path.islink(source_path):
-                continue
-            rel_path = os.path.relpath(source_path, source_dir).replace(os.sep, '/')
-            _add_file(zf, source_path, _archive_name(archive_root, rel_path), records)
-    return root_info
+    return member_allowed(name, _restore_targets(), MANIFEST_NAME)
 
 
 def _read_version():

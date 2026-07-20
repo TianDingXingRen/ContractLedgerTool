@@ -15,7 +15,7 @@ PRODUCTION_ROOTS = (
     'services',
     'utils',
 )
-MAX_LOGICAL_LINES = 700
+MAX_LOGICAL_LINES = 650
 MAX_FUNCTION_LINES = 150
 
 # Existing large route registrars are tracked as explicit debt. Their budgets
@@ -25,7 +25,7 @@ LEGACY_FUNCTION_BUDGETS = {
     ('routes/contracts_bp.py', 'generate_batch'): 170,
     ('routes/excel_bill_bp.py', 'register'): 180,
     ('routes/payments_bp.py', 'register'): 240,
-    ('routes/procurement_bp.py', 'register'): 630,
+    ('routes/procurement_bp.py', 'register'): 560,
     ('routes/settings_bp.py', 'register'): 210,
     ('routes/templates_bp.py', 'register'): 525,
     ('services/handover_service.py', 'build_handover_data'): 205,
