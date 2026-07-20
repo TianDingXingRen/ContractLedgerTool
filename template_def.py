@@ -371,6 +371,54 @@ def list_versions(template_name):
     return versions
 
 
+def compare_version(template_name, version_filename):
+    """Compare a historical template definition with the current definition."""
+    safe_name = _safe_template_stem(template_name)
+    safe_version = os.path.basename(version_filename or '')
+    if not safe_version.endswith('.contract-template'):
+        raise FileNotFoundError(f'版本文件不存在: {safe_version}')
+
+    current_path = os.path.abspath(os.path.join(TEMPLATES_DIR, f'{safe_name}.contract-template'))
+    version_dir = _versions_dir(safe_name)
+    version_path = os.path.abspath(os.path.join(version_dir, safe_version))
+    if not _path_within(TEMPLATES_DIR, current_path) or not os.path.isfile(current_path):
+        raise FileNotFoundError(f'模板文件不存在: {template_name}')
+    if not _path_within(version_dir, version_path) or not os.path.isfile(version_path):
+        raise FileNotFoundError(f'版本文件不存在: {safe_version}')
+
+    with open(current_path, 'r', encoding='utf-8') as f:
+        current = json.load(f)
+    with open(version_path, 'r', encoding='utf-8') as f:
+        historical = json.load(f)
+
+    def field_map(data):
+        result = {}
+        for index, field in enumerate(data.get('fields') or []):
+            key = str(field.get('key') or f'字段 {index + 1}')
+            result[key] = field
+        return result
+
+    current_fields = field_map(current)
+    historical_fields = field_map(historical)
+    added_keys = sorted(current_fields.keys() - historical_fields.keys())
+    removed_keys = sorted(historical_fields.keys() - current_fields.keys())
+    changed_keys = sorted(
+        key for key in current_fields.keys() & historical_fields.keys()
+        if current_fields[key] != historical_fields[key]
+    )
+    metadata_keys = ('format_version', 'template_name', 'source_docx')
+    metadata_changed = [
+        key for key in metadata_keys if current.get(key) != historical.get(key)
+    ]
+    return {
+        'added': added_keys,
+        'removed': removed_keys,
+        'changed': changed_keys,
+        'metadata_changed': metadata_changed,
+        'has_changes': bool(added_keys or removed_keys or changed_keys or metadata_changed),
+    }
+
+
 def restore_version(template_name, version_filename):
     """恢复某个历史版本（当前版本也会被备份）"""
     vdir = _versions_dir(template_name)

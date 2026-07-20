@@ -97,6 +97,24 @@ def _try_convert_doc_to_docx(doc_path):
     return None
 
 
+def _versions_with_comparisons(template_name):
+    versions = template_def.list_versions(template_name)
+    for version in versions:
+        try:
+            version['comparison'] = template_def.compare_version(
+                template_name, version['filename'],
+            )
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            get_logger().warning(
+                'Failed to compare template version %s/%s',
+                template_name,
+                version['filename'],
+                exc_info=True,
+            )
+            version['comparison'] = None
+    return versions
+
+
 def register(app):
     bp = LegacyEndpointBlueprint('templates', __name__)
     # ── 模板保存的辅助函数（从 template_manual_save 提取）──
@@ -516,7 +534,7 @@ def register(app):
             template_name = name[:-len('.contract-template')]
         else:
             template_name = name
-        versions = template_def.list_versions(template_name)
+        versions = _versions_with_comparisons(template_name)
         return render_template('versions.html',
             template_name=template_name, versions=versions)
 

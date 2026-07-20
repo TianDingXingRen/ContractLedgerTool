@@ -5,6 +5,7 @@ var draftKey = 'ct_draft_' + (editorConfig.templateFilename || 'unknown');
 var draftTimer;
 var draftDirty = false;
 var draftRestoring = false;
+var hasUnsavedChanges = false;
 
 function saveDraft() {
   try {
@@ -79,6 +80,7 @@ function restoreDraft() {
       if (element && data[pair[1]] !== undefined) element.value = data[pair[1]];
     });
     if (hasContent) {
+      hasUnsavedChanges = true;
       updateProgress();
       recalcAllFields();
     }
@@ -90,6 +92,7 @@ function restoreDraft() {
 function scheduleDraftSave() {
   if (draftRestoring) return;
   draftDirty = true;
+  hasUnsavedChanges = true;
   clearTimeout(draftTimer);
   draftTimer = setTimeout(function() {
     saveDraft();
@@ -108,7 +111,15 @@ function bindDraftAutoSave() {
 function clearDraft() {
   clearTimeout(draftTimer);
   draftDirty = false;
+  hasUnsavedChanges = false;
   localStorage.removeItem(draftKey);
+}
+
+function markClean() {
+  clearTimeout(draftTimer);
+  if (draftDirty) saveDraft();
+  draftDirty = false;
+  hasUnsavedChanges = false;
 }
 
 setInterval(function() {
@@ -117,8 +128,11 @@ setInterval(function() {
     draftDirty = false;
   }
 }, 30000);
-window.addEventListener('beforeunload', function() {
+window.addEventListener('beforeunload', function(event) {
   if (draftDirty) saveDraft();
+  if (!hasUnsavedChanges) return;
+  event.preventDefault();
+  event.returnValue = '';
 });
 
 window.ContractEditor.draft = Object.freeze({
@@ -126,4 +140,6 @@ window.ContractEditor.draft = Object.freeze({
   restore: restoreDraft,
   schedule: scheduleDraftSave,
   clear: clearDraft,
+  markClean: markClean,
+  hasUnsavedChanges: function() { return hasUnsavedChanges; },
 });

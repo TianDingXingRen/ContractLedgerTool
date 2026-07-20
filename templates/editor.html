@@ -146,9 +146,12 @@
             <div class="progress-bar flex items-center gap-3 text-sm">
                 <span class="font-mono tabular-nums"><span id="filledCount">0</span>/{{ field_count }}</span>
                 <span class="text-base-content/50 text-sm">已填写</span>
-                <div class="progress-track flex-1 h-2 bg-base-200 rounded-full overflow-hidden">
+                <div class="progress-track flex-1 h-2 bg-base-200 rounded-full overflow-hidden"
+                     id="editorProgress" role="progressbar" aria-label="合同字段填写进度"
+                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                     <div class="progress-fill h-full bg-primary rounded-full transition-all duration-500" id="progressFill" style="width:0%"></div>
                 </div>
+                <span class="text-xs text-base-content/50 tabular-nums" id="progressPercent">0%</span>
             </div>
         </div>
     </div>
@@ -335,14 +338,18 @@
                     </button>
                 </div>
                 <div class="tabs tabs-boxed grid grid-cols-3" role="tablist" aria-label="合同辅助面板">
-                    <button type="button" class="tab editor-assist-tab tab-active" data-assist-tab="preview" role="tab" aria-selected="true">实时预览</button>
-                    <button type="button" class="tab editor-assist-tab" data-assist-tab="review" role="tab" aria-selected="false">生成前复核</button>
-                    <button type="button" class="tab editor-assist-tab" data-assist-tab="structure" role="tab" aria-selected="false">合同结构</button>
+                    <button type="button" class="tab editor-assist-tab tab-active" id="assistPreviewTab"
+                            data-assist-tab="preview" role="tab" aria-selected="true" aria-controls="assistPreviewPane" tabindex="0">实时预览</button>
+                    <button type="button" class="tab editor-assist-tab" id="assistReviewTab"
+                            data-assist-tab="review" role="tab" aria-selected="false" aria-controls="assistReviewPane" tabindex="-1">生成前复核</button>
+                    <button type="button" class="tab editor-assist-tab" id="assistStructureTab"
+                            data-assist-tab="structure" role="tab" aria-selected="false" aria-controls="assistStructurePane" tabindex="-1">合同结构</button>
                 </div>
             </div>
 
             <div class="editor-assist-body p-4">
-                <section id="assistPreviewPane" class="editor-assist-pane space-y-4" data-assist-pane="preview">
+                <section id="assistPreviewPane" class="editor-assist-pane space-y-4" data-assist-pane="preview"
+                         role="tabpanel" aria-labelledby="assistPreviewTab">
                     <div id="livePreviewSummary" class="contract-preview-summary">实时同步填写内容</div>
                     {% if preview_warnings %}
                     <div class="contract-preview-warnings" data-testid="editor-preview-warnings">
@@ -364,7 +371,8 @@
                     </div>
                 </section>
 
-                <section id="assistReviewPane" class="editor-assist-pane hidden space-y-4" data-assist-pane="review">
+                <section id="assistReviewPane" class="editor-assist-pane hidden space-y-4" data-assist-pane="review"
+                         role="tabpanel" aria-labelledby="assistReviewTab">
                     <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
                         <div class="flex items-center justify-between gap-3">
                             <div>
@@ -397,10 +405,15 @@
                         </div>
                     </div>
 
-                    <div id="preflightPanel" class="hidden bg-base-100 border border-warning/30 rounded-lg shadow-sm p-4" data-testid="generation-preflight">
+                    <div id="preflightPanel" class="hidden bg-base-100 border border-warning/30 rounded-lg shadow-sm p-4"
+                         data-testid="generation-preflight" role="region" aria-labelledby="preflightTitle"
+                         aria-describedby="preflightSummaryText" tabindex="-1">
                         <div class="space-y-3">
                             <div class="min-w-0">
-                                <h3 class="font-semibold text-warning">生成前复核</h3>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <h3 class="font-semibold text-warning" id="preflightTitle">生成前复核</h3>
+                                    <span class="badge badge-warning badge-outline badge-sm" id="preflightIssueCount">0 项提醒</span>
+                                </div>
                                 <p class="text-sm text-base-content/60 mt-1" id="preflightSummaryText">请确认生成信息。</p>
                                 <div id="preflightBlockingWrap" class="hidden mt-3">
                                     <div class="text-xs font-semibold text-error mb-1">必须修正</div>
@@ -423,7 +436,8 @@
                     </div>
                 </section>
 
-                <section id="assistStructurePane" class="editor-assist-pane hidden" data-assist-pane="structure">
+                <section id="assistStructurePane" class="editor-assist-pane hidden" data-assist-pane="structure"
+                         role="tabpanel" aria-labelledby="assistStructureTab">
                     <div class="text-xs text-base-content/50 mb-3">按模板字段顺序定位填写内容</div>
                     <div id="assistStructureList" class="assist-structure-list divide-y divide-base-200" data-testid="editor-structure-list"></div>
                 </section>
@@ -433,10 +447,12 @@
 </form>
 
 <!-- Loading Overlay -->
-<div class="loading-overlay fixed inset-0 bg-base-100/80 z-[1000] flex items-center justify-center flex-col gap-4 hidden" id="loadingOverlay">
-    <span class="loading loading-spinner loading-lg text-primary"></span>
+<div class="loading-overlay fixed inset-0 bg-base-100/80 z-[1000] flex items-center justify-center flex-col gap-4 hidden"
+     id="loadingOverlay" role="status" aria-live="assertive" aria-label="正在生成合同文档">
+    <span class="loading loading-spinner loading-lg text-primary" aria-hidden="true"></span>
     <p class="text-base-content/60">正在生成合同文档…</p>
 </div>
+<div class="sr-only" id="editorStatusLive" aria-live="polite" aria-atomic="true"></div>
 
 {% endblock %}
 

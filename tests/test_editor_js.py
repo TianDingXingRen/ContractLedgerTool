@@ -74,8 +74,24 @@ class EditorJavaScriptTests(unittest.TestCase):
         self.assertIn("form.addEventListener('input', scheduleDraftSave);", draft)
         self.assertIn("form.addEventListener('change', scheduleDraftSave);", draft)
         self.assertIn("window.addEventListener('beforeunload'", draft)
+        self.assertIn("event.returnValue = '';", draft)
+        self.assertIn('hasUnsavedChanges', draft)
+        self.assertIn('markClean: markClean', draft)
         self.assertIn('window.ContractEditor.draft', draft)
         self.assertGreaterEqual(editor.count("typeof scheduleDraftSave === 'function'"), 2)
+
+    def test_editor_preflight_and_tabs_are_keyboard_accessible(self):
+        with open(os.path.join(app.RESOURCE_DIR, 'templates', 'editor.html'), encoding='utf-8') as f:
+            template = f.read()
+        with open(os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js'), encoding='utf-8') as f:
+            editor = f.read()
+
+        self.assertIn('role="progressbar"', template)
+        self.assertIn('aria-labelledby="preflightTitle"', template)
+        self.assertIn('id="editorStatusLive" aria-live="polite"', template)
+        self.assertIn("event.key === 'ArrowRight'", editor)
+        self.assertIn("event.key !== 'Escape'", editor)
+        self.assertIn('announceEditorStatus', editor)
 
 
 if __name__ == '__main__':

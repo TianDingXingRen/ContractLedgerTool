@@ -18,6 +18,7 @@
                 <tr>
                     <th>保存时间</th>
                     <th>文件大小</th>
+                    <th>与当前版本相比</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -26,6 +27,28 @@
                 <tr>
                     <td class="text-sm">{{ v.display }}</td>
                     <td class="text-xs text-base-content/50">{{ '%.1f'|format(v.size / 1024) }} KB</td>
+                    <td>
+                        {% if v.comparison is none %}
+                        <span class="text-xs text-base-content/40">无法比较</span>
+                        {% elif not v.comparison.has_changes %}
+                        <span class="badge badge-success badge-outline badge-sm">内容一致</span>
+                        {% else %}
+                        <details class="text-xs">
+                            <summary class="cursor-pointer inline-flex flex-wrap items-center gap-1.5">
+                                {% if v.comparison.added %}<span class="badge badge-success badge-sm">新增 {{ v.comparison.added|length }}</span>{% endif %}
+                                {% if v.comparison.removed %}<span class="badge badge-error badge-sm">移除 {{ v.comparison.removed|length }}</span>{% endif %}
+                                {% if v.comparison.changed %}<span class="badge badge-warning badge-sm">修改 {{ v.comparison.changed|length }}</span>{% endif %}
+                                {% if v.comparison.metadata_changed %}<span class="badge badge-ghost badge-sm">模板信息 {{ v.comparison.metadata_changed|length }}</span>{% endif %}
+                            </summary>
+                            <div class="mt-2 space-y-1 text-base-content/60 max-w-md break-all">
+                                {% if v.comparison.added %}<p><strong class="text-success">新增：</strong>{{ v.comparison.added|join('、') }}</p>{% endif %}
+                                {% if v.comparison.removed %}<p><strong class="text-error">移除：</strong>{{ v.comparison.removed|join('、') }}</p>{% endif %}
+                                {% if v.comparison.changed %}<p><strong class="text-warning">修改：</strong>{{ v.comparison.changed|join('、') }}</p>{% endif %}
+                                {% if v.comparison.metadata_changed %}<p><strong>模板信息：</strong>{{ v.comparison.metadata_changed|join('、') }}</p>{% endif %}
+                            </div>
+                        </details>
+                        {% endif %}
+                    </td>
                     <td>
                         <form method="post"
                               action="{{ url_for('template_version_restore', name=template_name, version_filename=v.filename) }}"

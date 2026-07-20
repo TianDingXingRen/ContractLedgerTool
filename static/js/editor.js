@@ -432,6 +432,7 @@
             var active = btn.dataset.assistTab === tabName;
             btn.classList.toggle('tab-active', active);
             btn.setAttribute('aria-selected', active ? 'true' : 'false');
+            btn.setAttribute('tabindex', active ? '0' : '-1');
         });
         document.querySelectorAll('.editor-assist-pane').forEach(function(pane) {
             pane.classList.toggle('hidden', pane.dataset.assistPane !== tabName);
@@ -443,6 +444,19 @@
     function bindAssistPanel() {
         document.querySelectorAll('.editor-assist-tab').forEach(function(btn) {
             btn.addEventListener('click', function() { setAssistTab(btn.dataset.assistTab || 'preview'); });
+            btn.addEventListener('keydown', function(event) {
+                var tabs = Array.from(document.querySelectorAll('.editor-assist-tab'));
+                var index = tabs.indexOf(btn);
+                var nextIndex = index;
+                if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+                else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+                else if (event.key === 'Home') nextIndex = 0;
+                else if (event.key === 'End') nextIndex = tabs.length - 1;
+                else return;
+                event.preventDefault();
+                setAssistTab(tabs[nextIndex].dataset.assistTab || 'preview');
+                tabs[nextIndex].focus();
+            });
         });
         document.querySelectorAll('[data-assist-tab-jump]').forEach(function(btn) {
             btn.addEventListener('click', function() { setAssistTab(btn.dataset.assistTabJump || 'preview'); });
@@ -522,6 +536,10 @@
         filledCount.textContent = filled;
         const pct = totalFields > 0 ? Math.round((filled / totalFields) * 100) : 0;
         progressFill.style.width = pct + '%';
+        var progress = document.getElementById('editorProgress');
+        var progressPercent = document.getElementById('progressPercent');
+        if (progress) progress.setAttribute('aria-valuenow', String(pct));
+        if (progressPercent) progressPercent.textContent = pct + '%';
 
         // 更新过滤按钮计数
         var requiredCount = 0, emptyCount = 0, calcCount = 0;
@@ -957,12 +975,23 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> 保存中…';
         window.ContractEditor.generation.saveDefaults(document.getElementById('editorForm'))
-        .then(function(data) { showToast(data.message || '预制内容已保存', 'success'); })
+        .then(function(data) {
+            if (window.ContractEditor.draft) window.ContractEditor.draft.markClean();
+            showToast(data.message || '预制内容已保存', 'success');
+        })
         .catch(function(err) { showToast(err.message || '保存失败', 'error'); console.error(err); })
         .finally(function() { btn.disabled = false; btn.innerHTML = originalText; });
     });
 
     var pendingPreflight = null;
+    var preflightReturnFocus = null;
+
+    function announceEditorStatus(message) {
+        var status = document.getElementById('editorStatusLive');
+        if (!status) return;
+        status.textContent = '';
+        window.setTimeout(function() { status.textContent = message; }, 20);
+    }
 
     function generationActionUrl(isBatch, form) {
         return isBatch ? editorConfig.urls.generateBatch : form.action;
@@ -1001,6 +1030,7 @@
         var blockingList = document.getElementById('preflightBlockingList');
         var warningList = document.getElementById('preflightWarningList');
         var confirmBtn = document.getElementById('preflightConfirmBtn');
+        var issueCount = document.getElementById('preflightIssueCount');
         var blocking = payload.blocking || [];
         var warnings = payload.warnings || [];
 
@@ -1010,18 +1040,27 @@
         blockingWrap.classList.toggle('hidden', blocking.length === 0);
         warningWrap.classList.toggle('hidden', warnings.length === 0);
         confirmBtn.classList.toggle('hidden', blocking.length > 0);
+        issueCount.textContent = (blocking.length + warnings.length) + ' 项提醒';
+        issueCount.classList.toggle('badge-error', blocking.length > 0);
+        issueCount.classList.toggle('badge-warning', blocking.length === 0);
         setAssistTab('review');
         panel.classList.remove('hidden');
         panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        window.setTimeout(function() { panel.focus({ preventScroll: true }); }, 150);
+        announceEditorStatus(blocking.length
+            ? '生成前检查发现 ' + blocking.length + ' 项必须修正的问题。'
+            : '生成前检查完成，有 ' + warnings.length + ' 项提醒，请确认。');
     }
 
     function setGenerating(btn, text) {
         btn.disabled = true;
+        btn.setAttribute('aria-disabled', 'true');
         btn.innerHTML = text;
     }
 
     function resetGenerateButton(btn, origText) {
         btn.disabled = false;
+        btn.removeAttribute('aria-disabled');
         btn.innerHTML = origText;
     }
 
@@ -1032,6 +1071,8 @@
         var formData = new FormData(form);
         setGenerating(btn, '<span class="loading loading-spinner"></span> 生成中…');
         overlay.classList.add('active');
+        document.getElementById('editorForm').setAttribute('aria-busy', 'true');
+        announceEditorStatus('正在生成合同文档。');
 
         window.ContractEditor.generation.generate(actionUrl, formData)
         .then(function(response) {
@@ -1076,6 +1117,7 @@
                 setTimeout(function() { document.body.removeChild(pdfFrame); }, 5000);
             }
             overlay.classList.remove('active');
+            document.getElementById('editorForm').removeAttribute('aria-busy');
             resetGenerateButton(btn, origText);
             if (result.genErrors) {
                 showToast('部分合同生成出错：' + result.genErrors, 'error');
@@ -1085,11 +1127,14 @@
                 showToast(result.isBatch ? '批量合同已生成' : '合同已生成', 'success');
             }
             showGenerationResult(result, url);
+            announceEditorStatus(result.isBatch ? '批量合同已生成并开始下载。' : '合同已生成并开始下载。');
         })
         .catch(function(err) {
             overlay.classList.remove('active');
+            document.getElementById('editorForm').removeAttribute('aria-busy');
             resetGenerateButton(btn, origText);
             showToast(err.message || '生成失败', 'error');
+            announceEditorStatus('生成失败：' + (err.message || '未知错误'));
             console.error(err);
         });
     }
@@ -1100,6 +1145,7 @@
         var overlay = document.getElementById('loadingOverlay');
         var btn = document.getElementById('generateBtn');
         var origText = btn.innerHTML;
+        preflightReturnFocus = document.activeElement;
 
         var projectInput = document.getElementById('projectName');
         var coverageStartInput = document.getElementById('coverageStart');
@@ -1200,6 +1246,16 @@
     document.getElementById('preflightCloseBtn').addEventListener('click', function() {
         pendingPreflight = null;
         document.getElementById('preflightPanel').classList.add('hidden');
+        if (preflightReturnFocus && typeof preflightReturnFocus.focus === 'function') {
+            preflightReturnFocus.focus();
+        }
+        announceEditorStatus('已返回合同填写。');
+    });
+
+    document.getElementById('preflightPanel').addEventListener('keydown', function(event) {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        document.getElementById('preflightCloseBtn').click();
     });
 
     function showGenerationResult(result, blobUrl) {
