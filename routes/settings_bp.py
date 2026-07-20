@@ -15,6 +15,7 @@ from flask import (
     session,
     url_for,
 )
+from core.maintenance_gate import maintenance_gate
 
 from routes.legacy_blueprint import LegacyEndpointBlueprint
 
@@ -22,7 +23,7 @@ import ledger_store
 import pdf_exporter
 import template_def
 from config import config as app_config
-from services import handover_service
+from services import data_protection_service, handover_service
 from utils import helpers
 from utils.errors import wants_json, GENERIC_ERROR
 from utils.logger import get_logger
@@ -95,8 +96,12 @@ def _diagnostics_payload(include_autostart=True):
             # platform.platform() performs an expensive Windows probe on its
             # first call. The concise values below are sufficient here.
             'platform': f'{platform.system()} {platform.release()}',
-            'host': app_config.HOST,
-            'port': app_config.PORT,
+            'host': current_app.config.get(
+                'CONTRACT_TOOL_BIND_HOST', app_config.HOST
+            ),
+            'port': current_app.config.get(
+                'CONTRACT_TOOL_BIND_PORT', app_config.PORT
+            ),
             'debug': bool(app_config.DEBUG),
         },
         'paths': {
@@ -115,6 +120,9 @@ def _diagnostics_payload(include_autostart=True):
         },
         'autostart': autostart,
         'pdf': pdf_exporter.diagnose_environment(),
+        'data_protection': data_protection_service.data_protection_status(
+            current_app.extensions['runtime_paths']
+        ),
         'generation_integrity': generation_integrity,
         'recent_logs': _tail_lines(log_path),
     }
@@ -141,8 +149,53 @@ def _open_folder(path):
         raise RuntimeError('当前系统不支持从网页打开目录')
 
 
+def _register_data_protection_routes(bp):
+    @bp.route('/data-protection/enable', methods=['POST'])
+    def data_protection_enable():
+        if request.form.get('acknowledge_recovery') != '1':
+            message = '请先确认已了解 EFS 私钥丢失会导致数据无法恢复'
+            if wants_json():
+                return jsonify({'success': False, 'message': message}), 400
+            return redirect(url_for('diagnostics', protection_error=message))
+        try:
+            with maintenance_gate.exclusive():
+                ledger_store.close_connections()
+                report = data_protection_service.enable_data_protection(
+                    current_app.extensions['runtime_paths']
+            )
+            if not report['success']:
+                if report.get('rollback_errors'):
+                    message = (
+                        f"EFS 启用失败且回滚不完整，{len(report['rollback_errors'])} 项需人工处理；"
+                        '请立即查看日志'
+                    )
+                else:
+                    message = f"EFS 启用失败，已回滚 {report.get('rolled_back', 0)} 项"
+                get_logger().warning('EFS 部分启用: %s', report['errors'])
+                if wants_json():
+                    return jsonify({
+                        'success': False, 'message': message, 'report': report,
+                    }), 400
+                return redirect(url_for('diagnostics', protection_error=message))
+            message = f"EFS 已启用，共加密 {report['encrypted']} 个文件/目录"
+            if wants_json():
+                return jsonify({'success': True, 'message': message, 'report': report})
+            return redirect(url_for('diagnostics', protection_message=message))
+        except Exception as exc:
+            get_logger().error('启用本地数据保护失败: %s', exc, exc_info=True)
+            message = (
+                str(exc)
+                if isinstance(exc, data_protection_service.DataProtectionError)
+                else GENERIC_ERROR
+            )
+            if wants_json():
+                return jsonify({'success': False, 'message': message}), 400
+            return redirect(url_for('diagnostics', protection_error=message))
+
+
 def register(app):
     bp = LegacyEndpointBlueprint('settings', __name__)
+    _register_data_protection_routes(bp)
     @bp.route('/api/autostart/status')
     def autostart_status_api():
         return _autostart_json()

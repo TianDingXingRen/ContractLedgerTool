@@ -116,7 +116,7 @@ def recalculate_scalar_fields(fields, field_values):
         try:
             value = field_eval.safe_eval(formula, calc_context(fields, field_values))
             decimals = int(field.get('decimal_places', 2))
-            field_values[key] = str(field_eval.format_number(value, decimals))
+            field_values[key] = field_eval.format_number_text(value, decimals)
         except (field_eval.FormulaError, ValueError, TypeError) as e:
             errors.append(f'{field.get("label", key)} 公式计算失败：{e}')
     return errors
@@ -149,7 +149,7 @@ def recalculate_table_fields(fields, field_values):
                         ctx[ck] = to_calc_number(row.get(ck, '0'))
                     result = field_eval.safe_eval(col['formula'], ctx)
                     decimals = int(col.get('decimal_places', 2))
-                    row[col_key] = field_eval.format_number(result, decimals)
+                    row[col_key] = field_eval.format_number_text(result, decimals)
                 except (field_eval.FormulaError, ValueError, TypeError) as exc:
                     row[col_key] = ''
                     errors.append(

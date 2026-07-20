@@ -93,8 +93,22 @@ class ResolveTableAggregateTests(unittest.TestCase):
 class FormatNumberTests(unittest.TestCase):
     def test_round(self):
         self.assertEqual(field_eval.format_number(3.14159, 2), 3.14)
+        self.assertEqual(field_eval.format_number('2.675', 2), 2.68)
     def test_invalid(self):
         self.assertEqual(field_eval.format_number('abc', 2), 'abc')
+
+    def test_fixed_decimal_text_preserves_trailing_zeros(self):
+        self.assertEqual(field_eval.format_number_text('50', 2), '50.00')
+        self.assertEqual(field_eval.format_number_text('2.675', 2), '2.68')
+
+    def test_decimal_arithmetic_avoids_binary_float_artifacts(self):
+        self.assertEqual(field_eval.safe_eval('a + b', {'a': '0.1', 'b': '0.2'}), 0.3)
+        self.assertEqual(
+            field_eval.resolve_table_aggregate(
+                [{'v': '0.1'}, {'v': '0.2'}], 'v', 'SUM',
+            ),
+            0.3,
+        )
 
 class MakeColKeyTests(unittest.TestCase):
     def test_known(self):

@@ -5,6 +5,7 @@
 
 import argparse
 import json
+import multiprocessing
 import os
 import signal
 import sys
@@ -178,6 +179,8 @@ def create_app(runtime_base_dir=None, resource_dir=None, run_maintenance=True, t
     app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['MAX_CONTENT_LENGTH'] = app_config.MAX_CONTENT_LENGTH_MB * 1024 * 1024
+    app.config['CONTRACT_TOOL_BIND_HOST'] = app_config.HOST
+    app.config['CONTRACT_TOOL_BIND_PORT'] = app_config.PORT
     app.extensions['runtime_paths'] = RUNTIME_PATHS
     app.extensions['contract_tool'] = create_runtime_services(RUNTIME_PATHS)
 
@@ -303,6 +306,7 @@ def run_self_check(runtime_base_dir=None):
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', default=app_config.HOST)
     parser.add_argument('--port', default=app_config.PORT, type=int)
@@ -313,10 +317,15 @@ if __name__ == '__main__':
     if args.self_check:
         sys.exit(0 if run_self_check(args.runtime_dir) else 1)
     try:
-        validate_bind_host(args.host, app_config.ALLOW_REMOTE)
+        validate_bind_host(
+            args.host, app_config.ALLOW_REMOTE,
+            app_config.REMOTE_ACCESS_TOKEN,
+        )
     except ValueError as exc:
         parser.error(str(exc))
     flask_app = get_default_app()
+    flask_app.config['CONTRACT_TOOL_BIND_HOST'] = args.host
+    flask_app.config['CONTRACT_TOOL_BIND_PORT'] = args.port
     _register_signal_handlers()
     if should_open_browser(args.no_browser, app_config.DEBUG):
         _open_browser_later(f'http://{args.host}:{args.port}/')

@@ -43,4 +43,8 @@ def test_local_bind_hosts_are_allowed(host):
 def test_remote_bind_requires_explicit_opt_in():
     with pytest.raises(ValueError, match='CT_ALLOW_REMOTE'):
         validate_bind_host('0.0.0.0')
-    assert validate_bind_host('0.0.0.0', allow_remote=True) == '0.0.0.0'
+    with pytest.raises(ValueError, match='CT_REMOTE_ACCESS_TOKEN'):
+        validate_bind_host('0.0.0.0', allow_remote=True)
+    assert validate_bind_host(
+        '0.0.0.0', allow_remote=True, remote_token='0123456789abcdef'
+    ) == '0.0.0.0'

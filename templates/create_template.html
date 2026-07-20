@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}编制模板 - 采购业务平台{% endblock %}
-{% block breadcrumb %}create_template{% endblock %}
+{% block breadcrumb %}合同生成 / 新建模板{% endblock %}
 {% block content %}
 
 <div class="flex items-center justify-between mb-6">
     <div>
-        <h2 class="text-2xl font-bold">编制模板</h2>
+        <h1 class="text-2xl font-bold">编制模板</h1>
         <p class="text-base-content/50 text-sm mt-1">手工定义合同模板字段，或上传样式文档自动识别标记</p>
     </div>
     <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">返回首页</a>
@@ -17,7 +17,7 @@
         <div class="style-upload-header flex items-baseline gap-3 flex-wrap mb-4">
             <h2 class="card-title text-base">合同样式（可选）</h2>
             <span class="text-xs text-base-content/50">
-                上传 .docx 格式的合同样式文档，文档中的 <code class="badge badge-sm">{"{字段名}"}</code> 标记将被自动识别为字段
+                上传 .docx 或旧版 .doc 合同样式文档，文档中的 <code class="badge badge-sm">{"{字段名}"}</code> 标记将被自动识别为字段
             </span>
         </div>
 
@@ -30,7 +30,7 @@
             </div>
             <form method="post" action="{{ url_for('upload_style') }}" enctype="multipart/form-data" class="contents">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="file" name="file" accept=".docx" class="hidden" id="reUploadInput"
+                <input type="file" name="file" accept=".docx,.doc" class="hidden" id="reUploadInput"
                        data-builder-action="reupload-selected">
                 <button type="button" class="btn btn-ghost btn-sm" data-builder-action="choose-reupload">
                     重新上传
@@ -44,9 +44,9 @@
                          hover:border-primary hover:bg-primary/5 transition-all" id="dropZone"
                  data-builder-action="choose-file">
                 <i data-lucide="file-up" class="w-12 h-12 text-base-content/20 mx-auto mb-3"></i>
-                <p class="text-base-content/70">拖拽 .docx 文件到此处，或点击选择文件</p>
-                <p class="text-xs text-base-content/40 mt-1">支持 .docx 格式</p>
-                <input type="file" name="file" accept=".docx" id="fileInput" class="hidden"
+                <p class="text-base-content/70">拖拽 .docx 或 .doc 文件到此处，或点击选择文件</p>
+                <p class="text-xs text-base-content/40 mt-1">.doc 会通过本机 Word/WPS 隔离转换为 .docx</p>
+                <input type="file" name="file" accept=".docx,.doc" id="fileInput" class="hidden"
                        data-builder-action="file-selected">
                 <button type="submit" class="btn btn-primary btn-sm mt-4">
                     <i data-lucide="upload" class="w-4 h-4"></i> 上传样式

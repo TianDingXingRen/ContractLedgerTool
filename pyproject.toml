@@ -14,6 +14,7 @@ markers = [
     "packaging: 桌面打包与隔离运行检查",
     "slow: 慢速测试",
     "e2e: 端到端测试（需要完整环境）",
+    "performance: 性能预算测试（必须在无 coverage 插桩下运行）",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -36,7 +37,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 70
+fail_under = 72
 show_missing = true
 skip_covered = true
 exclude_also = [

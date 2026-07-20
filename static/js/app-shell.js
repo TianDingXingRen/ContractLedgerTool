@@ -231,6 +231,19 @@ function toastCenter() {
     if (sidebar) sidebar.classList.toggle('open');
   });
 
+  document.addEventListener('change', (event) => {
+    const input = event.target.closest
+      ? event.target.closest('[data-file-picker] input[type="file"]')
+      : null;
+    if (!input) return;
+    const picker = input.closest('[data-file-picker]');
+    const name = picker ? picker.querySelector('[data-file-name]') : null;
+    if (!name) return;
+    name.textContent = input.files && input.files.length
+      ? input.files[0].name
+      : '未选择文件';
+  });
+
   window.showToast = showToast;
   window.confirmAction = confirmAction;
   window.showNotice = showNotice;

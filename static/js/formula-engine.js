@@ -189,7 +189,10 @@
 
   function triggerCalc(changedId) {
     var fieldDefs = (window.ContractEditor && window.ContractEditor.config.fields) || [];
-    var changedField = fieldDefs.find(function (f) { return f.id === changedId; });
+    var normalizedChangedId = String(changedId);
+    var changedField = fieldDefs.find(function (f) {
+      return String(f.id) === normalizedChangedId;
+    });
     if (!changedField || !changedField.key) return;
     var changedKey = changedField.key;
     document.querySelectorAll('.calc-result').forEach(function (el) {

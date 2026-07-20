@@ -19,10 +19,17 @@ def is_loopback_host(host):
         return False
 
 
-def validate_bind_host(host, allow_remote=False):
+def validate_bind_host(host, allow_remote=False, remote_token=''):
     """Reject accidental network exposure unless explicitly enabled."""
-    if is_loopback_host(host) or allow_remote:
+    if is_loopback_host(host):
         return host
+    if allow_remote and len(str(remote_token or '')) >= 16:
+        return host
+    if allow_remote:
+        raise ValueError(
+            '局域网访问必须设置至少 16 位的 CT_REMOTE_ACCESS_TOKEN，'
+            '浏览器登录时将该令牌作为密码使用'
+        )
     raise ValueError(
         '为保护本地合同数据，默认仅允许监听 127.0.0.1/::1；'
         '如确需局域网访问，请显式设置 CT_ALLOW_REMOTE=1'

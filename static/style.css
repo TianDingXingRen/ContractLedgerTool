@@ -899,7 +899,6 @@ body.column-resizing {
         grid-template-columns: 1fr;
     }
     .editor-assist-panel {
-        order: -1;
         max-height: 72dvh;
         overflow: hidden;
     }

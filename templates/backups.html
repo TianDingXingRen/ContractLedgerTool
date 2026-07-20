@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}数据备份 - 采购业务平台{% endblock %}
-{% block breadcrumb %}backups{% endblock %}
+{% block breadcrumb %}系统 / 备份管理{% endblock %}
 {% block content %}
 
 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
     <div>
-        <h2 class="text-2xl font-bold leading-tight">数据备份</h2>
+        <h1 class="text-2xl font-bold leading-tight">数据备份</h1>
         <p class="text-xs text-base-content/50 mt-1">完整数据包、离职交接清单和本地数据库快照</p>
     </div>
     <div class="flex items-center gap-2">
@@ -48,9 +48,14 @@
                 </button>
             </form>
             <form method="post" action="{{ url_for('full_backup_upload') }}" enctype="multipart/form-data"
-                  class="flex items-center gap-2">
+                  class="flex flex-wrap items-center gap-2" data-file-picker>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input class="file-input file-input-bordered file-input-sm w-48" type="file" name="file" accept=".zip" required>
+                <label class="btn btn-ghost btn-sm cursor-pointer">
+                    <i data-lucide="folder-open" class="w-4 h-4"></i> 选择数据包
+                    <input class="sr-only" type="file" name="file" accept=".zip" required
+                           aria-label="选择完整数据包 ZIP 文件">
+                </label>
+                <span class="text-xs text-base-content/50 max-w-48 truncate" data-file-name>未选择文件</span>
                 <button type="submit" class="btn btn-ghost btn-sm">
                     <i data-lucide="upload" class="w-4 h-4"></i> 上传校验
                 </button>

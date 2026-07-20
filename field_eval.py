@@ -5,9 +5,9 @@
 
 import ast
 import functools
-import math
 import operator
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from utils.constants import FieldType
 
@@ -25,7 +25,7 @@ MAX_FORMULA_LENGTH = 500
 MAX_AST_NODES = 100
 MAX_FUNC_ARGS = 100
 MAX_LIST_ITEMS = 100
-MAX_ABS_NUMBER = 1_000_000_000_000
+MAX_ABS_NUMBER = Decimal('1000000000000')
 
 
 class FormulaError(ValueError):
@@ -70,8 +70,8 @@ class _EvalVisitor(ast.NodeVisitor):
                 if val is None or val == '':
                     raise FormulaError(f'变量 {node.id} 未设置')
                 try:
-                    return _checked_number(float(val))
-                except (ValueError, TypeError):
+                    return _checked_number(val)
+                except (ValueError, TypeError, InvalidOperation):
                     raise FormulaError(f'变量 {node.id} 的值 "{val}" 不是有效数字')
             raise FormulaError(f'未找到变量: {node.id}')
         elif isinstance(node, ast.Call):
@@ -161,10 +161,10 @@ class _ValidateVisitor(ast.NodeVisitor):
 
 def _checked_number(value):
     try:
-        number = float(value)
-    except (TypeError, ValueError):
+        number = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (TypeError, ValueError, InvalidOperation):
         raise FormulaError('公式结果不是数字')
-    if not math.isfinite(number) or abs(number) > MAX_ABS_NUMBER:
+    if not number.is_finite() or abs(number) > MAX_ABS_NUMBER:
         raise FormulaError('公式数值超出允许范围')
     return number
 
@@ -220,7 +220,7 @@ def safe_eval(expr, context=None):
         tree = _parse_formula(expr)
         visitor = _EvalVisitor(context)
         result = visitor.visit(tree)
-        return _checked_number(result)
+        return float(_checked_number(result))
     except FormulaError:
         raise
     except Exception as e:
@@ -241,22 +241,19 @@ def resolve_table_aggregate(rows_data, column_key, func='SUM'):
     values = []
     for row in rows_data:
         raw = row.get(column_key, 0)
-        if isinstance(raw, (int, float)):
-            values.append(raw)
-        else:
-            try:
-                values.append(float(raw))
-            except (ValueError, TypeError):
-                values.append(0)
+        try:
+            values.append(_checked_number(raw))
+        except FormulaError:
+            values.append(Decimal('0'))
 
     if func == 'SUM':
-        return sum(values)
+        return float(sum(values, Decimal('0')))
     elif func == 'AVG':
-        return sum(values) / len(values) if values else 0
+        return float(sum(values, Decimal('0')) / len(values)) if values else 0
     elif func == 'MAX':
-        return max(values) if values else 0
+        return float(max(values)) if values else 0
     elif func == 'MIN':
-        return min(values) if values else 0
+        return float(min(values)) if values else 0
     elif func == 'COUNT':
         return len(values)
     return 0
@@ -361,12 +358,26 @@ def _get_calc_deps(field):
 
 
 def format_number(value, decimal_places=2):
-    """格式化数字，保留指定位数小数"""
+    """按财务常用的四舍五入规则格式化数字。"""
     try:
-        v = float(value)
-        return round(v, decimal_places)
-    except (ValueError, TypeError):
+        places = max(0, min(6, int(decimal_places)))
+        number = _checked_number(value)
+        quantum = Decimal('1').scaleb(-places)
+        return float(number.quantize(quantum, rounding=ROUND_HALF_UP))
+    except (ValueError, TypeError, InvalidOperation, FormulaError):
         return value
+
+
+def format_number_text(value, decimal_places=2):
+    """按固定小数位返回财务数字文本，保留末尾零。"""
+    try:
+        places = max(0, min(6, int(decimal_places)))
+        number = _checked_number(value)
+        quantum = Decimal('1').scaleb(-places)
+        rounded = number.quantize(quantum, rounding=ROUND_HALF_UP)
+        return format(rounded, f'.{places}f')
+    except (ValueError, TypeError, InvalidOperation, FormulaError):
+        return str(value)
 
 
 def get_calc_deps(field):

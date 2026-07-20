@@ -45,6 +45,15 @@ GitHub Environments、组织密钥库或硬件签名服务注入凭据。
 
 ## 发布验收
 
+正式发布门禁不允许生成未签名产物。`quality_gate.py release` 会检查内层应用和外层安装器的
+Authenticode 状态及可信时间戳；GitHub Release 工作流要求配置以下仓库或 Environment secrets：
+
+- `CODESIGN_PFX_BASE64`：PFX 文件的 Base64 内容；
+- `CODESIGN_PFX_PASSWORD`：PFX 密码；
+- `CODESIGN_TIMESTAMP_URL`：可选的 RFC 3161 时间戳地址，未设置时使用签名脚本默认值。
+
+任何凭据缺失、签名失败或时间戳验证失败都会中止发布。
+
 构建完成后必须验证最终文件：
 
 ```powershell

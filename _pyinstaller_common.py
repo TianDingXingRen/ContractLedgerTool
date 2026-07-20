@@ -8,6 +8,7 @@ build_desktop_exe / build_installer / build_package 共用此模块，
 import json
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -150,6 +151,73 @@ def write_version_file(target_dir, version_str=None):
     return version
 
 
+def write_windows_version_info(target_dir, executable_name, version_str=None):
+    """Create a PyInstaller VersionInfo resource for Windows executables."""
+    version = version_str or project_version()
+    match = re.match(r'^(\d+)\.(\d+)\.(\d+)', version)
+    if not match:
+        raise RuntimeError(f'无法从版本号生成 Windows 版本信息：{version!r}')
+    numeric_version = tuple(int(part) for part in match.groups()) + (0,)
+    file_version = '.'.join(str(part) for part in numeric_version)
+    target_dir = Path(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    version_path = target_dir / f'{executable_name}.version-info.txt'
+    version_path.write_text(
+        f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={numeric_version!r},
+    prodvers={numeric_version!r},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404B0',
+        [
+          StringStruct(u'CompanyName', u'Shao'),
+          StringStruct(u'FileDescription', u'采购业务平台单机版'),
+          StringStruct(u'FileVersion', u'{file_version}'),
+          StringStruct(u'InternalName', u'{executable_name}'),
+          StringStruct(u'LegalCopyright', u'Copyright (c) 2026 Shao'),
+          StringStruct(u'OriginalFilename', u'{executable_name}.exe'),
+          StringStruct(u'ProductName', u'采购业务平台'),
+          StringStruct(u'ProductVersion', u'{version}')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])])
+  ]
+)
+""",
+        encoding='utf-8',
+    )
+    return version_path
+
+
+def source_metadata():
+    """Return the Git revision and dirty state used for a local build."""
+    try:
+        commit = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True,
+            encoding='utf-8', errors='replace',
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        status = subprocess.check_output(
+            ['git', 'status', '--porcelain', '--untracked-files=normal'],
+            cwd=ROOT, text=True, encoding='utf-8', errors='replace',
+            stderr=subprocess.DEVNULL,
+        )
+        return {'source_commit': commit, 'source_dirty': bool(status.strip())}
+    except (OSError, subprocess.CalledProcessError):
+        return {'source_commit': 'unknown', 'source_dirty': True}
+
+
 def prepare_app_resources(res_dir, write_version=True):
     """准备 PyInstaller 打包所需的资源目录（static/templates/uploads/version）。
 
@@ -181,6 +249,15 @@ def prepare_app_resources(res_dir, write_version=True):
     }
     if write_version:
         manifest['version'] = write_version_file(res_dir)
+        manifest.update(source_metadata())
+        (res_dir / 'build-info.json').write_text(
+            json.dumps({
+                'version': manifest['version'],
+                'source_commit': manifest['source_commit'],
+                'source_dirty': manifest['source_dirty'],
+            }, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
     return manifest
 
 
@@ -209,12 +286,16 @@ def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,
     if icon_path and Path(icon_path).is_file():
         cmd.extend(['--icon', str(icon_path)])
 
+    version_info = write_windows_version_info(spec_path, name)
+    cmd.extend(['--version-file', str(version_info)])
+
     # 标准 --add-data 项
     add_data_items = [
         (res_dir / 'templates', 'templates'),
         (res_dir / 'static', 'static'),
         (res_dir / 'uploads', 'uploads'),
         (res_dir / 'version.txt', '.'),
+        (res_dir / 'build-info.json', '.'),
     ]
 
     if extra_data:

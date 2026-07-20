@@ -8,11 +8,13 @@ import re
 import uuid
 from collections import OrderedDict
 
-from flask import abort, g, request, session
+from flask import Response, abort, g, request, session
 
 from utils.errors import api_error, wants_json
 from utils.logger import reset_request_id, set_request_id
 from utils.security import hmac_compare
+from core.maintenance_gate import maintenance_gate
+from core.app_startup import is_loopback_host
 
 
 _rate_limit_store_path = OrderedDict()
@@ -83,12 +85,35 @@ def register_security_hooks(app, config):
 
     if app.testing:
         reset_rate_limit_state()
+        maintenance_gate.reset()
+
+    @app.before_request
+    def _enter_request_gate():
+        token, context_token = maintenance_gate.enter_request()
+        g.maintenance_gate_token = token
+        g.maintenance_gate_context_token = context_token
 
     @app.before_request
     def _attach_request_context():
         request_id = _safe_request_id(request.headers.get('X-Request-ID'))
         g.request_id = request_id
         g.request_id_token = set_request_id(request_id)
+
+    @app.before_request
+    def _protect_remote_access():
+        if is_loopback_host(request.remote_addr or ''):
+            return None
+        expected = str(getattr(config, 'REMOTE_ACCESS_TOKEN', '') or '')
+        authorization = request.authorization
+        provided = request.headers.get('X-Contract-Tool-Token', '')
+        if not provided and authorization and authorization.type.lower() == 'basic':
+            provided = authorization.password or ''
+        if expected and hmac_compare(expected, provided):
+            return None
+        return Response(
+            'Remote authentication required', status=401,
+            headers={'WWW-Authenticate': 'Basic realm="Contract Ledger Tool"'},
+        )
 
     @app.before_request
     def _protect_post_requests():
@@ -130,6 +155,10 @@ def register_security_hooks(app, config):
 
     @app.teardown_request
     def _release_request_context(_error=None):
-        token = g.pop('request_id_token', None)
-        if token is not None:
-            reset_request_id(token)
+        gate_token = g.pop('maintenance_gate_token', None)
+        gate_context_token = g.pop('maintenance_gate_context_token', None)
+        if gate_token is not None and gate_context_token is not None:
+            maintenance_gate.leave_request(gate_token, gate_context_token)
+        request_id_token = g.pop('request_id_token', None)
+        if request_id_token is not None:
+            reset_request_id(request_id_token)

@@ -1,102 +1,105 @@
-"""Full end-to-end integration test: load template, apply all fields, verify output."""
-import glob
-import os
-import sys
-import json
-import unittest
+"""Deterministic end-to-end document generation tests."""
 
-sys.path.insert(0, os.path.dirname(__file__))
+import json
+from pathlib import Path
+
+from docx import Document
 
 import docx_builder
 import field_eval
-from docx import Document
-from docx.oxml.ns import qn
-
-BASE = os.path.dirname(__file__)
+import template_def
 
 
-class EndToEndTest(unittest.TestCase):
+def _create_fixture(tmp_path: Path):
+    source = tmp_path / 'source.docx'
+    doc = Document()
+    doc.add_paragraph('合同编号：{合同编号}')
+    doc.add_paragraph('对方单位：{对方单位}')
+    table = doc.add_table(rows=2, cols=3)
+    table.rows[0].cells[0].text = '品名'
+    table.rows[0].cells[1].text = '数量'
+    table.rows[0].cells[2].text = '单价'
+    table.rows[1].cells[0].text = '{item_name}'
+    table.rows[1].cells[1].text = '{quantity}'
+    table.rows[1].cells[2].text = '{unit_price}'
+    doc.save(source)
 
-    @classmethod
-    def setUpClass(cls):
-        template_candidates = [
-            os.path.join(BASE, 'templates', 'Template1_Test.contract-template'),
-            os.path.join(BASE, 'templates', '订货.contract-template'),
-        ]
-        tpl_path = next((p for p in template_candidates if os.path.exists(p)), None)
-        if tpl_path is None:
-            available = sorted(glob.glob(os.path.join(BASE, 'templates', '*.contract-template')))
-            if not available:
-                raise unittest.SkipTest('No contract template found.')
-            tpl_path = available[0]
+    fields = [
+        {
+            'id': 0,
+            'key': 'contract_no',
+            'label': '合同编号',
+            'field_type': 'text',
+            'required': True,
+            'location': {'type': 'paragraph', 'body_index': 0, 'placeholder': '{合同编号}'},
+        },
+        {
+            'id': 1,
+            'key': 'counterparty',
+            'label': '对方单位',
+            'field_type': 'text',
+            'required': True,
+            'location': {'type': 'paragraph', 'body_index': 1, 'placeholder': '{对方单位}'},
+        },
+        {
+            'id': 2,
+            'key': 'items',
+            'label': '采购明细',
+            'field_type': 'table',
+            'required': True,
+            'columns': [
+                {'key': 'item_name', 'label': '品名', 'field_type': 'text'},
+                {'key': 'quantity', 'label': '数量', 'field_type': 'number'},
+                {'key': 'unit_price', 'label': '单价', 'field_type': 'number'},
+            ],
+            'location': {'type': 'table', 'table_index': 0, 'template_row_index': 1},
+        },
+    ]
+    template_path = tmp_path / 'fixture.contract-template'
+    template_path.write_text(json.dumps({
+        'format_version': '1.0',
+        'template_name': '集成测试模板',
+        'source_docx': source.name,
+        'fields': fields,
+    }, ensure_ascii=False), encoding='utf-8')
+    return source, template_path
 
-        with open(tpl_path, 'r', encoding='utf-8') as f:
-            cls.tpl = json.load(f)
 
-        cls.fields = cls.tpl['fields']
+def test_complete_document_generation_round_trip(tmp_path):
+    source, template_path = _create_fixture(tmp_path)
+    tpl = template_def.TemplateDef.load(template_path)
+    tpl.validate()
+    values = {
+        'contract_no': 'INT-20260720-001',
+        'counterparty': '集成测试供应商',
+        'items': [
+            {'item_name': '高强度螺栓', 'quantity': '100', 'unit_price': '8.50'},
+            {'item_name': '防松螺母', 'quantity': '100', 'unit_price': '2.30'},
+        ],
+    }
 
-        src = cls.tpl.get('source_docx', '')
-        src_path = os.path.join(BASE, 'uploads', src)
-        if not os.path.exists(src_path):
-            raise unittest.SkipTest(f'Source docx not found: {src_path}')
-
-        cls.src_path = src_path
-        cls.doc = Document(src_path)
-
-        cls.field_values = {}
-        for idx, f in enumerate(cls.fields):
-            key = f['key']
-            if f['field_type'] == 'table':
-                row = {}
-                for c in f.get('columns', []):
-                    row[c['key']] = f'{c["label"]}_测试'
-                cls.field_values[key] = [row]
-            else:
-                cls.field_values[key] = f'接报_{key}'
-
-    def test_template_loads(self):
-        self.assertIn('template_name', self.tpl)
-        self.assertIn('fields', self.tpl)
-        self.assertTrue(len(self.fields) > 0)
-
-    def test_apply_fields(self):
-        ordered_fields = field_eval.sort_fields_by_dependency(self.fields)
-        errors = []
-        for field in ordered_fields:
-            ftype = field['field_type']
-            key = field['key']
-            location = field.get('location', {})
-            if ftype == 'table':
-                try:
-                    docx_builder.apply_table_field(self.doc, field, self.field_values.get(key, []))
-                except Exception as e:
-                    errors.append(f'{key}: {e}')
-            else:
-                try:
-                    docx_builder.apply_text_field(self.doc, location, self.field_values.get(key, ''), field.get('label', ''), key)
-                except Exception as e:
-                    errors.append(f'{key}: {e}')
-        self.assertEqual(len(errors), 0, f'Field application errors: {errors}')
-
-    def test_paragraph_replacement(self):
-        body = self.doc.element.body
-        p0_text = ''.join(t.text or '' for t in body[0].iter(qn('w:t')))
-        replaced = any(
-            f'接报_{f["key"]}' in p0_text
-            for f in self.fields
-            if f.get('location', {}).get('body_index') == 0
-        )
-        if replaced:
-            self.assertTrue(replaced)
+    doc = Document(source)
+    for field in field_eval.sort_fields_by_dependency(tpl.data['fields']):
+        if field['field_type'] == 'table':
+            docx_builder.apply_table_field(doc, field, values[field['key']])
         else:
-            self.skipTest('No fields mapped to paragraph 0')
+            docx_builder.apply_text_field(
+                doc,
+                field['location'],
+                values[field['key']],
+                field['label'],
+                field['key'],
+            )
 
-    def test_output_save(self):
-        output_path = os.path.join(BASE, 'output', 'test_verify_output.docx')
-        self.doc.save(output_path)
-        self.assertTrue(os.path.exists(output_path))
-        self.assertGreater(os.path.getsize(output_path), 100)
+    output = tmp_path / 'generated.docx'
+    doc.save(output)
+    reopened = Document(output)
+    paragraphs = '\n'.join(p.text for p in reopened.paragraphs)
+    table_rows = [[cell.text for cell in row.cells] for row in reopened.tables[0].rows]
 
-
-if __name__ == '__main__':
-    unittest.main()
+    assert 'INT-20260720-001' in paragraphs
+    assert '集成测试供应商' in paragraphs
+    assert table_rows[1] == ['高强度螺栓', '100', '8.50']
+    assert table_rows[2] == ['防松螺母', '100', '2.30']
+    assert '{' not in paragraphs
+    assert all('{' not in cell for row in table_rows for cell in row)

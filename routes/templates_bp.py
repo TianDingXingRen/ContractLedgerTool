@@ -4,7 +4,6 @@ import os
 import uuid
 import json
 import shutil
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from flask import render_template, request, redirect, url_for, session, jsonify, send_file
 
@@ -13,9 +12,13 @@ from routes.legacy_blueprint import LegacyEndpointBlueprint
 import template_def
 import field_eval
 from services.contract_preview_service import editor_preview_model
+from services.legacy_doc_conversion_service import convert_doc_to_docx
 from utils import helpers
 from utils.logger import get_logger
-from utils.security import MAX_TEMPLATE_FIELDS, MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, bounded_int, bounded_decimal_places, limit_text
+from utils.security import (
+    MAX_TEMPLATE_FIELDS, MAX_TABLE_COLUMNS, MAX_TABLE_ROWS,
+    bounded_int, bounded_decimal_places, limit_text, validate_office_archive,
+)
 from utils.errors import safe_error, safe_parse_error, GENERIC_TEMPLATE_ERROR
 
 ALLOWED_EXTENSIONS = {'docx', 'doc'}
@@ -24,77 +27,32 @@ _DOC_CONVERT_TIMEOUT = 30  # 秒
 
 
 def _is_valid_docx(filepath):
-    """验证文件是否为合法的 DOCX (ZIP 格式) — 检查文件头魔数"""
+    """验证文件是否为结构安全且完整的 DOCX。"""
     try:
-        with open(filepath, 'rb') as f:
-            header = f.read(4)
-        return header == b'PK\x03\x04'
+        validate_office_archive(filepath)
+        return True
     except Exception:
         get_logger().debug('DOCX header validation failed: %s', filepath, exc_info=True)
         return False
 
 
 def _try_convert_doc_to_docx(doc_path):
-    """尝试将 .doc 转换为 .docx，返回转换后的路径或 None。
-
-    COM 操作在线程中执行，最多等待 _DOC_CONVERT_TIMEOUT 秒，
-    超时后终止本工具启动的 Word/WPS 进程。
-    """
+    """在隔离进程中将 .doc 转换为 .docx，失败时返回 None。"""
     target = doc_path.rsplit('.', 1)[0] + '.docx'
-    _state = {'proc': None}
-
-    def _convert():
-        # 方法1: 使用 pythoncom + Word
-        try:
-            import pythoncom
-            pythoncom.CoInitialize()
-            from win32com import client
-            word = client.Dispatch('Word.Application')
-            word.Visible = False
-            word.DisplayAlerts = 0
-            doc = word.Documents.Open(os.path.abspath(doc_path))
-            doc.SaveAs2(os.path.abspath(target), FileFormat=16)  # wdFormatXMLDocument
-            doc.Close()
-            word.Quit()
-            pythoncom.CoUninitialize()
-            if os.path.exists(target) and os.path.getsize(target) > 0:
-                return True
-        except Exception:
-            get_logger().debug('Word COM DOC conversion failed', exc_info=True)
-
-        # 方法2: 使用 WPS COM
-        for progid in ['WPS.Application', 'KWPS.Application', 'Ket.Application']:
-            try:
-                import pythoncom
-                pythoncom.CoInitialize()
-                from win32com import client
-                app = client.Dispatch(progid)
-                app.Visible = False
-                doc = app.Documents.Open(os.path.abspath(doc_path))
-                doc.SaveAs2(os.path.abspath(target), FileFormat=16)
-                doc.Close()
-                app.Quit()
-                pythoncom.CoUninitialize()
-                if os.path.exists(target) and os.path.getsize(target) > 0:
-                    return True
-            except Exception:
-                get_logger().debug('WPS COM DOC conversion failed: %s', progid, exc_info=True)
-
-        return False
-
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_convert)
-            try:
-                result = future.result(timeout=_DOC_CONVERT_TIMEOUT)
-            except FutureTimeoutError:
-                get_logger().warning('.doc 转换超时（%d 秒）', _DOC_CONVERT_TIMEOUT)
-                return None
-            if result:
-                return target
-    except Exception:
-        get_logger().warning('.doc 转换过程异常', exc_info=True)
-    return None
+        return convert_doc_to_docx(
+            doc_path, target, timeout=_DOC_CONVERT_TIMEOUT,
+        )
+    except Exception as exc:
+        get_logger().warning('.doc 转换失败: %s', exc, exc_info=True)
+        return None
+
+
+def _remove_failed_upload(filepath):
+    try:
+        os.remove(filepath)
+    except FileNotFoundError:
+        get_logger().debug('Failed DOCX upload already removed: %s', filepath)
 
 
 def _versions_with_comparisons(template_name):
@@ -353,6 +311,7 @@ def register(app):
         try:
             detected_fields = helpers.detect_markers(filepath)
         except Exception as e:
+            _remove_failed_upload(filepath)
             return safe_parse_error(e, 'DOCX占位符解析失败', 500)
 
         helpers.save_session_data(session_id, {

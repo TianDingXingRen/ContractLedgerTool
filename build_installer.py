@@ -14,7 +14,7 @@ import sys
 
 from _pyinstaller_common import (
     ROOT, reset_dir, copy_file, copy_tree, build_pyinstaller_cmd,
-    prepare_app_resources as _prepare_resources,
+    prepare_app_resources as _prepare_resources, write_windows_version_info,
 )
 
 
@@ -254,6 +254,9 @@ def build_installer_exe(stage):
     if ICON_PATH.is_file():
         cmd.extend(['--icon', str(ICON_PATH)])
 
+    version_info = write_windows_version_info(spec_path, INSTALLER_EXE_NAME)
+    cmd.extend(['--version-file', str(version_info)])
+
     cmd.extend([
         '--add-data', f'{stage};installer_package',
         str(bootstrap),
@@ -266,6 +269,11 @@ def build_installer_exe(stage):
 
 
 def main():
+    if os.environ.get('REQUIRE_CODE_SIGNING') == '1' and not should_sign():
+        raise RuntimeError(
+            '正式发布要求代码签名，请配置 CODESIGN_PFX 或 '
+            'CODESIGN_CERT_THUMBPRINT'
+        )
     removed = clean_legacy_dist_outputs()
     stage = INSTALLER_STAGE_DIR
 
@@ -277,6 +285,7 @@ def main():
     copy_file(app_exe, stage / f'{APP_EXE_NAME}.exe')
     copy_file(ROOT / 'setup_autostart.ps1', stage / 'setup_autostart.ps1')
     copy_file(ROOT / 'setup_autostart_remove.ps1', stage / 'setup_autostart_remove.ps1')
+    copy_file(ROOT / 'version.txt', stage / 'version.txt')
     normalize_powershell_encoding(stage)
 
     exe_path = build_installer_exe(stage)

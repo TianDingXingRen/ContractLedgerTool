@@ -1,6 +1,7 @@
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\ContractLedgerTool",
     [switch]$NoDesktopShortcut,
+    [switch]$EnableAutostart,
     [switch]$NoAutostart,
     [switch]$NoStart,
     [switch]$SkipSystemIntegrationCleanup,
@@ -397,6 +398,27 @@ function New-DesktopLauncher($InstallDir, $AppExe, $Port) {
     return $ShortcutPath
 }
 
+function Register-Uninstaller($InstallDir, $AppExe, $Version) {
+    $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ContractLedgerTool"
+    $UninstallScript = Join-Path $InstallDir "uninstall.ps1"
+    $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $UninstallCommand = "`"$PowerShellExe`" -NoProfile -ExecutionPolicy Bypass -File `"$UninstallScript`""
+    $QuietUninstallCommand = "$UninstallCommand -NoPrompt"
+    $EstimatedSize = [int][Math]::Ceiling((Get-Item -LiteralPath $AppExe).Length / 1KB)
+
+    New-Item -Path $RegistryPath -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "DisplayName" -Value "采购业务平台" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "DisplayVersion" -Value $Version -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "Publisher" -Value "Shao" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "DisplayIcon" -Value "$AppExe,0" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "InstallLocation" -Value $InstallDir -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "UninstallString" -Value $UninstallCommand -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "QuietUninstallString" -Value $QuietUninstallCommand -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "EstimatedSize" -Value $EstimatedSize -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "NoModify" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $RegistryPath -Name "NoRepair" -Value 1 -PropertyType DWord -Force | Out-Null
+}
+
 $PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppExeSource = Join-Path $PackageRoot "ContractLedgerTool.exe"
 if (-not (Test-Path -LiteralPath $AppExeSource)) {
@@ -412,7 +434,9 @@ $ManagedFiles = @(
     "start.ps1",
     "stop.ps1",
     "setup_autostart.ps1",
-    "setup_autostart_remove.ps1"
+    "setup_autostart_remove.ps1",
+    "uninstall.ps1",
+    "version.txt"
 )
 $RollbackSnapshot = New-InstallRollbackSnapshot $InstallDir $ManagedFiles
 
@@ -426,7 +450,7 @@ try {
     }
     Install-StagedExecutable $StagedAppExe $AppExe
 
-    foreach ($script in @("start.ps1", "stop.ps1", "setup_autostart.ps1", "setup_autostart_remove.ps1")) {
+    foreach ($script in @("start.ps1", "stop.ps1", "setup_autostart.ps1", "setup_autostart_remove.ps1", "uninstall.ps1", "version.txt")) {
         $src = Join-Path $PackageRoot $script
         if (Test-Path -LiteralPath $src) {
             $dst = Join-Path $InstallDir $script
@@ -461,7 +485,7 @@ if (-not $SkipSystemIntegrationCleanup) {
     Clear-ExistingAutostart
 }
 
-if (-not $NoAutostart) {
+if ($EnableAutostart -and -not $NoAutostart) {
     Write-Step "Enabling auto-start"
     $SetupScript = Join-Path $InstallDir "setup_autostart.ps1"
     $AutostartEnabled = Invoke-OptionalPowerShellFile "Auto-start setup" $SetupScript @("-AppDir", $InstallDir, "-NoPrompt", "-Port", "$Port")
@@ -477,6 +501,19 @@ if (-not $NoDesktopShortcut) {
     }
 }
 
+if (-not $SkipSystemIntegrationCleanup) {
+    try {
+        $Version = "unknown"
+        $VersionPath = Join-Path $InstallDir "version.txt"
+        if (Test-Path -LiteralPath $VersionPath) {
+            $Version = (Get-Content -LiteralPath $VersionPath -Raw -Encoding UTF8).Trim()
+        }
+        Register-Uninstaller $InstallDir $AppExe $Version
+    } catch {
+        Write-Host "Windows uninstall registration failed: $_" -ForegroundColor Yellow
+    }
+}
+
 Write-Step "Installation complete"
 Write-Host "Install directory: $InstallDir"
 Write-Host "Offline app:       $AppExe"
@@ -488,12 +525,14 @@ if (-not $NoDesktopShortcut) {
         Write-Host "Desktop launcher:  skipped"
     }
 }
-if (-not $NoAutostart) {
+if ($EnableAutostart -and -not $NoAutostart) {
     if ($AutostartEnabled) {
         Write-Host "Auto-start:        enabled"
     } else {
         Write-Host "Auto-start:        skipped"
     }
+} else {
+    Write-Host "Auto-start:        disabled (opt in with -EnableAutostart)"
 }
 Write-Host ""
 

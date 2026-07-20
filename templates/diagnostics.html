@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}诊断信息 - 采购业务平台{% endblock %}
-{% block breadcrumb %}diagnostics{% endblock %}
+{% block breadcrumb %}系统 / 系统诊断{% endblock %}
 {% block content %}
 
 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
     <div>
-        <h2 class="text-2xl font-bold leading-tight">诊断信息</h2>
+        <h1 class="text-2xl font-bold leading-tight">诊断信息</h1>
         <p class="text-xs text-base-content/50 mt-1">运行路径、PDF 支持、自启动状态、最近日志和数据备份</p>
     </div>
     <div class="flex flex-wrap items-center gap-2">
@@ -33,6 +33,12 @@
 </div>
 
 <div id="diagnosticsToast" class="hidden alert mb-3 text-sm"></div>
+{% if request.args.get('protection_message') %}
+<div class="alert alert-success mb-3 text-sm">{{ request.args.get('protection_message') }}</div>
+{% endif %}
+{% if request.args.get('protection_error') %}
+<div class="alert alert-error mb-3 text-sm">{{ request.args.get('protection_error') }}</div>
+{% endif %}
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">
@@ -46,6 +52,33 @@
             <dt class="text-base-content/50">合同数量</dt><dd data-diagnostics-field="contracts">{{ diagnostics.counts.contracts }}</dd>
             <dt class="text-base-content/50">备份数量</dt><dd data-diagnostics-field="backups">{{ diagnostics.counts.backups }}</dd>
         </dl>
+    </section>
+
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4" data-testid="data-protection-panel">
+        <div class="flex items-center justify-between gap-2 mb-3">
+            <h3 class="font-semibold text-sm">本地数据保护</h3>
+            <span class="badge badge-sm {{ 'badge-success' if diagnostics.data_protection.enabled else ('badge-warning' if diagnostics.data_protection.partial else 'badge-ghost') }}">
+                {{ '已加密' if diagnostics.data_protection.enabled else ('部分加密' if diagnostics.data_protection.partial else '未启用') }}
+            </span>
+        </div>
+        <p class="text-sm mb-2">{{ diagnostics.data_protection.description }}</p>
+        <p class="text-xs text-warning mb-3">{{ diagnostics.data_protection.warning }}</p>
+        <p class="text-xs text-base-content/50 mb-3">
+            保护范围：数据库和备份、合同模板、上传源文件、生成文件及填写会话。EFS 防护磁盘脱机读取和其他 Windows 用户，不能防护当前已登录账户中的恶意程序。
+        </p>
+        {% if diagnostics.data_protection.supported and not diagnostics.data_protection.enabled %}
+        <form method="post" action="{{ url_for('data_protection_enable') }}"
+              data-confirm="启用后，数据与当前 Windows 用户的 EFS 证书绑定。确认继续？"
+              data-confirm-title="启用 Windows EFS"
+              data-confirm-ok="启用加密">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="flex items-start gap-2 text-xs mb-3">
+                <input type="checkbox" class="checkbox checkbox-sm mt-0.5" name="acknowledge_recovery" value="1" required>
+                <span>我已了解：重装系统或丢失 EFS 私钥可能造成数据永久无法恢复；启用后会立即导出并离线保管证书与私钥。</span>
+            </label>
+            <button type="submit" class="btn btn-primary btn-sm" data-testid="enable-data-protection">启用本地数据加密</button>
+        </form>
+        {% endif %}
     </section>
 
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">

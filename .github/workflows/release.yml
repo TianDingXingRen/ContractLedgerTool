@@ -45,6 +45,31 @@ jobs:
           npm ci
           python -m playwright install chromium
 
+      - name: Prepare required code-signing certificate
+        shell: pwsh
+        env:
+          CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD_SECRET: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+          CODESIGN_TIMESTAMP_URL_SECRET: ${{ secrets.CODESIGN_TIMESTAMP_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CODESIGN_PFX_BASE64)) {
+            throw "CODESIGN_PFX_BASE64 secret is required for an official release."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CODESIGN_PFX_PASSWORD_SECRET)) {
+            throw "CODESIGN_PFX_PASSWORD secret is required for an official release."
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "contract-ledger-codesign.pfx"
+          [System.IO.File]::WriteAllBytes(
+            $pfxPath,
+            [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64)
+          )
+          "CODESIGN_PFX=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODESIGN_PFX_PASSWORD=$env:CODESIGN_PFX_PASSWORD_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (-not [string]::IsNullOrWhiteSpace($env:CODESIGN_TIMESTAMP_URL_SECRET)) {
+            "CODESIGN_TIMESTAMP_URL=$env:CODESIGN_TIMESTAMP_URL_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          "REQUIRE_CODE_SIGNING=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run release gate and build single installer
         run: python scripts/quality_gate.py release --build-installer
 

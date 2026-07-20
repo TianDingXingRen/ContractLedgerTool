@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import sqlite3
+import uuid
 from datetime import date, datetime
 
 from utils.logger import get_logger
@@ -131,11 +132,32 @@ def backup_path(backup_dir, filename):
 def restore_backup(db_path, data_dir, backup_dir, filename, create_backup_func):
     src = backup_path(backup_dir, filename)
     _validate_sqlite_backup(src)
+    rollback = None
     if os.path.exists(db_path):
-        create_backup_func('before_restore')
+        rollback = create_backup_func('before_restore')
+    replace_database(db_path, data_dir, src)
+    return db_path, rollback
+
+
+def replace_database(db_path, data_dir, source_path):
+    """Validate and atomically replace a SQLite database file."""
     os.makedirs(data_dir, exist_ok=True)
-    shutil.copy2(src, db_path)
-    return db_path
+    temp_path = os.path.join(data_dir, f'.restore_{uuid.uuid4().hex}.db')
+    try:
+        shutil.copy2(source_path, temp_path)
+        _validate_sqlite_backup(temp_path)
+        os.replace(temp_path, db_path)
+        for suffix in ('-wal', '-shm'):
+            sidecar = db_path + suffix
+            try:
+                os.remove(sidecar)
+            except FileNotFoundError:
+                get_logger().debug('SQLite sidecar already absent: %s', sidecar)
+    finally:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            get_logger().debug('Restore staging database already absent: %s', temp_path)
 
 
 def _copy_database(db_path, target_path):

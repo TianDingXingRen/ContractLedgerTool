@@ -45,6 +45,7 @@ class Config:
     PORT = 5000
     DEBUG = False
     ALLOW_REMOTE = False
+    REMOTE_ACCESS_TOKEN = ''
     MAX_CONTENT_LENGTH_MB = 50
     CLEANUP_DAYS = 7
     RATE_LIMITS = {
@@ -76,6 +77,7 @@ class Config:
                 setattr(self, key, tuple(value))
             else:
                 setattr(self, key, copy.deepcopy(value))
+        self.REMOTE_ACCESS_TOKEN = ''
 
     def reload(self, base_dir=None):
         if base_dir is not None:
@@ -178,6 +180,7 @@ class Config:
                         '环境变量 CT_LOG_LEVEL 值 "%s" 无效，使用默认值', env_val)
             else:
                 setattr(self, key, env_val)
+        self.REMOTE_ACCESS_TOKEN = os.environ.get('CT_REMOTE_ACCESS_TOKEN', '').strip()
 
 
 config = Config()

@@ -54,5 +54,6 @@ jobs:
           path: |
             build/coverage.xml
             build/coverage.json
+            build/office-compatibility.json
           if-no-files-found: ignore
           retention-days: 14

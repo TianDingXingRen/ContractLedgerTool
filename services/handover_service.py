@@ -13,6 +13,7 @@ from datetime import date, datetime
 import ledger_store
 import template_def
 import xlsx_exporter
+from core.maintenance_gate import maintenance_gate
 from services.handover_archive import (
     add_directory as _add_directory,
     add_file as _add_file,
@@ -22,6 +23,8 @@ from services.handover_archive import (
     safe_label as _safe_label,
     sha256_zip_member as _sha256_zip_member,
     validate_sqlite_file as _validate_sqlite_file,
+    validate_package_archive as _validate_package_archive,
+    MAX_MANIFEST_BYTES,
 )
 from utils import helpers
 from utils.labels import (
@@ -211,8 +214,14 @@ def full_package_path(filename):
 
 def read_package_manifest(path):
     with zipfile.ZipFile(path, 'r') as zf:
+        try:
+            manifest_info = zf.getinfo(MANIFEST_NAME)
+        except KeyError as exc:
+            raise ValueError('完整数据包缺少 manifest.json') from exc
+        if manifest_info.file_size > MAX_MANIFEST_BYTES:
+            raise ValueError('完整数据包 manifest.json 过大')
         with zf.open(MANIFEST_NAME) as f:
-            manifest = json.loads(f.read().decode('utf-8'))
+            manifest = json.loads(f.read(MAX_MANIFEST_BYTES + 1).decode('utf-8'))
     if manifest.get('package_type') != PACKAGE_TYPE:
         raise ValueError('不是本工具生成的完整数据包')
     return manifest
@@ -222,11 +231,11 @@ def validate_full_backup_package(path):
     if not zipfile.is_zipfile(path):
         raise ValueError('完整数据包不是有效 ZIP 文件')
     with zipfile.ZipFile(path, 'r') as zf:
-        infos = {_normalize_archive_name(info.filename): info for info in zf.infolist()}
+        archive_infos, infos = _validate_package_archive(zf)
         names = set(infos)
         if MANIFEST_NAME not in names:
             raise ValueError('完整数据包缺少 manifest.json')
-        for info in zf.infolist():
+        for info in archive_infos:
             normalized = _normalize_archive_name(info.filename)
             if not _member_allowed(normalized):
                 raise ValueError('完整数据包包含不允许恢复的路径')
@@ -234,6 +243,8 @@ def validate_full_backup_package(path):
         manifest_files = {}
         for item in manifest.get('files') or []:
             file_path = _normalize_archive_name(item.get('path'))
+            if file_path in manifest_files:
+                raise ValueError('完整数据包清单包含重复文件路径')
             manifest_files[file_path] = item
         for name, info in infos.items():
             if name == MANIFEST_NAME or info.is_dir():
@@ -244,6 +255,8 @@ def validate_full_backup_package(path):
             info = infos.get(name)
             if info is None or info.is_dir():
                 raise ValueError('完整数据包文件缺失')
+            if int(item.get('size', -1)) != info.file_size:
+                raise ValueError('完整数据包文件大小与清单不一致')
             expected_sha = str(item.get('sha256') or '').lower()
             if expected_sha and _sha256_zip_member(zf, name) != expected_sha:
                 raise ValueError('完整数据包文件校验失败')
@@ -335,7 +348,26 @@ def _replace_from_staging(staging_dir, originals_dir):
                 shutil.copy2(stage_path, target_path)
             copied_targets.append(target_path)
     except Exception:
-        for target_path in reversed(copied_targets):
+        _rollback_replacements(moved_originals, copied_targets)
+        raise
+    return moved_originals, copied_targets
+
+
+def _rollback_replacements(moved_originals, copied_targets):
+    for target_path in reversed(copied_targets):
+        if os.path.isdir(target_path):
+            shutil.rmtree(target_path, ignore_errors=True)
+        else:
+            try:
+                os.remove(target_path)
+            except FileNotFoundError:
+                get_logger().debug('Rollback target already absent: %s', target_path)
+            except OSError:
+                get_logger().error(
+                    '恢复回滚时无法删除已复制文件: %s', target_path, exc_info=True,
+                )
+    for target_path, backup_path in reversed(moved_originals):
+        if os.path.exists(target_path):
             if os.path.isdir(target_path):
                 shutil.rmtree(target_path, ignore_errors=True)
             else:
@@ -343,46 +375,50 @@ def _replace_from_staging(staging_dir, originals_dir):
                     os.remove(target_path)
                 except OSError:
                     get_logger().error(
-                        '恢复回滚时无法删除已复制文件: %s', target_path, exc_info=True,
+                        '恢复回滚时无法清理目标文件: %s', target_path, exc_info=True,
                     )
-        for target_path, backup_path in reversed(moved_originals):
-            if os.path.exists(target_path):
-                if os.path.isdir(target_path):
-                    shutil.rmtree(target_path, ignore_errors=True)
-                else:
-                    try:
-                        os.remove(target_path)
-                    except OSError:
-                        get_logger().error(
-                            '恢复回滚时无法清理目标文件: %s', target_path, exc_info=True,
-                        )
-            if os.path.exists(backup_path):
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                shutil.move(backup_path, target_path)
-        raise
+        if os.path.exists(backup_path):
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            shutil.move(backup_path, target_path)
 
 
 def restore_full_backup_package(filename):
-    path = full_package_path(filename)
-    manifest = validate_full_backup_package(path)
-    rollback = create_full_backup_package(label='before_full_restore')
+    import procurement_store
 
-    staging_dir = tempfile.mkdtemp(prefix='restore_stage_', dir=_package_dir())
-    originals_dir = tempfile.mkdtemp(prefix='restore_original_', dir=_package_dir())
-    try:
-        ledger_store.close_connections()
-        _extract_zip_safe(path, staging_dir)
-        _replace_from_staging(staging_dir, originals_dir)
-        ledger_store.init_db()
+    with maintenance_gate.exclusive():
+        path = full_package_path(filename)
+        manifest = validate_full_backup_package(path)
+        rollback = create_full_backup_package(label='before_full_restore')
+
+        staging_dir = tempfile.mkdtemp(prefix='restore_stage_', dir=_package_dir())
+        originals_dir = tempfile.mkdtemp(prefix='restore_original_', dir=_package_dir())
+        replacement_state = None
         try:
-            import procurement_store
+            ledger_store.close_connections()
+            _extract_zip_safe(path, staging_dir)
+            replacement_state = _replace_from_staging(staging_dir, originals_dir)
+            ledger_store.init_db()
             procurement_store.init_db()
+            return {'rollback': rollback, 'manifest': manifest}
         except Exception:
-            get_logger().warning('恢复完整数据包后初始化采购表失败', exc_info=True)
-        return {'rollback': rollback, 'manifest': manifest}
-    finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
-        shutil.rmtree(originals_dir, ignore_errors=True)
+            if replacement_state is not None:
+                get_logger().error('完整数据包恢复失败，正在自动回滚', exc_info=True)
+                ledger_store.close_connections()
+                _rollback_replacements(*replacement_state)
+                for suffix in ('-wal', '-shm'):
+                    try:
+                        os.remove(ledger_store.DB_PATH + suffix)
+                    except FileNotFoundError:
+                        get_logger().debug(
+                            'Restored SQLite sidecar already absent: %s',
+                            ledger_store.DB_PATH + suffix,
+                        )
+                ledger_store.init_db()
+                procurement_store.init_db()
+            raise
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            shutil.rmtree(originals_dir, ignore_errors=True)
 
 
 def list_handover_owners(limit=200):

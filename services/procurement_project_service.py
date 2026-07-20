@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import io
+import itertools
+import os
+import tempfile
+
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -17,8 +22,10 @@ from utils.constants import (
 )
 from utils.money import to_minor, from_minor
 from utils.logger import get_logger
+from utils.security import MAX_TEXT_VALUE_LENGTH, limit_text, validate_office_archive
 
 
+MAX_PROCUREMENT_IMPORT_ROWS = 1000
 STATUS_TRANSITIONS = {
     'draft': {'documents_ready', 'inquiry_sent', 'quotes_received', 'archived'},
     'documents_ready': {'draft', 'inquiry_sent', 'quotes_received', 'archived'},
@@ -351,11 +358,13 @@ def add_items_from_rows(project_id, rows):
     parsed = []
     errors = []
     for row_number, row in enumerate(rows, start=1):
+        if row_number > MAX_PROCUREMENT_IMPORT_ROWS:
+            raise ValueError(f'采购明细一次最多导入 {MAX_PROCUREMENT_IMPORT_ROWS} 行')
         values = list(row) + [''] * 8
         if not any(str(value or '').strip() for value in values):
             continue
-        item_name = str(values[0] or '').strip()
-        unit = str(values[4] or '').strip()
+        item_name = limit_text(values[0], MAX_TEXT_VALUE_LENGTH).strip()
+        unit = limit_text(values[4], 120).strip()
         try:
             quantity = Decimal(str(values[3] or '').strip())
         except InvalidOperation:
@@ -365,12 +374,12 @@ def add_items_from_rows(project_id, rows):
             errors.append(f'第 {row_number} 行物资名称、正数数量和单位为必填项')
             continue
         parsed.append({
-            'item_name': item_name, 'spec_model': str(values[1] or '').strip(),
-            'drawing_no': str(values[2] or '').strip(),
+            'item_name': item_name, 'spec_model': limit_text(values[1], 1000).strip(),
+            'drawing_no': limit_text(values[2], 500).strip(),
             'quantity_text': format(quantity.normalize(), 'f'), 'unit': unit,
-            'required_delivery_date': str(values[5] or '').strip(),
-            'technical_requirement': str(values[6] or '').strip(),
-            'remark': str(values[7] or '').strip(),
+            'required_delivery_date': limit_text(values[5], 120).strip(),
+            'technical_requirement': limit_text(values[6], MAX_TEXT_VALUE_LENGTH).strip(),
+            'remark': limit_text(values[7], 2000).strip(),
         })
     if errors:
         raise ValueError('；'.join(errors[:20]))
@@ -380,18 +389,44 @@ def add_items_from_rows(project_id, rows):
 
 
 def add_items_from_paste(project_id, text):
-    rows = [line.split('\t') for line in str(text or '').splitlines()]
+    rows = (line.rstrip('\r\n').split('\t') for line in io.StringIO(str(text or '')))
     return add_items_from_rows(project_id, rows)
 
 
 def add_items_from_excel(project_id, file_storage):
     from openpyxl import load_workbook
-    workbook = load_workbook(file_storage.stream, data_only=True, read_only=True)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if rows and str(rows[0][0] or '').strip() in {'物资名称', '产品名称', '标的名称'}:
-        rows = rows[1:]
-    return add_items_from_rows(project_id, rows)
+
+    filename = str(getattr(file_storage, 'filename', '') or '')
+    if not filename.lower().endswith('.xlsx'):
+        raise ValueError('采购明细批量导入仅支持 .xlsx 格式')
+    temp_path = ''
+    workbook = None
+    row_iterator = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as temp_file:
+            temp_path = temp_file.name
+        file_storage.save(temp_path)
+        validate_office_archive(temp_path)
+        workbook = load_workbook(temp_path, data_only=True, read_only=True)
+        row_iterator = iter(workbook.active.iter_rows(values_only=True))
+        first = next(row_iterator, None)
+        if first is None:
+            raise ValueError('没有可导入的采购明细')
+        if str(first[0] or '').strip() not in {'物资名称', '产品名称', '标的名称'}:
+            rows = itertools.chain([first], row_iterator)
+        else:
+            rows = row_iterator
+        return add_items_from_rows(project_id, rows)
+    finally:
+        if row_iterator is not None and hasattr(row_iterator, 'close'):
+            row_iterator.close()
+        if workbook is not None:
+            workbook.close()
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                get_logger().debug('Procurement import temp file already absent: %s', temp_path)
 
 
 def add_supplier(project_id, form):

@@ -1,20 +1,24 @@
 """Convert .docx to .pdf using Word COM (Windows only) with LibreOffice fallback.
 
 Falls back gracefully if Word is not installed or COM is unavailable.
-COM calls run in a thread with a 30-second timeout to prevent blocking.
+COM calls run in an isolated process with a bounded timeout.
 """
 
 import os
 import subprocess
 import sys
-import time
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from importlib.util import find_spec
+
+from services.isolated_process import run_isolated_worker
 
 _log = logging.getLogger('contract_tool')
 
-COM_TIMEOUT = 30  # 秒
+try:
+    _configured_com_timeout = int(os.environ.get('CT_WORD_COM_TIMEOUT', '60'))
+except (TypeError, ValueError):
+    _configured_com_timeout = 60
+COM_TIMEOUT = max(15, min(180, _configured_com_timeout))
 PDF_HEADER = b'%PDF-'
 
 
@@ -59,7 +63,7 @@ def convert_docx_to_pdf(docx_path, pdf_path=None):
     """Convert a .docx file to .pdf — Word COM 优先，LibreOffice 兜底。
 
     Returns the pdf_path on success, or raises RuntimeError with diagnostics.
-    COM 操作在后台线程执行，最多等待 COM_TIMEOUT 秒。
+    COM 操作在隔离子进程执行，最多等待 COM_TIMEOUT 秒。
     """
     if pdf_path is None:
         pdf_path = os.path.splitext(docx_path)[0] + '.pdf'
@@ -71,15 +75,24 @@ def convert_docx_to_pdf(docx_path, pdf_path=None):
         raise FileNotFoundError(f'源文件不存在: {abs_docx}')
 
     # 优先尝试 Word COM
+    word_error = None
     try:
         result = _convert_via_word_com(abs_docx, abs_pdf)
         return _validate_pdf_output(result)
     except (ImportError, RuntimeError) as word_err:
+        word_error = word_err
         _log.warning('Word COM 转换失败，尝试 LibreOffice 回退: %s', word_err)
 
     # 回退：LibreOffice headless
-    result = _convert_via_libreoffice(abs_docx, abs_pdf)
-    return _validate_pdf_output(result)
+    try:
+        result = _convert_via_libreoffice(abs_docx, abs_pdf)
+        return _validate_pdf_output(result)
+    except RuntimeError as libreoffice_error:
+        raise RuntimeError(
+            'PDF 导出失败。\n'
+            f'Word 转换错误：{word_error}\n'
+            f'LibreOffice 转换错误：{libreoffice_error}'
+        ) from libreoffice_error
 
 
 def _validate_pdf_output(path):
@@ -141,106 +154,64 @@ def _convert_via_libreoffice(docx_path, pdf_path):
 
 
 def _convert_via_word_com(docx_path, pdf_path):
-    """通过 Word COM 执行转换（原 convert_docx_to_pdf 核心逻辑）"""
-    # ── 预检（主线程快速完成） ──
-    try:
-        import pythoncom
-        import win32com.client
-    except ImportError:
-        raise RuntimeError(
-            'PDF 导出需要安装 pywin32 (pip install pywin32)\n' + _diagnose_com_error()
-        )
-
+    """通过隔离子进程中的独立 Word COM 实例执行转换。"""
     winword = _find_winword()
     if not winword:
         raise RuntimeError(
             '未检测到 Microsoft Word 安装。PDF 导出需要安装 Word 2013 或更高版本。'
         )
-
-    # ── 在线程中执行 COM 操作，防止阻塞主请求线程 ──
-    # 用可变容器跟踪 Word 进程，以便超时时清理
-    _state = {'word_proc': None, 'last_error': None}
-
-    def _com_convert():
-        pythoncom.CoInitialize()
-        word = None
+    try:
+        run_isolated_worker(
+            _word_pdf_worker, (docx_path, pdf_path),
+            timeout=COM_TIMEOUT, label='Word PDF 导出',
+        )
+    except RuntimeError as exc:
         try:
-            # 尝试多种方式连接 Word COM
-            for _method_name, method in [
-                ('Dispatch', lambda: win32com.client.Dispatch('Word.Application')),
-                ('DispatchEx', lambda: win32com.client.DispatchEx('Word.Application')),
-                ('GetActiveObject', lambda: win32com.client.GetActiveObject('Word.Application')),
-            ]:
-                try:
-                    word = method()
-                    break
-                except Exception as e:
-                    _state['last_error'] = e
-                    continue
-
-            if word is None:
-                try:
-                    _state['word_proc'] = subprocess.Popen(
-                        [winword, '/embedding', '/q'],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    time.sleep(5)
-                    for _method_name, method in [
-                        ('GetActiveObject after launch', lambda: win32com.client.GetActiveObject('Word.Application')),
-                        ('Dispatch after launch', lambda: win32com.client.Dispatch('Word.Application')),
-                        ('DispatchEx after launch', lambda: win32com.client.DispatchEx('Word.Application')),
-                    ]:
-                        try:
-                            word = method()
-                            break
-                        except Exception as e:
-                            _state['last_error'] = e
-                            continue
-                except Exception as e:
-                    _state['last_error'] = e
-
-            if word is None:
-                raise RuntimeError(
-                    f'无法启动 Microsoft Word COM 服务。\n\n{_diagnose_com_error()}\n\n'
-                    f'最后错误: {_state["last_error"]}'
-                )
-
-            word.Visible = False
-            word.DisplayAlerts = 0
-
-            doc = word.Documents.Open(docx_path)
-            try:
-                doc.SaveAs2(pdf_path, FileFormat=17)  # wdFormatPDF = 17
-            finally:
-                try:
-                    doc.Close()
-                except Exception:
-                    _log.debug('Word COM doc.Close 失败', exc_info=True)
-        finally:
-            if word:
-                try:
-                    word.Quit()
-                except Exception:
-                    _log.debug('Word COM Quit 失败', exc_info=True)
-            pythoncom.CoUninitialize()
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_com_convert)
-        try:
-            future.result(timeout=COM_TIMEOUT)
-        except FutureTimeoutError:
-            _terminate_word_proc(_state['word_proc'])
-            raise RuntimeError(
-                f'PDF 导出超时（{COM_TIMEOUT} 秒）。\n'
-                '请关闭其他 Word 窗口和对话框后重试。\n\n'
-                + _diagnose_com_error()
-            )
-        except Exception:
-            _terminate_word_proc(_state['word_proc'])
-            raise
-
+            os.remove(pdf_path)
+        except FileNotFoundError:
+            _log.debug('Timed-out PDF output already absent: %s', pdf_path)
+        raise RuntimeError(f'{exc}\n\n{_diagnose_com_error()}') from exc
     return pdf_path
+
+
+def _word_pdf_worker(docx_path, pdf_path, result_queue):
+    word = None
+    document = None
+    pythoncom = None
+    try:
+        import pythoncom as _pythoncom
+        import win32com.client
+
+        pythoncom = _pythoncom
+        pythoncom.CoInitialize()
+        word = win32com.client.DispatchEx('Word.Application')
+        word.Visible = False
+        word.DisplayAlerts = 0
+        word.AutomationSecurity = 3  # msoAutomationSecurityForceDisable
+        document = word.Documents.Open(
+            os.path.abspath(docx_path), ReadOnly=True,
+            AddToRecentFiles=False, ConfirmConversions=False,
+        )
+        document.ExportAsFixedFormat(
+            OutputFileName=os.path.abspath(pdf_path), ExportFormat=17,
+            OpenAfterExport=False,
+        )
+        result_queue.put(('ok', pdf_path))
+    except BaseException as exc:
+        result_queue.put(('error', f'Word COM 转换失败：{type(exc).__name__}: {exc}'))
+    finally:
+        if document is not None:
+            try:
+                document.Close(SaveChanges=0)
+            except Exception:
+                _log.debug('Isolated Word document cleanup failed', exc_info=True)
+        if word is not None:
+            try:
+                word.Quit(SaveChanges=0)
+            except Exception:
+                _log.debug('Isolated Word application cleanup failed', exc_info=True)
+        if pythoncom is not None:
+            pythoncom.CoUninitialize()
 
 
 def _terminate_word_proc(proc):

@@ -10,6 +10,12 @@ from pathlib import PurePosixPath
 from utils import helpers
 
 
+MAX_FULL_PACKAGE_MEMBERS = 20_000
+MAX_FULL_PACKAGE_UNCOMPRESSED = 5 * 1024 * 1024 * 1024
+MAX_FULL_PACKAGE_MEMBER_SIZE = 1024 * 1024 * 1024
+MAX_FULL_PACKAGE_COMPRESSION_RATIO = 300
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+
 def safe_label(value, default='handover'):
     label = helpers.safe_filename_part(str(value or '').strip(), default)[:36]
     return label or default
@@ -37,6 +43,31 @@ def member_allowed(name, roots, manifest_name):
     if name == manifest_name:
         return True
     return any(name == root or name.startswith(root + '/') for root in roots)
+
+
+def validate_package_archive(zf):
+    """Enforce size, path, encryption and compression limits for a package."""
+    archive_infos = zf.infolist()
+    if not archive_infos or len(archive_infos) > MAX_FULL_PACKAGE_MEMBERS:
+        raise ValueError('完整数据包包含异常数量的文件')
+    infos = {}
+    total_uncompressed = 0
+    for info in archive_infos:
+        normalized = normalize_archive_name(info.filename)
+        if normalized in infos:
+            raise ValueError('完整数据包包含重复文件路径')
+        if info.flag_bits & 0x1:
+            raise ValueError('完整数据包不能包含加密 ZIP 成员')
+        if info.file_size > MAX_FULL_PACKAGE_MEMBER_SIZE:
+            raise ValueError('完整数据包中的单个文件过大')
+        total_uncompressed += info.file_size
+        if total_uncompressed > MAX_FULL_PACKAGE_UNCOMPRESSED:
+            raise ValueError('完整数据包解压后内容过大')
+        ratio = info.file_size / max(1, info.compress_size)
+        if ratio > MAX_FULL_PACKAGE_COMPRESSION_RATIO:
+            raise ValueError('完整数据包压缩比异常，可能存在压缩包风险')
+        infos[normalized] = info
+    return archive_infos, infos
 
 
 def sha256_file(path):

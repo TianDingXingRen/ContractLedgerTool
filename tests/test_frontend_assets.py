@@ -208,16 +208,22 @@ class FrontendAssetTests(unittest.TestCase):
             manifest['html_templates'],
         )
         self.assertIn('version', manifest)
+        self.assertIn('source_commit', manifest)
+        self.assertIn('source_dirty', manifest)
         version_path = os.path.join(build_installer.APP_RES_DIR, 'version.txt')
         self.assertTrue(os.path.isfile(version_path))
+        self.assertTrue(os.path.isfile(os.path.join(
+            build_installer.APP_RES_DIR, 'build-info.json',
+        )))
 
-    def test_offline_installer_enables_autostart_and_cleans_previous_versions(self):
+    def test_offline_installer_uses_opt_in_autostart_and_cleans_previous_versions(self):
         installer_path = os.path.join(app.RESOURCE_DIR, 'installer_assets', 'install.ps1')
         with open(installer_path, 'r', encoding='utf-8-sig') as f:
             script = f.read()
 
         self.assertIn('[switch]$NoAutostart', script)
-        self.assertIn('if (-not $NoAutostart)', script)
+        self.assertIn('[switch]$EnableAutostart', script)
+        self.assertIn('if ($EnableAutostart -and -not $NoAutostart)', script)
         self.assertIn('setup_autostart.ps1', script)
         self.assertIn('-Port $Port', script)
         self.assertIn('Stop-PreviousVersions', script)

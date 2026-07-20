@@ -106,7 +106,7 @@ def test_table_formula_errors_block_preflight_and_generation(app, client):
 
     values = {'items': [{'qty': '10', 'divisor': '2'}]}
     assert helpers.recalculate_table_fields(fields, values) == []
-    assert values['items'][0]['ratio'] == 5.0
+    assert values['items'][0]['ratio'] == '5.00'
 
     tpl = template_def.TemplateDef.create('表格公式阻断测试', '', fields)
     template_path = tpl.save()

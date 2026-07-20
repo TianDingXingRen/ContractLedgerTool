@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from datetime import datetime
 
 from utils.logger import get_logger
+from core.maintenance_gate import maintenance_gate
 from utils.constants import (
     ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel,
 )
@@ -383,12 +384,25 @@ def backup_path(filename):
 
 
 def restore_backup(filename):
-    close_connections()
-    restored = backup_ops.restore_backup(
-        DB_PATH, DATA_DIR, BACKUP_DIR, filename, create_backup
-    )
-    init_db()
-    return restored
+    import procurement_store
+
+    with maintenance_gate.exclusive():
+        close_connections()
+        restored, rollback = backup_ops.restore_backup(
+            DB_PATH, DATA_DIR, BACKUP_DIR, filename, create_backup
+        )
+        try:
+            init_db()
+            procurement_store.init_db()
+        except Exception:
+            get_logger().error('数据库恢复后初始化失败，正在自动回滚', exc_info=True)
+            if rollback and rollback.get('path'):
+                close_connections()
+                backup_ops.replace_database(DB_PATH, DATA_DIR, rollback['path'])
+                init_db()
+                procurement_store.init_db()
+            raise
+        return restored
 
 
 def row_to_dict(row):

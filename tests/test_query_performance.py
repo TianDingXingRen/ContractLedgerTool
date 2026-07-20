@@ -7,6 +7,9 @@ import procurement_store
 from services.dashboard_service import build_dashboard_snapshot
 
 
+pytestmark = pytest.mark.performance
+
+
 def _seed_scale_data(contract_count=5_000, payment_count=20_000):
     now = '2026-07-16 00:00:00'
     with ledger_store.get_conn() as conn:

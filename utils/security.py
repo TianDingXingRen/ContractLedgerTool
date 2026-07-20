@@ -111,5 +111,13 @@ def validate_office_archive(path: str) -> None:
                         raise ValueError('Office 文件压缩比异常，可能存在压缩包风险')
             if archive.testzip() is not None:
                 raise ValueError('Office 文件内容校验失败')
+            names = {str(member.filename or '').replace('\\', '/') for member in members}
+            suffix = os.path.splitext(str(path))[1].lower()
+            required = {
+                '.docx': {'[Content_Types].xml', 'word/document.xml'},
+                '.xlsx': {'[Content_Types].xml', 'xl/workbook.xml'},
+            }.get(suffix, {'[Content_Types].xml'})
+            if not required.issubset(names):
+                raise ValueError('Office 文件缺少必要的内部结构')
     except (zipfile.BadZipFile, OSError) as exc:
         raise ValueError('Office 文件结构无效') from exc

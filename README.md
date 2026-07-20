@@ -15,7 +15,8 @@
 - **合同生成** — 支持当前填写值预览、逐个或批量生成，并自动写入台账
 - **台账管理** — 搜索、筛选、状态更新、导出 Excel
 - **付款计划** — 自动从合同文本提取付款条款，支持手动确认和编辑
-- **PDF 导出** — 通过 Word COM 导出 PDF（需 Microsoft Word）
+- **PDF 导出** — 通过隔离的 Word COM 子进程导出 PDF（需 Microsoft Word）
+- **旧版 Word 导入** — 支持 `.docx`，并可通过本机 Word/WPS 将 `.doc` 安全转换为 `.docx`
 - **Excel 导出** — 付款计划和台账均可导出
 - **版本管理** — 模板修改自动备份历史版本，支持回滚
 
@@ -26,6 +27,21 @@
 - **Microsoft Word** 2013+（可选，用于 PDF 导出）
 
 ## 安装
+
+### 离线安装包（推荐）
+
+下载并双击 `ContractLedgerTool_OfflineInstaller.exe`。安装包不需要 Python 或网络，默认安装到
+`%LOCALAPPDATA%\ContractLedgerTool`，创建桌面快捷方式并启动本机服务；若 5000 端口已占用，
+安装程序会自动选择后续可用端口。开机自启动默认关闭，如确有需要，可从安装包目录运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -EnableAutostart
+```
+
+可在 Windows“设置 → 应用 → 已安装的应用”中卸载。普通卸载保留合同、台账、模板、配置和备份；
+彻底删除前请先备份数据，再运行安装目录中的 `uninstall.ps1 -RemoveData`。
+
+### 从源码运行
 
 ```bash
 git clone https://github.com/TianDingXingRen/ContractLedgerTool.git
@@ -90,9 +106,14 @@ $env:CT_TESSERACT_CMD = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
 | `CT_HOST` | 127.0.0.1 | 监听地址 |
 | `CT_PORT` | 5000 | 监听端口 |
 | `CT_DEBUG` | 0 | 调试模式（1/true 开启） |
+| `CT_ALLOW_REMOTE` | 0 | 是否允许非本机访问；启用时必须同时配置访问令牌 |
+| `CT_REMOTE_ACCESS_TOKEN` | 空 | 局域网访问密码，至少16位；仅从环境变量读取 |
 | `CT_MAX_CONTENT_LENGTH_MB` | 50 | 上传文件大小限制 |
 | `CT_CLEANUP_DAYS` | 7 | 文件自动清理天数 |
 | `CT_LOG_LEVEL` | INFO | 日志级别 |
+| `CT_WORD_COM_TIMEOUT` | 60 | Word 转 PDF 隔离进程超时秒数（15–180） |
+
+默认只允许本机访问。如确需局域网访问，请同时设置 `CT_ALLOW_REMOTE=1`、监听地址和至少16位的 `CT_REMOTE_ACCESS_TOKEN`；浏览器弹出登录框时可使用任意用户名，并把令牌作为密码。
 
 ## 目录结构
 
@@ -135,7 +156,7 @@ python scripts/quality_gate.py ci
 ```
 
 `commit` 门禁运行架构预算、Ruff 和 fast 测试；`ci` 额外运行完整测试、
-70% 生产代码覆盖率、JavaScript 语法检查和 CSS 可重复构建。测试使用隔离的
+72% 生产代码覆盖率、关键模块单独覆盖率、JavaScript 语法检查和 CSS 可重复构建。测试使用隔离的
 数据目录，不读写正式合同、台账和配置。
 
 ## 安装升级与发布
@@ -146,7 +167,8 @@ SQLite 和 schema 自检。只有自检通过才提交安装；复制、自检�
 
 发布版本以 `version.txt` 为唯一来源，并在 `CHANGELOG.md` 中保留对应版本记录。
 推送匹配版本的标签（例如 `v1.0.0`）后，GitHub Release 工作流会执行完整门禁、
-构建唯一离线安装包并发布产物。本地发布验收命令为：
+构建唯一离线安装包并发布产物。正式发布必须配置代码签名证书，且内层应用和外层安装器都必须
+具有有效、带可信时间戳的 Authenticode 签名。本地发布验收命令为：
 
 ```powershell
 python scripts/quality_gate.py release --build-installer
