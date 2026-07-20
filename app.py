@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shao
+# SPDX-License-Identifier: MIT
+
 """合同模板制作与生成工具 - Flask Web 应用"""
 
 import os

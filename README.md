@@ -141,4 +141,6 @@ python -m pytest -q --basetemp .pytest_basetemp
 
 ## 许可证
 
-内部使用
+本项目采用 [MIT 许可证](LICENSE) 开源。
+
+Copyright (c) 2026 Shao。使用、复制、修改或分发本项目时，必须保留原始著作权声明和许可证文本。
