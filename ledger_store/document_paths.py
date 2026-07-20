@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from utils.security import path_within
@@ -18,7 +19,10 @@ def runtime_base_dir(data_dir, db_path):
         if app_state.is_configured() and path_within(app_state.base_dir, db_path):
             return app_state.base_dir
     except Exception:
-        pass
+        logging.getLogger('contract_tool').debug(
+            '无法根据运行时状态解析文档根目录，使用数据目录回退值',
+            exc_info=True,
+        )
     return os.path.dirname(os.path.abspath(data_dir))
 
 

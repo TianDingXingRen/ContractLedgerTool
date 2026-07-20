@@ -46,6 +46,19 @@ def python_files():
         yield from sorted((ROOT / root_name).rglob('*.py'))
 
 
+def exception_policy_files():
+    """Yield first-party runtime/build files covered by the no-silent-failure rule."""
+    candidates = list(python_files())
+    candidates.extend(ROOT.glob('*.py'))
+    candidates.extend((ROOT / 'scripts').rglob('*.py'))
+    seen = set()
+    for path in sorted(candidates):
+        if path.name == 'conftest.py' or path in seen:
+            continue
+        seen.add(path)
+        yield path
+
+
 def logical_line_count(source):
     return sum(
         1
@@ -96,11 +109,30 @@ def check_file(path):
     return errors
 
 
+def check_silent_exception_handlers(path):
+    """Reject exception handlers that discard failures with a lone pass."""
+    relative = path.relative_to(ROOT).as_posix()
+    source = path.read_text(encoding='utf-8')
+    tree = ast.parse(source, filename=relative)
+    errors = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+            errors.append(
+                f'{relative}:{node.lineno} silently discards an exception; '
+                'log, translate, or re-raise it'
+            )
+    return errors
+
+
 def main():
     errors = []
     files = list(python_files())
     for path in files:
         errors.extend(check_file(path))
+    for path in exception_policy_files():
+        errors.extend(check_silent_exception_handlers(path))
     if errors:
         raise SystemExit('Architecture check failed:\n- ' + '\n- '.join(errors))
     print(f'Architecture check passed for {len(files)} production modules.')

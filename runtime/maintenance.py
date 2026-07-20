@@ -147,5 +147,5 @@ def _seed_launcher_script(resource_dir, target_dir, filename):
             try:
                 os.chmod(dst, 0o444)
             except OSError:
-                pass
+                get_logger().warning('无法将内置资源设为只读: %s', dst, exc_info=True)
             return

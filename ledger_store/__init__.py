@@ -38,7 +38,7 @@ def _data_dir():
         if app_state.is_configured():
             return app_state.data_dir
     except Exception:
-        pass
+        get_logger().debug('读取运行时数据目录失败，回退到默认目录', exc_info=True)
     return os.path.join(BASE_DIR, 'data')
 
 
@@ -48,7 +48,7 @@ def _db_path():
         if app_state.is_configured():
             return app_state.database_file
     except Exception:
-        pass
+        get_logger().debug('读取运行时数据库路径失败，回退到默认路径', exc_info=True)
     return os.path.join(_data_dir(), 'contracts.db')
 
 
@@ -58,7 +58,7 @@ def _backup_dir():
         if app_state.is_configured():
             return app_state.backups_dir
     except Exception:
-        pass
+        get_logger().debug('读取运行时备份目录失败，回退到默认目录', exc_info=True)
     return os.path.join(_data_dir(), 'backups')
 
 

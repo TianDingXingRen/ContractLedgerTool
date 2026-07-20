@@ -428,7 +428,9 @@ def register(app):
             try:
                 os.remove(zip_path)
             except OSError:
-                pass
+                get_logger().warning(
+                    '批量生成全部失败后无法删除空 ZIP: %s', zip_path, exc_info=True,
+                )
             return '批量合同生成失败：\n' + '\n'.join(gen_errors[:20]), 500
 
         download_name = f'{tpl_name}_批量合同_{success_count}份.zip' if tpl_name else f'批量合同_{success_count}份.zip'

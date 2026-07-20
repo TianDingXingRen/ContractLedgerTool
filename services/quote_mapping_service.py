@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 
 import procurement_store
 from services import procurement_file_service
+from utils.logger import get_logger
 
 
 MAPPING_FIELDS = [
@@ -122,7 +123,11 @@ def create_mapping_job(project_id, supplier_id, quote_round, file_storage):
         try:
             os.remove(saved['absolute_path'])
         except OSError:
-            pass
+            get_logger().warning(
+                '非标准报价解析失败后无法删除上传文件: %s',
+                saved['absolute_path'],
+                exc_info=True,
+            )
         raise
 
 
@@ -193,12 +198,12 @@ def map_to_import_job(mapping_job_id, form):
             try:
                 item = by_id.get(int(raw_id))
             except ValueError:
-                pass
+                get_logger().debug('报价映射中的项目明细 ID 无效: %r', raw_id)
         if item is None and str(raw_line).strip():
             try:
                 item = by_line.get(int(raw_line))
             except ValueError:
-                pass
+                get_logger().debug('报价映射中的行号无效: %r', raw_line)
         if item is None:
             name = str(_cell(row, mapping, 'item_name') or '').strip()
             spec = str(_cell(row, mapping, 'spec_model') or '').strip()

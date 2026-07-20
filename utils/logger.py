@@ -5,24 +5,45 @@ import os
 import re
 import sys
 import threading
+from contextvars import ContextVar
 
 LOG_DIR = None
 _logger = None
 _logger_lock = threading.Lock()
+_request_id = ContextVar('contract_tool_request_id', default='-')
+
+
+def set_request_id(value):
+    """Bind a request identifier to logs in the current execution context."""
+    return _request_id.set(str(value or '-'))
+
+
+def reset_request_id(token):
+    """Restore the previous request identifier after a request completes."""
+    _request_id.reset(token)
+
+
+def get_request_id():
+    return _request_id.get()
 
 
 class SensitiveDataFilter(logging.Filter):
     """过滤日志中的敏感字段值（合同金额、编号等）"""
 
     _SENSITIVE_RE = re.compile(
-        r'(contract_no|合同编号|amount|金额|account_no|账号|bank|开户行)'
+        r'(contract_no|合同编号|amount|金额|account_no|账号|bank|开户行|'
+        r'password|passwd|secret|token|api[_-]?key|身份证号|手机号|电话)'
         r'[=:：]\s*["\']?\S*["\']?',
         re.IGNORECASE,
     )
 
     def filter(self, record):
-        if hasattr(record, 'msg') and isinstance(record.msg, str):
-            record.msg = self._SENSITIVE_RE.sub(r'\1=***', record.msg)
+        # Redact after %-formatting so sensitive values passed via logger args
+        # cannot bypass the filter.
+        message = record.getMessage()
+        record.msg = self._SENSITIVE_RE.sub(r'\1=***', message)
+        record.args = ()
+        record.request_id = get_request_id()
         return True
 
 
@@ -33,7 +54,7 @@ def setup_logging(log_dir=None, level=logging.INFO):
         os.makedirs(LOG_DIR, exist_ok=True)
 
         fmt = logging.Formatter(
-            '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            '%(asctime)s [%(levelname)s] [req:%(request_id)s] %(name)s: %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
         )
 

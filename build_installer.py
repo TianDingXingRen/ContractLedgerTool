@@ -216,8 +216,8 @@ def main() -> int:
         print(f'安装器启动失败：{exc}')
         try:
             input('按 Enter 退出...')
-        except Exception:
-            pass
+        except Exception as input_exc:
+            print(f'无法等待退出确认：{input_exc}', file=sys.stderr)
         return 1
 
 

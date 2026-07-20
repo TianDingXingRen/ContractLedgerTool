@@ -107,7 +107,9 @@ def create_backup(db_path, backup_dir, label='manual'):
         try:
             os.remove(target_path)
         except OSError:
-            pass
+            get_logger().warning(
+                '无效备份校验失败后无法删除文件: %s', target_path, exc_info=True,
+            )
         raise
     return {
         'filename': os.path.basename(target_path),

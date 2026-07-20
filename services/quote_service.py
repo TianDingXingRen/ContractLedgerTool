@@ -12,6 +12,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 import procurement_store
 from services import procurement_file_service
+from utils.logger import get_logger
 
 
 FORMAT_VERSION = '1.0'
@@ -325,7 +326,11 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
         try:
             Path(saved['absolute_path']).unlink(missing_ok=True)
         except OSError:
-            pass
+            get_logger().warning(
+                '标准报价导入失败后无法删除上传文件: %s',
+                saved['absolute_path'],
+                exc_info=True,
+            )
         raise
 
 
@@ -371,7 +376,11 @@ def save_quote_pdf_attachment(project_id, supplier_id, quote_round, file_storage
         try:
             Path(saved['absolute_path']).unlink(missing_ok=True)
         except OSError:
-            pass
+            get_logger().warning(
+                'PDF 报价保存失败后无法删除上传文件: %s',
+                saved['absolute_path'],
+                exc_info=True,
+            )
         raise
 
 

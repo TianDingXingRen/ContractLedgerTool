@@ -347,7 +347,7 @@ def generate_docx_document(tpl_data, fields, field_values, source_docx, output_p
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                 except OSError:
-                    pass
+                    get_logger().warning('无法删除合同生成临时文件: %s', tmp_path, exc_info=True)
     else:
         docx_builder.generate_from_scratch(tpl_data, field_values, output_path)
     return errors, output_path

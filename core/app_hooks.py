@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import threading
 import time
+import re
+import uuid
 from collections import OrderedDict
 
-from flask import abort, request, session
+from flask import abort, g, request, session
 
 from utils.errors import api_error, wants_json
+from utils.logger import reset_request_id, set_request_id
 from utils.security import hmac_compare
 
 
@@ -17,6 +20,14 @@ _rate_limit_store_global = OrderedDict()
 _rate_limit_lock_path = threading.Lock()
 _rate_limit_lock_global = threading.Lock()
 _RATE_LIMIT_MAX_KEYS = 10000
+_REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._-]{8,64}$')
+
+
+def _safe_request_id(value):
+    value = str(value or '').strip()
+    if _REQUEST_ID_RE.fullmatch(value):
+        return value
+    return uuid.uuid4().hex
 
 
 def reset_rate_limit_state():
@@ -74,6 +85,12 @@ def register_security_hooks(app, config):
         reset_rate_limit_state()
 
     @app.before_request
+    def _attach_request_context():
+        request_id = _safe_request_id(request.headers.get('X-Request-ID'))
+        g.request_id = request_id
+        g.request_id_token = set_request_id(request_id)
+
+    @app.before_request
     def _protect_post_requests():
         if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}:
             expected = session.get('_csrf_token')
@@ -89,6 +106,7 @@ def register_security_hooks(app, config):
 
     @app.after_request
     def _add_security_headers(response):
+        response.headers['X-Request-ID'] = g.get('request_id', '-')
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-XSS-Protection'] = '1; mode=block'
@@ -109,3 +127,9 @@ def register_security_hooks(app, config):
             "font-src 'self'; connect-src 'self'"
         )
         return response
+
+    @app.teardown_request
+    def _release_request_context(_error=None):
+        token = g.pop('request_id_token', None)
+        if token is not None:
+            reset_request_id(token)

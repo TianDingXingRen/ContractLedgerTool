@@ -262,7 +262,7 @@ def create_full_backup_package(label='handover'):
         try:
             os.remove(temp_db)
         except OSError:
-            pass
+            get_logger().warning('无法删除完整备份临时数据库: %s', temp_db, exc_info=True)
 
     stat = os.stat(target_path)
     return {
@@ -394,7 +394,7 @@ def upload_full_backup_package(file_storage):
         try:
             os.remove(temp_path)
         except OSError:
-            pass
+            get_logger().warning('无法删除完整备份临时包: %s', temp_path, exc_info=True)
         raise
 
 
@@ -447,7 +447,9 @@ def _replace_from_staging(staging_dir, originals_dir):
                 try:
                     os.remove(target_path)
                 except OSError:
-                    pass
+                    get_logger().error(
+                        '恢复回滚时无法删除已复制文件: %s', target_path, exc_info=True,
+                    )
         for target_path, backup_path in reversed(moved_originals):
             if os.path.exists(target_path):
                 if os.path.isdir(target_path):
@@ -456,7 +458,9 @@ def _replace_from_staging(staging_dir, originals_dir):
                     try:
                         os.remove(target_path)
                     except OSError:
-                        pass
+                        get_logger().error(
+                            '恢复回滚时无法清理目标文件: %s', target_path, exc_info=True,
+                        )
             if os.path.exists(backup_path):
                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 shutil.move(backup_path, target_path)

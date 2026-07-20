@@ -331,7 +331,9 @@ def _backup_before_save(path):
             try:
                 os.remove(os.path.join(vdir, old_file))
             except OSError:
-                pass
+                logging.getLogger('contract_tool').warning(
+                    '无法清理超出保留上限的模板版本: %s', old_file, exc_info=True,
+                )
     except Exception:
         logging.getLogger('contract_tool').warning(
             '保存前版本备份失败: %s', path, exc_info=True)

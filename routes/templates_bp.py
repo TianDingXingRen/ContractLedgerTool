@@ -284,7 +284,7 @@ def register(app):
                 raw_name = style_data.get('raw_name', '')
                 detected_fields = style_data.get('detected_fields', [])
             except (FileNotFoundError, json.JSONDecodeError):
-                pass
+                get_logger().info('模板样式会话已失效: %s', style_sid, exc_info=True)
 
         return render_template('create_template.html',
             stored_name=stored_name,
@@ -602,7 +602,11 @@ def register(app):
                     warnings_list = binding_warnings
                     get_logger().warning('模板默认值保存时的 binding 预警：%s', '; '.join(binding_warnings))
             except ValueError:
-                pass
+                get_logger().warning(
+                    '模板源文件路径无效，无法执行默认值绑定预检: %s',
+                    source_docx,
+                    exc_info=True,
+                )
 
         try:
             tpl.save(template_path_data)

@@ -22,11 +22,8 @@ PATTERNS = [
 
 
 def _on_rm_error(func, fpath, exc_info):
-    try:
-        os.chmod(fpath, stat.S_IWRITE)
-        func(fpath)
-    except Exception:
-        pass
+    os.chmod(fpath, stat.S_IWRITE)
+    func(fpath)
 
 
 def clean_dir(path, quiet=False):

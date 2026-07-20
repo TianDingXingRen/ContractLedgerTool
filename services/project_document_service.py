@@ -17,6 +17,7 @@ from openpyxl.styles import Font, PatternFill
 import procurement_store
 from services import procurement_file_service
 from utils.constants import PROCUREMENT_METHOD_LABELS
+from utils.logger import get_logger
 
 
 def _money(value):
@@ -145,7 +146,7 @@ def _default_target_price_note(project, items, quotes):
         if history_notes:
             parts.append('历史价格参考：' + '；'.join(history_notes) + '。')
     except Exception:
-        pass
+        get_logger().warning('历史价格参考生成失败，将使用基础谈判说明', exc_info=True)
 
     if parts:
         return ''.join(parts)
