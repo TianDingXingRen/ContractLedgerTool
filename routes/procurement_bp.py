@@ -11,6 +11,7 @@ from flask import abort, redirect, render_template, request, send_file, session,
 
 from routes.legacy_blueprint import LegacyEndpointBlueprint
 from routes.procurement_document_routes import register_document_routes
+from routes.procurement_quote_routes import register_quote_management_routes
 
 import procurement_store
 import template_def
@@ -116,6 +117,7 @@ def _comparison_rules_from_form(form):
 def register(app):
     bp = LegacyEndpointBlueprint('procurement', __name__)
     register_document_routes(bp, _error_redirect)
+    register_quote_management_routes(bp, _error_redirect, _form_error, _money)
     @bp.route('/procurement')
     def procurement_home():
         return redirect(url_for('procurement_projects'))

@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 import procurement_store
 from services import procurement_file_service
 from utils.logger import get_logger
-from utils.money import to_minor
+from utils.money import SQLITE_MAX_INTEGER, to_minor
 from utils.security import safe_spreadsheet_value, validate_office_archive
 
 
@@ -421,3 +421,127 @@ def save_quote_pdf_attachment(project_id, supplier_id, quote_round, file_storage
 
 def confirm_import(job_id):
     return procurement_store.confirm_import_job(job_id)
+
+
+def _validated_date(value, label):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    try:
+        date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f'{label}格式无效') from exc
+    return text
+
+
+def _limited_form_text(form, key, label, max_length=2000):
+    value = str(form.get(key) or '').strip()
+    if len(value) > max_length:
+        raise ValueError(f'{label}不能超过 {max_length} 个字符')
+    return value
+
+
+def _editable_tax_rate(form):
+    raw = str(form.get('tax_rate') or '').strip()
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError('税率格式无效') from exc
+    if not value.is_finite() or value < 0 or value > 100:
+        raise ValueError('税率必须是 0 到 100 之间的有限数值')
+    basis_points = value * 100
+    if basis_points != basis_points.to_integral_value():
+        raise ValueError('税率最多保留两位小数')
+    return int(basis_points)
+
+
+def update_confirmed_quote(quote_id, form):
+    quote = procurement_store.get_quote(quote_id)
+    if not quote:
+        raise ValueError('供应商报价不存在')
+    if quote['status'] != 'confirmed':
+        raise ValueError('只有已确认的报价可以编辑')
+    if quote.get('is_locked'):
+        raise ValueError('该报价已用于成交建议，不能编辑')
+
+    quote_date = _validated_date(form.get('quote_date'), '报价日期')
+    quote_valid_until = _validated_date(form.get('quote_valid_until'), '报价有效期')
+    if quote_date and quote_valid_until and quote_valid_until < quote_date:
+        raise ValueError('报价有效期不能早于报价日期')
+    price_basis = str(form.get('price_basis') or '').strip()
+    if price_basis not in {'tax_inclusive', 'tax_exclusive'}:
+        raise ValueError('价格口径无效')
+    header = {
+        'quote_date': quote_date,
+        'quote_valid_until': quote_valid_until,
+        'tax_rate_bps': _editable_tax_rate(form),
+        'price_basis': price_basis,
+        'delivery_period': _limited_form_text(form, 'delivery_period', '整体交付周期'),
+        'payment_terms': _limited_form_text(form, 'payment_terms', '付款条件'),
+        'warranty_period': _limited_form_text(form, 'warranty_period', '质保期'),
+        'package_transport': _limited_form_text(form, 'package_transport', '包装运输'),
+        'technical_deviation': _limited_form_text(
+            form, 'technical_deviation', '整体技术偏离'
+        ),
+        'commercial_deviation': _limited_form_text(
+            form, 'commercial_deviation', '整体商务偏离'
+        ),
+    }
+
+    updated_items = []
+    for item in procurement_store.get_quote_items(quote_id):
+        item_id = item['id']
+        raw_price = str(form.get(f'unit_price_{item_id}') or '').replace(',', '').strip()
+        try:
+            unit_price = Decimal(raw_price)
+        except InvalidOperation as exc:
+            raise ValueError(f'第 {item["line_no"]} 行单价格式无效') from exc
+        if not unit_price.is_finite() or unit_price < 0:
+            raise ValueError(f'第 {item["line_no"]} 行单价必须是非负有限数值')
+        try:
+            quantity = Decimal(item['quantity_text'])
+        except InvalidOperation as exc:
+            raise ValueError(f'第 {item["line_no"]} 行数量格式无效') from exc
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError(f'第 {item["line_no"]} 行数量必须是正有限数值')
+        unit_price_minor = to_minor(unit_price, allow_none=False)
+        amount_minor = to_minor(quantity * unit_price, allow_none=False)
+        updated_items.append({
+            'id': item_id,
+            'unit_price_minor': unit_price_minor,
+            'amount_minor': amount_minor,
+            'delivery_period': _limited_form_text(
+                form, f'delivery_period_{item_id}', f'第 {item["line_no"]} 行交期', 1000
+            ),
+            'technical_deviation': _limited_form_text(
+                form, f'technical_deviation_{item_id}',
+                f'第 {item["line_no"]} 行技术偏离', 1000,
+            ),
+            'commercial_deviation': _limited_form_text(
+                form, f'commercial_deviation_{item_id}',
+                f'第 {item["line_no"]} 行商务偏离', 1000,
+            ),
+            'remark': _limited_form_text(
+                form, f'remark_{item_id}', f'第 {item["line_no"]} 行备注', 1000
+            ),
+        })
+    if not updated_items:
+        raise ValueError('报价明细为空，不能保存')
+    if sum(item['amount_minor'] for item in updated_items) > SQLITE_MAX_INTEGER:
+        raise ValueError('报价总额超出可存储范围')
+    return procurement_store.update_quote(quote_id, header, updated_items)
+
+
+def delete_confirmed_quote(quote_id):
+    result = procurement_store.delete_quote(quote_id)
+    relative_path = result.get('relative_path') or ''
+    if relative_path:
+        try:
+            procurement_file_service.absolute_path(relative_path).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            get_logger().warning(
+                '删除供应商报价原文件失败: %s', relative_path, exc_info=True
+            )
+    return result['project_id']

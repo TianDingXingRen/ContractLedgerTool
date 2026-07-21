@@ -206,6 +206,100 @@ def test_standard_quote_import_page_downloads_supplier_template(app, client):
     response.close()
 
 
+def test_confirmed_quote_can_be_edited_and_deleted_from_project(app, client):
+    project_id, suppliers = _project_with_items_and_suppliers()
+    quote_id, job = _import_quote(project_id, suppliers[0], [100, 200])
+    quote = procurement_store.get_quote(quote_id)
+    quote_items = procurement_store.get_quote_items(quote_id)
+    original_file = procurement_store.get_project_file(quote['original_file_id'])
+    original_path = procurement_file_service.absolute_path(original_file['relative_path'])
+    assert original_path.is_file()
+    comparison_service.run_comparison(project_id, 20)
+
+    detail_html = client.get(
+        f'/procurement/projects/{project_id}'
+    ).get_data(as_text=True)
+    assert f'/procurement/projects/{project_id}/quotes/{quote_id}/edit' in detail_html
+    assert f'/procurement/projects/{project_id}/quotes/{quote_id}/delete' in detail_html
+
+    edit_page = client.get(
+        f'/procurement/projects/{project_id}/quotes/{quote_id}/edit'
+    )
+    assert edit_page.status_code == 200
+    assert '编辑供应商报价' in edit_page.get_data(as_text=True)
+    assert client.get(
+        f'/procurement/projects/{project_id + 999}/quotes/{quote_id}/edit'
+    ).status_code == 404
+
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'quote-edit-token'
+    form = {
+        'csrf_token': 'quote-edit-token',
+        'quote_date': '2026-06-24',
+        'quote_valid_until': '2026-08-24',
+        'tax_rate': '9.5',
+        'price_basis': 'tax_exclusive',
+        'delivery_period': '20天',
+        'payment_terms': '验收后60天付款',
+        'warranty_period': '两年',
+        'package_transport': '含包装运输',
+        'technical_deviation': '整体无偏离',
+        'commercial_deviation': '',
+    }
+    for index, item in enumerate(quote_items):
+        form[f'unit_price_{item["id"]}'] = str(110 + index * 100)
+        form[f'delivery_period_{item["id"]}'] = f'{15 + index}天'
+        form[f'technical_deviation_{item["id"]}'] = ''
+        form[f'commercial_deviation_{item["id"]}'] = ''
+        form[f'remark_{item["id"]}'] = f'复核行{index + 1}'
+    update_response = client.post(
+        f'/procurement/projects/{project_id}/quotes/{quote_id}/edit',
+        data=form,
+        follow_redirects=False,
+    )
+    assert update_response.status_code == 302
+    assert update_response.headers['Location'].endswith(
+        f'/procurement/projects/{project_id}#quotes'
+    )
+    updated = procurement_store.get_quote(quote_id)
+    assert updated['total_amount_minor'] == 215_000
+    assert updated['tax_rate_bps'] == 950
+    assert updated['price_basis'] == 'tax_exclusive'
+    assert procurement_store.get_quote_items(quote_id)[0]['remark'] == '复核行1'
+    assert procurement_store.get_latest_comparison(project_id) is None
+    assert original_path.is_file()
+
+    invalid_form = dict(form)
+    invalid_form['tax_rate'] = 'NaN'
+    invalid_response = client.post(
+        f'/procurement/projects/{project_id}/quotes/{quote_id}/edit',
+        data=invalid_form,
+    )
+    assert invalid_response.status_code == 400
+    assert '税率必须是 0 到 100 之间的有限数值' in invalid_response.get_data(as_text=True)
+    assert procurement_store.get_quote(quote_id)['tax_rate_bps'] == 950
+
+    rejected_delete = client.post(
+        f'/procurement/projects/{project_id}/quotes/{quote_id}/delete',
+        data={},
+    )
+    assert rejected_delete.status_code == 400
+    assert procurement_store.get_quote(quote_id)
+
+    delete_response = client.post(
+        f'/procurement/projects/{project_id}/quotes/{quote_id}/delete',
+        data={'csrf_token': 'quote-edit-token'},
+        follow_redirects=False,
+    )
+    assert delete_response.status_code == 302
+    assert delete_response.headers['Location'].endswith(
+        f'/procurement/projects/{project_id}#quotes'
+    )
+    assert procurement_store.get_quote(quote_id) is None
+    assert procurement_store.get_import_job(job['id'])['status'] == 'cancelled'
+    assert not original_path.exists()
+
+
 def test_pdf_quote_attachment_uploads_and_rejects_non_pdf(app, client):
     project_id, suppliers = _project_with_items_and_suppliers()
     with client.session_transaction() as flask_session:

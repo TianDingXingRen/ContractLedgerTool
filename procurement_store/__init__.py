@@ -356,6 +356,18 @@ def get_quote_items(quote_id):
     return quote_jobs.get_quote_items(ledger_store.get_conn, quote_id)
 
 
+def update_quote(quote_id, header, items):
+    return quote_jobs.update_quote(
+        ledger_store.get_conn, _audit, _now, quote_id, header, items
+    )
+
+
+def delete_quote(quote_id):
+    return quote_jobs.delete_quote(
+        ledger_store.get_conn, _audit, _now, quote_id
+    )
+
+
 def create_comparison_run(project_id, quote_ids, rule_config, results):
     return comparison_workflow.create_comparison_run(
         ledger_store.get_conn, _audit, _now, project_id, quote_ids, rule_config, results
