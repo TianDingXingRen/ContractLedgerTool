@@ -72,6 +72,7 @@ _ACTIVE_CONNECTION = ContextVar('ledger_active_connection', default=None)
 
 # 所有允许的状态值（从 Enum 自动导出）
 CONTRACT_STATUSES = {s.value for s in ContractStatus}
+CONTRACT_ORIGINS = {'generated', 'imported'}
 PAYMENT_TYPES = {'conditional', 'fixed_date'}
 CONFIRM_STATUSES = {s.value for s in ConfirmStatus}
 PAYMENT_STATUSES = {s.value for s in PaymentStatus}
@@ -206,6 +207,9 @@ LEGACY_CONTRACT_COLUMNS = {
     'project_name': "TEXT DEFAULT ''",
     'coverage_start': 'INTEGER',
     'coverage_end': 'INTEGER',
+    'record_origin': "TEXT NOT NULL DEFAULT 'generated' CHECK(record_origin IN ('generated','imported'))",
+    'original_filename': "TEXT DEFAULT ''",
+    'source_sha256': "TEXT DEFAULT ''",
 }
 
 
@@ -318,6 +322,23 @@ def run_migrations():
             try:
                 if version == 8:
                     _deduplicate_contract_numbers(conn)
+                if version == 17:
+                    existing_columns = {
+                        row[1] for row in conn.execute('PRAGMA table_info(contracts)').fetchall()
+                    }
+                    import_columns = {
+                        'record_origin': (
+                            "TEXT NOT NULL DEFAULT 'generated' "
+                            "CHECK(record_origin IN ('generated','imported'))"
+                        ),
+                        'original_filename': "TEXT DEFAULT ''",
+                        'source_sha256': "TEXT DEFAULT ''",
+                    }
+                    for column, definition in import_columns.items():
+                        if column not in existing_columns:
+                            conn.execute(
+                                f'ALTER TABLE contracts ADD COLUMN {column} {definition}'
+                            )
                 conn.execute(forward_sql)
             except sqlite3.OperationalError as e:
                 # 新 init_db 已在 CREATE TABLE 中包含该列，跳过重复添加
@@ -441,6 +462,9 @@ def create_contract(summary, field_values, docx_path):
 def _create_contract_with_plans_impl(conn, summary, field_values, docx_path, plans):
     now = _now()
     status = _validate_choice(summary.get('status') or 'draft', CONTRACT_STATUSES, '合同状态')
+    record_origin = _validate_choice(
+        summary.get('record_origin') or 'generated', CONTRACT_ORIGINS, '合同来源'
+    )
     values_json = json.dumps(field_values or {}, ensure_ascii=False, default=str)
     amount_minor, amount = _amount_pair(summary.get('amount'))
     stored_docx_path = portable_docx_path(docx_path)
@@ -448,9 +472,10 @@ def _create_contract_with_plans_impl(conn, summary, field_values, docx_path, pla
         """
         INSERT INTO contracts (
             contract_no, title, counterparty, amount, amount_minor, sign_date, owner,
-            status, template_name, docx_path, values_json, expiry_date,
-            project_name, coverage_start, coverage_end, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            status, template_name, docx_path, values_json, record_origin,
+            original_filename, source_sha256, expiry_date, project_name,
+            coverage_start, coverage_end, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             summary.get('contract_no'),
@@ -464,6 +489,9 @@ def _create_contract_with_plans_impl(conn, summary, field_values, docx_path, pla
             summary.get('template_name'),
             stored_docx_path,
             values_json,
+            record_origin,
+            summary.get('original_filename') or '',
+            summary.get('source_sha256') or '',
             summary.get('expiry_date') or '',
             summary.get('project_name') or '',
             summary.get('coverage_start'),
@@ -495,6 +523,8 @@ def create_contract_with_plans(summary, field_values, docx_path, plans, conn=Non
     except sqlite3.IntegrityError as e:
         if 'contract_no' in str(e).lower() or 'idx_contracts_contract_no_unique' in str(e).lower():
             raise ValueError('合同编号已存在') from e
+        if 'source_sha256' in str(e).lower() or 'idx_contracts_import_sha256_unique' in str(e).lower():
+            raise ValueError('该合同文件已导入') from e
         raise
 
 
@@ -567,6 +597,20 @@ def contract_no_exists(contract_no, exclude_id=None):
         params.append(int(exclude_id))
     with get_conn() as conn:
         return conn.execute(sql, params).fetchone() is not None
+
+
+def get_contract_by_source_sha256(source_sha256):
+    """Return an imported contract with the exact source bytes, including trash."""
+    digest = str(source_sha256 or '').strip().lower()
+    if not digest:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM contracts WHERE record_origin = 'imported' "
+            "AND LOWER(source_sha256) = ? LIMIT 1",
+            (digest,),
+        ).fetchone()
+    return row_to_dict(row)
 
 
 def list_contracts(q='', status='', page=1, per_page=20, include_deleted=False, deleted_only=False):

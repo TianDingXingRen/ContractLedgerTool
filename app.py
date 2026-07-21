@@ -182,7 +182,10 @@ def create_app(runtime_base_dir=None, resource_dir=None, run_maintenance=True, t
     app.config['CONTRACT_TOOL_BIND_HOST'] = app_config.HOST
     app.config['CONTRACT_TOOL_BIND_PORT'] = app_config.PORT
     app.extensions['runtime_paths'] = RUNTIME_PATHS
-    app.extensions['contract_tool'] = create_runtime_services(RUNTIME_PATHS)
+    app.extensions['contract_tool'] = create_runtime_services(
+        RUNTIME_PATHS,
+        max_upload_bytes=app.config['MAX_CONTENT_LENGTH'],
+    )
 
     register_security_hooks(app, app_config)
     register_template_context(app, _csrf_token)

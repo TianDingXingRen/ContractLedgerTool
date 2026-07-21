@@ -12,7 +12,8 @@ from routes.legacy_blueprint import LegacyEndpointBlueprint
 import ledger_store
 import xlsx_exporter
 from utils import helpers
-from utils.security import MAX_PLAN_ROWS, MAX_TEXT_VALUE_LENGTH, limit_text
+from utils.security import MAX_PLAN_ROWS
+from utils.payment_forms import payment_row_from_form
 
 
 def _payment_filter_args(form_or_args):
@@ -46,54 +47,6 @@ def _normalized_form_date(form, name, default=''):
     return normalized
 
 
-def _payment_row_from_form(idx, form):
-    prefix = f'plan_{idx}_'
-    def optional_number(name, label, default=None):
-        raw = str(form.get(prefix + name, '') or '').strip()
-        if not raw:
-            return default
-        parsed = helpers.float_or_none(raw)
-        if parsed is None:
-            raise ValueError(f'{label}必须是有效数字')
-        return parsed
-
-    paid_amount = optional_number('paid_amount', '已付金额', 0)
-    ratio = optional_number('ratio', '付款比例')
-    if ratio is not None and (ratio < 0 or ratio > 100):
-        raise ValueError('付款比例必须在 0 到 100 之间')
-    due_amount = optional_number('due_amount', '应付金额')
-    if paid_amount < 0 or (due_amount is not None and due_amount < 0):
-        raise ValueError('付款金额不能为负数')
-
-    def optional_date(name, label):
-        raw = str(form.get(prefix + name, '') or '').strip()
-        if not raw:
-            return ''
-        normalized = helpers.normalize_date(raw)
-        if not normalized:
-            raise ValueError(f'{label}格式无效，请使用 YYYY-MM-DD')
-        return normalized
-    return {
-        'id': form.get(prefix + 'id', '').strip(),
-        'phase_name': limit_text(form.get(prefix + 'phase_name', '').strip(), 120),
-        'payment_type': form.get(prefix + 'payment_type', 'conditional').strip() or 'conditional',
-        'trigger_event': limit_text(form.get(prefix + 'trigger_event', '').strip(), 200),
-        'trigger_days': helpers.int_or_none(form.get(prefix + 'trigger_days')),
-        'expected_trigger_date': optional_date('expected_trigger_date', '预计触发日期'),
-        'due_date': optional_date('due_date', '应付日期'),
-        'ratio': ratio,
-        'due_amount': due_amount,
-        'paid_amount': paid_amount,
-        'paid_date': optional_date('paid_date', '实付日期'),
-        'condition_text': limit_text(form.get(prefix + 'condition_text', '').strip(), MAX_TEXT_VALUE_LENGTH),
-        'source_text': limit_text(form.get(prefix + 'source_text', '').strip(), MAX_TEXT_VALUE_LENGTH),
-        'confidence': form.get(prefix + 'confidence', 'low').strip() or 'low',
-        'confirm_status': form.get(prefix + 'confirm_status', 'pending').strip() or 'pending',
-        'payment_status': form.get(prefix + 'payment_status', 'unpaid').strip() or 'unpaid',
-        'remark': limit_text(form.get(prefix + 'remark', '').strip(), 500),
-    }
-
-
 def register(app):
     bp = LegacyEndpointBlueprint('payments', __name__)
     @bp.route('/contracts/<int:contract_id>/payments/save', methods=['POST'])
@@ -118,7 +71,7 @@ def register(app):
                         return '付款计划 ID 无效', 400
                 continue
             try:
-                row = _payment_row_from_form(idx, request.form)
+                row = payment_row_from_form(idx, request.form)
             except ValueError as e:
                 return str(e), 400
             plan_id = row.pop('id', '')

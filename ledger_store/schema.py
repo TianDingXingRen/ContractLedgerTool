@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS contracts (
     template_name TEXT,
     docx_path TEXT,
     values_json TEXT,
+    record_origin TEXT NOT NULL DEFAULT 'generated'
+        CHECK(record_origin IN ('generated','imported')),
+    original_filename TEXT DEFAULT '',
+    source_sha256 TEXT DEFAULT '',
     project_name TEXT DEFAULT '',
     coverage_start INTEGER,
     coverage_end INTEGER,
@@ -96,7 +100,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 # Indexes introduced by historical migrations but required immediately for a
@@ -131,6 +135,9 @@ CREATE INDEX IF NOT EXISTS idx_generation_jobs_state_updated
 CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_jobs_active_output
     ON contract_generation_jobs(output_path COLLATE NOCASE)
     WHERE state IN ('prepared', 'staged', 'file_moved');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contracts_import_sha256_unique
+    ON contracts(source_sha256)
+    WHERE record_origin = 'imported' AND source_sha256 != '';
 """
 
 
@@ -232,6 +239,13 @@ MIGRATIONS = [
         "ON contract_generation_jobs(output_path COLLATE NOCASE) "
         "WHERE state IN ('prepared', 'staged', 'file_moved');",
         "DROP INDEX IF EXISTS idx_generation_jobs_active_output;",
+    ),
+    (
+        17,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_contracts_import_sha256_unique "
+        "ON contracts(source_sha256) "
+        "WHERE record_origin = 'imported' AND source_sha256 != '';",
+        "DROP INDEX IF EXISTS idx_contracts_import_sha256_unique;",
     ),
 ]
 

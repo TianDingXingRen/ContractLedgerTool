@@ -19,6 +19,9 @@
         <a href="{{ url_for('contract_export', q=q, status=status) }}" class="apple-btn apple-btn-ghost">
             <i data-lucide="download" style="width:15px;height:15px"></i> 导出
         </a>
+        <a href="{{ url_for('contract_import') }}" class="apple-btn apple-btn-ghost">
+            <i data-lucide="file-input" style="width:15px;height:15px"></i> 导入合同
+        </a>
         <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-primary">
             <i data-lucide="plus" style="width:15px;height:15px"></i> 生成合同
         </a>
@@ -131,6 +134,7 @@
                            style="font-weight:550;color:var(--apple-blue);text-decoration:none;font-size:13px">{{ c.title }}</a>
                         <div style="font-size:11px;color:var(--apple-text3);margin-top:1px">
                             {{ c.contract_no or '未编号' }}
+                            {% if c.record_origin == 'imported' %} · <span class="apple-badge blue" style="font-size:9px;padding:1px 6px">外部导入</span>{% endif %}
                             {% if c.coverage_start is not none %} · {{ c.coverage_start }}-{{ c.coverage_end }}号{% endif %}
                         </div>
                     </td>

@@ -75,10 +75,11 @@ def test_every_historical_ledger_version_upgrades_to_current(tmp_path, monkeypat
         with sqlite3.connect(database) as connection:
             assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
             contract = connection.execute(
-                'SELECT amount_minor FROM contracts WHERE contract_no = ?', ('MATRIX-001',)
+                'SELECT amount_minor, record_origin, original_filename, source_sha256 '
+                'FROM contracts WHERE contract_no = ?', ('MATRIX-001',)
             ).fetchone()
             payment = connection.execute(
                 'SELECT due_amount_minor, paid_amount_minor FROM payment_plans WHERE id = 1'
             ).fetchone()
-        assert contract == (12_345,)
+        assert contract == (12_345, 'generated', '', '')
         assert payment == (1_234, 123)

@@ -75,6 +75,26 @@ def cleanup_old_files(paths, config, max_age_days=None):
             if not item.is_file() or item.suffix != '.json':
                 continue
             if item.stat().st_mtime < session_cutoff:
+                try:
+                    session_data = json.loads(item.read_text(encoding='utf-8'))
+                    if (
+                        session_data.get('kind') == 'contract_import'
+                        and not session_data.get('confirmed_contract_id')
+                    ):
+                        staging_name = str(session_data.get('staging_name') or '')
+                        if (
+                            os.path.basename(staging_name) == staging_name
+                            and staging_name.startswith('contract_import_')
+                            and staging_name.endswith('.docx')
+                        ):
+                            staging_path = paths.uploads_dir / staging_name
+                            if staging_path.is_file():
+                                staging_path.unlink()
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    get_logger().warning(
+                        '清理过期会话关联的合同暂存文件失败: %s', item.name,
+                        exc_info=True,
+                    )
                 item.unlink()
                 get_logger().info('Cleaned old session file: %s', item.name)
     except Exception as e:

@@ -46,29 +46,29 @@ class ConfidenceLevel(str, Enum):
 # ── 标签映射 ──
 
 CONTRACT_STATUS_LABELS = {
-    ContractStatus.DRAFT: '草稿',
-    ContractStatus.SIGNED: '已签订',
-    ContractStatus.ACTIVE: '履行中',
-    ContractStatus.COMPLETED: '已完成',
-    ContractStatus.VOID: '已作废',
+    ContractStatus.DRAFT.value: '草稿',
+    ContractStatus.SIGNED.value: '已签订',
+    ContractStatus.ACTIVE.value: '履行中',
+    ContractStatus.COMPLETED.value: '已完成',
+    ContractStatus.VOID.value: '已作废',
 }
 
 CONFIRM_STATUS_LABELS = {
-    ConfirmStatus.PENDING: '待确认',
-    ConfirmStatus.CONFIRMED: '已确认',
-    ConfirmStatus.VOID: '已作废',
+    ConfirmStatus.PENDING.value: '待确认',
+    ConfirmStatus.CONFIRMED.value: '已确认',
+    ConfirmStatus.VOID.value: '已作废',
 }
 
 PAYMENT_STATUS_LABELS = {
-    PaymentStatus.UNPAID: '未付款',
-    PaymentStatus.PARTIAL: '部分付款',
-    PaymentStatus.PAID: '已付款',
+    PaymentStatus.UNPAID.value: '未付款',
+    PaymentStatus.PARTIAL.value: '部分付款',
+    PaymentStatus.PAID.value: '已付款',
 }
 
 CONFIDENCE_LABELS = {
-    ConfidenceLevel.HIGH: '高',
-    ConfidenceLevel.MEDIUM: '中',
-    ConfidenceLevel.LOW: '低',
+    ConfidenceLevel.HIGH.value: '高',
+    ConfidenceLevel.MEDIUM.value: '中',
+    ConfidenceLevel.LOW.value: '低',
 }
 
 

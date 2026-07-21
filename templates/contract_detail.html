@@ -17,7 +17,11 @@
         </h1>
         <p class="text-base-content/50 text-sm mt-1">
             {{ contract.contract_no or '未编号合同' }} ·
-            生成时间 {{ contract.created_at }}
+            {{ '导入时间' if contract.record_origin == 'imported' else '生成时间' }} {{ contract.created_at }}
+            {% if contract.record_origin == 'imported' %}
+            · <span class="badge badge-info badge-sm">外部导入</span>
+            {% if contract.original_filename %} · 原文件 {{ contract.original_filename }}{% endif %}
+            {% endif %}
             {% if contract.deleted_at %}
             · <span class="text-error">删除于 {{ contract.deleted_at }}</span>
             {% endif %}
