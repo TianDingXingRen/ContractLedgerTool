@@ -105,9 +105,8 @@ def create_full_backup_package(label='handover'):
     packages_dir = _package_dir()
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     safe_label = _safe_label(label)
-    target_path = os.path.abspath(os.path.join(
-        packages_dir, f'handover_full_{stamp}_{safe_label}.zip'
-    ))
+    target_name = os.path.basename(f'handover_full_{stamp}_{safe_label}.zip')
+    target_path = os.path.abspath(os.path.join(packages_dir, target_name))
     if not path_within(packages_dir, target_path):
         raise ValueError('完整数据包路径无效')
 
@@ -150,13 +149,13 @@ def create_full_backup_package(label='handover'):
                 json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8'),
             )
     except Exception:
-        _remove_file_if_exists(target_path)
+        _remove_file_if_exists(packages_dir, target_name)
         raise
     finally:
         try:
             os.remove(temp_db)
         except OSError:
-            get_logger().warning('无法删除完整备份临时数据库: %s', temp_db, exc_info=True)
+            get_logger().warning('无法删除完整备份临时数据库', exc_info=True)
 
     stat = os.stat(target_path)
     return {
@@ -286,13 +285,14 @@ def upload_full_backup_package(file_storage):
     try:
         validate_full_backup_package(temp_path)
         stem = os.path.splitext(filename)[0]
-        target_name = (
+        target_name = os.path.basename(
             f'uploaded_{datetime.now().strftime("%Y%m%d_%H%M%S")}_'
             f'{uuid.uuid4().hex[:8]}_{_safe_label(stem)}.zip'
         )
         target_path = os.path.abspath(os.path.join(packages_dir, target_name))
         if not path_within(packages_dir, target_path):
             raise ValueError('上传文件名无效')
+        target_path = os.path.join(packages_dir, os.path.basename(target_name))
         shutil.move(temp_path, target_path)
         stat = os.stat(target_path)
         return {
@@ -305,7 +305,7 @@ def upload_full_backup_package(file_storage):
         try:
             os.remove(temp_path)
         except OSError:
-            get_logger().warning('无法删除完整备份临时包: %s', temp_path, exc_info=True)
+            get_logger().warning('无法删除完整备份临时包', exc_info=True)
         raise
 
 

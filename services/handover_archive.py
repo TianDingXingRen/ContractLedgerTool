@@ -26,11 +26,12 @@ def read_optional_text(path):
         return ''
 
 
-def remove_file_if_exists(path):
+def remove_file_if_exists(directory, filename):
+    path = os.path.join(os.path.abspath(directory), os.path.basename(filename))
     try:
         os.remove(path)
     except FileNotFoundError:
-        get_logger().debug('Temporary handover file already absent: %s', path)
+        get_logger().debug('Temporary handover file already absent')
 
 def safe_label(value, default='handover'):
     label = helpers.safe_filename_part(str(value or '').strip(), default)[:36]

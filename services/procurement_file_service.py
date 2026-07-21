@@ -57,11 +57,21 @@ def ensure_project_folders(project):
 def target_path(project, file_type, original_name, unique=True):
     root = ensure_project_folders(project)
     folder = root / FOLDER_NAMES.get(file_type, _safe_part(file_type, '其他文件'))
-    original = Path(os.path.basename(str(original_name or 'file')))
-    stem = _safe_part(original.stem, 'file')
-    suffix = re.sub(r'[^A-Za-z0-9.]', '', original.suffix)[:12]
-    token = f'_{uuid.uuid4().hex[:8]}' if unique else ''
-    path = (folder / f'{stem}{token}{suffix}').resolve()
+    raw_suffix = Path(os.path.basename(str(original_name or 'file'))).suffix.lower()
+    if raw_suffix == '.xlsx':
+        suffix = '.xlsx'
+    elif raw_suffix == '.docx':
+        suffix = '.docx'
+    elif raw_suffix == '.pdf':
+        suffix = '.pdf'
+    elif raw_suffix == '.zip':
+        suffix = '.zip'
+    elif raw_suffix == '.csv':
+        suffix = '.csv'
+    else:
+        suffix = ''
+    token = uuid.uuid4().hex if unique else 'artifact'
+    path = (folder / f'{token}{suffix}').resolve()
     if root not in path.parents:
         raise ValueError('目标文件路径无效')
     return path
@@ -137,8 +147,7 @@ def save_generated(
             stage.unlink(missing_ok=True)
         except OSError:
             logging.getLogger('contract_tool').warning(
-                'Failed to remove generated project staging file: %s',
-                stage,
+                'Failed to remove generated project staging file',
                 exc_info=True,
             )
         if finalized:
@@ -146,8 +155,7 @@ def save_generated(
                 path.unlink(missing_ok=True)
             except OSError:
                 logging.getLogger('contract_tool').error(
-                    'Failed to remove unregistered generated project file: %s',
-                    path,
+                    'Failed to remove unregistered generated project file',
                     exc_info=True,
                 )
         raise

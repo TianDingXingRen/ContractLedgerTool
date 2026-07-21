@@ -54,6 +54,26 @@ def _rollback_batch_contract(item):
     )
 
 
+def _public_validation_errors(errors):
+    """Map internal validation details to a small, user-safe message set."""
+    messages = []
+    for error in errors:
+        detail = str(error)
+        if '除数为零' in detail:
+            message = '合同公式计算失败：除数为零'
+        elif '不能为空' in detail:
+            message = '合同必填字段不能为空'
+        elif '选项无效' in detail:
+            message = '合同字段选项无效'
+        elif '公式' in detail:
+            message = '合同公式配置或计算失败'
+        else:
+            message = '合同字段校验失败，请检查填写内容'
+        if message not in messages:
+            messages.append(message)
+    return messages or ['合同字段校验失败，请检查填写内容']
+
+
 def register(app):
     bp = LegacyEndpointBlueprint('contracts', __name__)
     @bp.route('/')
@@ -236,8 +256,12 @@ def register(app):
 
         try:
             classification = helpers.parse_contract_classification(request.form)
-        except ValueError as e:
-            return jsonify({'ok': False, 'blocking': [str(e)], 'warnings': []}), 400
+        except ValueError:
+            return jsonify({
+                'ok': False,
+                'blocking': ['合同分类信息无效'],
+                'warnings': [],
+            }), 400
 
         if mode == 'batch':
             if data.get('procurement_data_sheet_id'):
@@ -253,7 +277,11 @@ def register(app):
                 fields, request.form, allow_empty_keys=batch_field_keys
             )
             if input_errors:
-                return jsonify({'ok': False, 'blocking': input_errors, 'warnings': []}), 400
+                return jsonify({
+                    'ok': False,
+                    'blocking': _public_validation_errors(input_errors),
+                    'warnings': [],
+                }), 400
             counterparties_text = request.form.get('batch_counterparties', '').strip()
             counterparties = [c.strip() for c in counterparties_text.split('\n') if c.strip()]
             if len(counterparties) > MAX_BATCH_CONTRACTS:
@@ -277,7 +305,11 @@ def register(app):
 
         field_values, input_errors = helpers.prepare_generation_values(fields, request.form)
         if input_errors:
-            return jsonify({'ok': False, 'blocking': input_errors, 'warnings': []}), 400
+            return jsonify({
+                'ok': False,
+                'blocking': _public_validation_errors(input_errors),
+                'warnings': [],
+            }), 400
         payload = generation_preflight_service.build_single_preflight(
             tpl, fields, field_values, classification, generate_pdf=generate_pdf,
         )
@@ -407,10 +439,9 @@ def register(app):
                 except ProcurementLinkError:
                     gen_errors.append(f'{counterparty}: 采购项目关联失败')
                     continue
-                except Exception as e:
+                except Exception:
                     get_logger().error(
-                        'Batch generation transaction failed for %s: %s',
-                        counterparty, e, exc_info=True,
+                        'Batch generation transaction failed', exc_info=True,
                     )
                     gen_errors.append(f'{counterparty}: 合同生成失败')
                     continue
@@ -423,7 +454,7 @@ def register(app):
                     zf.write(out_path, archive_name)
                     success_count += 1
                 except Exception as e:
-                    get_logger().error('Batch ZIP write failed for contract %s: %s', contract_id, e, exc_info=True)
+                    get_logger().error('Batch ZIP write failed', exc_info=True)
                     gen_errors.append(f'{counterparty}: ZIP 写入失败')
                     _rollback_batch_contract(generated_item)
                     archived_contracts.remove(generated_item)

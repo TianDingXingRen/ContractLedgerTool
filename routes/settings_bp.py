@@ -12,6 +12,7 @@ from flask import (
     render_template,
     request,
     send_file,
+    send_from_directory,
     session,
     url_for,
 )
@@ -51,16 +52,6 @@ def _autostart_json(enabled=None, error=''):
         'message': error,
     }
     return jsonify(payload), (500 if error else 200)
-
-
-def _tail_lines(path, max_lines=40):
-    if not path or not os.path.isfile(path):
-        return []
-    try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
-            return f.read().splitlines()[-max_lines:]
-    except OSError:
-        return []
 
 
 def _diagnostics_payload(include_autostart=True):
@@ -124,7 +115,6 @@ def _diagnostics_payload(include_autostart=True):
             current_app.extensions['runtime_paths']
         ),
         'generation_integrity': generation_integrity,
-        'recent_logs': _tail_lines(log_path),
     }
 
 
@@ -171,23 +161,21 @@ def _register_data_protection_routes(bp):
                     )
                 else:
                     message = f"EFS 启用失败，已回滚 {report.get('rolled_back', 0)} 项"
-                get_logger().warning('EFS 部分启用: %s', report['errors'])
+                get_logger().warning('EFS 部分启用，错误项已写入内部报告')
                 if wants_json():
-                    return jsonify({
-                        'success': False, 'message': message, 'report': report,
-                    }), 400
+                    return jsonify({'success': False, 'message': message}), 400
                 return redirect(url_for('diagnostics', protection_error=message))
             message = f"EFS 已启用，共加密 {report['encrypted']} 个文件/目录"
             if wants_json():
-                return jsonify({'success': True, 'message': message, 'report': report})
+                return jsonify({
+                    'success': True,
+                    'message': message,
+                    'encrypted': int(report.get('encrypted', 0)),
+                })
             return redirect(url_for('diagnostics', protection_message=message))
-        except Exception as exc:
-            get_logger().error('启用本地数据保护失败: %s', exc, exc_info=True)
-            message = (
-                str(exc)
-                if isinstance(exc, data_protection_service.DataProtectionError)
-                else GENERIC_ERROR
-            )
+        except Exception:
+            get_logger().error('启用本地数据保护失败', exc_info=True)
+            message = '本地数据保护失败，请查看日志'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
             return redirect(url_for('diagnostics', protection_error=message))
@@ -318,9 +306,9 @@ def register(app):
             if wants_json():
                 return jsonify({'success': True, 'package': package})
             return redirect(url_for('backups', message='完整数据包已上传并通过校验'))
-        except ValueError as e:
-            get_logger().warning('完整数据包上传校验失败: %s', e)
-            message = str(e)
+        except ValueError:
+            get_logger().warning('完整数据包上传校验失败', exc_info=True)
+            message = '完整数据包校验失败'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
             return redirect(url_for('backups', error=message))
@@ -350,9 +338,9 @@ def register(app):
             if wants_json():
                 return jsonify({'success': True, 'rollback': result['rollback']})
             return redirect(url_for('backups', message='完整数据包已恢复，恢复前数据已自动留存回滚包'))
-        except ValueError as e:
-            get_logger().warning('完整数据包恢复校验失败: %s', e)
-            message = str(e)
+        except ValueError:
+            get_logger().warning('完整数据包恢复校验失败', exc_info=True)
+            message = '完整数据包恢复校验失败'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
             return redirect(url_for('backups', error=message))
@@ -373,16 +361,21 @@ def register(app):
                 include_closed=include_closed,
             )
             if wants_json():
-                return jsonify({'success': True, 'export': result})
-            return send_file(
-                result['path'],
+                return jsonify({'success': True, 'export': {
+                    'filename': result['filename'],
+                    'download_name': result['download_name'],
+                    'summary': result['summary'],
+                }})
+            return send_from_directory(
+                os.path.abspath(helpers.OUTPUT_FOLDER),
+                os.path.basename(result['filename']),
                 as_attachment=True,
                 download_name=result['download_name'],
                 mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             )
-        except ValueError as e:
-            get_logger().warning('交接清单导出失败: %s', e)
-            message = str(e)
+        except ValueError:
+            get_logger().warning('交接清单参数无效', exc_info=True)
+            message = '交接清单参数无效'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
             return redirect(url_for('backups', error=message))

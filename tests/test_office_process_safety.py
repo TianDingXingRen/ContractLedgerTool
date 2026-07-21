@@ -56,7 +56,7 @@ def test_isolated_worker_timeout_terminates_process(monkeypatch):
 
 def test_legacy_conversion_removes_partial_output_on_failure(tmp_path, monkeypatch):
     source = tmp_path / 'source.doc'
-    target = tmp_path / 'target.docx'
+    target = tmp_path / 'source.docx'
     source.write_bytes(b'legacy')
 
     def fail_worker(_worker, args, **_kwargs):
@@ -67,6 +67,16 @@ def test_legacy_conversion_removes_partial_output_on_failure(tmp_path, monkeypat
     with pytest.raises(RuntimeError, match='conversion failed'):
         legacy_doc_conversion_service.convert_doc_to_docx(source, target)
     assert not target.exists()
+
+
+def test_legacy_conversion_rejects_unrelated_target_path(tmp_path):
+    source = tmp_path / 'source.doc'
+    source.write_bytes(b'legacy')
+
+    with pytest.raises(ValueError, match='目标路径无效'):
+        legacy_doc_conversion_service.convert_doc_to_docx(
+            source, tmp_path / 'other.docx'
+        )
 
 
 def test_word_workers_use_isolated_instances_and_disable_macros():

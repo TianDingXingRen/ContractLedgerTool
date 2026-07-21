@@ -32,7 +32,7 @@ def _is_valid_docx(filepath):
         validate_office_archive(filepath)
         return True
     except Exception:
-        get_logger().debug('DOCX header validation failed: %s', filepath, exc_info=True)
+        get_logger().debug('DOCX header validation failed', exc_info=True)
         return False
 
 
@@ -43,16 +43,17 @@ def _try_convert_doc_to_docx(doc_path):
         return convert_doc_to_docx(
             doc_path, target, timeout=_DOC_CONVERT_TIMEOUT,
         )
-    except Exception as exc:
-        get_logger().warning('.doc 转换失败: %s', exc, exc_info=True)
+    except Exception:
+        get_logger().warning('.doc 转换失败', exc_info=True)
         return None
 
 
-def _remove_failed_upload(filepath):
+def _remove_failed_upload(stored_name):
+    filepath = helpers.safe_uploaded_docx_path(os.path.basename(stored_name))
     try:
         os.remove(filepath)
     except FileNotFoundError:
-        get_logger().debug('Failed DOCX upload already removed: %s', filepath)
+        get_logger().debug('Failed DOCX upload already removed')
 
 
 def _versions_with_comparisons(template_name):
@@ -76,7 +77,6 @@ def _versions_with_comparisons(template_name):
 def register(app):
     bp = LegacyEndpointBlueprint('templates', __name__)
     # ── 模板保存的辅助函数（从 template_manual_save 提取）──
-
     def _parse_field_location(idx, field_type):
         """解析字段在源文档中的位置信息。返回 (location_dict, error_string)。"""
         if field_type == 'table':
@@ -260,7 +260,7 @@ def register(app):
                 raw_name = style_data.get('raw_name', '')
                 detected_fields = style_data.get('detected_fields', [])
             except (FileNotFoundError, json.JSONDecodeError):
-                get_logger().info('模板样式会话已失效: %s', style_sid, exc_info=True)
+                get_logger().info('模板样式会话已失效', exc_info=True)
 
         return render_template('create_template.html',
             stored_name=stored_name,
@@ -296,10 +296,11 @@ def register(app):
                 os.remove(filepath)
                 new_stored = f'{session_id}.docx'
                 new_path = os.path.join(helpers.UPLOAD_FOLDER, new_stored)
-                shutil.move(converted, new_path)
+                if os.path.abspath(converted) != os.path.abspath(new_path):
+                    shutil.move(converted, new_path)
                 filepath = new_path
                 stored_name = new_stored
-                get_logger().info('DOC converted: %s -> %s', raw_name, new_stored)
+                get_logger().info('DOC converted successfully')
             else:
                 os.remove(filepath)
                 return '无法将 .doc 转换为 .docx，请用 Word/WPS 打开文件后另存为 .docx 格式再上传', 400
@@ -311,7 +312,7 @@ def register(app):
         try:
             detected_fields = helpers.detect_markers(filepath)
         except Exception as e:
-            _remove_failed_upload(filepath)
+            _remove_failed_upload(stored_name)
             return safe_parse_error(e, 'DOCX占位符解析失败', 500)
 
         helpers.save_session_data(session_id, {

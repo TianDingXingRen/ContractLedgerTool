@@ -364,8 +364,7 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
             Path(saved['absolute_path']).unlink(missing_ok=True)
         except OSError:
             get_logger().warning(
-                '标准报价导入失败后无法删除上传文件: %s',
-                saved['absolute_path'],
+                '标准报价导入失败后无法删除上传文件',
                 exc_info=True,
             )
         raise
@@ -414,8 +413,7 @@ def save_quote_pdf_attachment(project_id, supplier_id, quote_round, file_storage
             Path(saved['absolute_path']).unlink(missing_ok=True)
         except OSError:
             get_logger().warning(
-                'PDF 报价保存失败后无法删除上传文件: %s',
-                saved['absolute_path'],
+                'PDF 报价保存失败后无法删除上传文件',
                 exc_info=True,
             )
         raise

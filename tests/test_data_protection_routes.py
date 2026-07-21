@@ -17,7 +17,7 @@ def test_enable_data_protection_requires_recovery_acknowledgement(app, client):
     assert response.get_json()['success'] is False
 
 
-def test_enable_data_protection_returns_report(app, client, monkeypatch):
+def test_enable_data_protection_returns_safe_summary(app, client, monkeypatch):
     monkeypatch.setattr(data_protection_service, 'enable_data_protection', lambda _paths: {
         'success': True,
         'encrypted': 12,
@@ -31,7 +31,8 @@ def test_enable_data_protection_returns_report(app, client, monkeypatch):
         headers={'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
     )
     assert response.status_code == 200
-    assert response.get_json()['report']['encrypted'] == 12
+    assert response.get_json()['encrypted'] == 12
+    assert 'report' not in response.get_json()
 
 
 def test_enable_data_protection_reports_partial_failure(app, client, monkeypatch):
@@ -48,7 +49,8 @@ def test_enable_data_protection_reports_partial_failure(app, client, monkeypatch
         headers={'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
     )
     assert response.status_code == 400
-    assert response.get_json()['report']['errors'] == ['database busy']
+    assert 'report' not in response.get_json()
+    assert 'database busy' not in response.get_data(as_text=True)
 
 
 def test_diagnostics_includes_data_protection_status(app, client, monkeypatch):
@@ -62,6 +64,7 @@ def test_diagnostics_includes_data_protection_status(app, client, monkeypatch):
     response = client.get('/api/diagnostics')
     assert response.status_code == 200
     assert response.get_json()['data_protection']['supported'] is True
+    assert 'recent_logs' not in response.get_json()
 
 
 def test_diagnostics_reports_effective_bind_address(app, client):

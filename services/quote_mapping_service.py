@@ -200,8 +200,7 @@ def create_mapping_job(project_id, supplier_id, quote_round, file_storage):
             os.remove(saved['absolute_path'])
         except OSError:
             get_logger().warning(
-                '非标准报价解析失败后无法删除上传文件: %s',
-                saved['absolute_path'],
+                '非标准报价解析失败后无法删除上传文件',
                 exc_info=True,
             )
         raise

@@ -167,14 +167,17 @@ def test_standard_quote_parser_closes_workbook_on_validation_error(monkeypatch):
     assert errors and workbook.closed is True
 
 
-def test_template_builder_escapes_stored_select_options():
+def test_template_builder_assigns_stored_values_without_dynamic_html():
     source = (
         Path(__file__).resolve().parents[1]
         / 'static'
         / 'js'
         / 'template-builder.js'
     ).read_text(encoding='utf-8')
-    assert "escapeHtml(data.options ? data.options.join('\\n')" in source
+    assert 'escapeHtml' not in source
+    assert 'renderTableColumns' not in source
+    assert "Array.isArray(data.options) ? data.options.join('\\n')" in source
+    assert 'optionsInput.value = Array.isArray(columnData.options)' in source
 
 
 def test_contract_export_writes_untrusted_formula_as_text(tmp_path):

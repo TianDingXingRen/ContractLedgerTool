@@ -157,15 +157,6 @@
     </section>
 </div>
 
-<section class="bg-base-100 rounded-lg border border-base-300 p-4 mt-3">
-    <h3 class="font-semibold text-sm mb-3">最近日志</h3>
-    {% if diagnostics.recent_logs %}
-    <pre class="text-xs whitespace-pre-wrap break-all bg-base-200 rounded p-3 max-h-80 overflow-auto">{{ diagnostics.recent_logs|join('\n') }}</pre>
-    {% else %}
-    <p class="text-sm text-base-content/50">暂无日志</p>
-    {% endif %}
-</section>
-
 <script id="diagnosticsPayload" type="application/json" data-api-url="{{ url_for('api_diagnostics') }}">{{ diagnostics|tojson }}</script>
 <script src="{{ static_url('js/diagnostics.js') }}"></script>
 

@@ -171,10 +171,7 @@ def register(app):
                 preset_key, header_data, detail_rows, output_dir
             )
 
-            get_logger().info(
-                "Excel bill generated: preset=%s, bill_no=%s, detail_rows=%d, path=%s",
-                preset_key, bill_no, len(detail_rows), path,
-            )
+            get_logger().info('Excel bill generated with %d detail rows', len(detail_rows))
 
             return send_file(
                 path,

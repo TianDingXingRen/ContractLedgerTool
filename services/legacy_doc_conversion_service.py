@@ -15,7 +15,14 @@ _log = logging.getLogger('contract_tool')
 
 def convert_doc_to_docx(doc_path, target_path=None, *, timeout=DOC_CONVERT_TIMEOUT):
     source = os.path.abspath(doc_path)
-    target = os.path.abspath(target_path or os.path.splitext(source)[0] + '.docx')
+    source_dir = os.path.dirname(source)
+    derived_target = os.path.join(
+        source_dir,
+        os.path.splitext(os.path.basename(source))[0] + '.docx',
+    )
+    target = os.path.abspath(target_path or derived_target)
+    if target != os.path.abspath(derived_target):
+        raise ValueError('DOC 转换目标路径无效')
     try:
         run_isolated_worker(
             _legacy_doc_worker, (source, target),
@@ -25,9 +32,9 @@ def convert_doc_to_docx(doc_path, target_path=None, *, timeout=DOC_CONVERT_TIMEO
         return target
     except Exception:
         try:
-            os.remove(target)
+            os.remove(os.path.join(source_dir, os.path.basename(target)))
         except FileNotFoundError:
-            _log.debug('Failed DOCX conversion output already absent: %s', target)
+            _log.debug('Failed DOCX conversion output already absent')
         raise
 
 
