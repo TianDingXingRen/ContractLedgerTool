@@ -3,7 +3,6 @@
 import os
 import uuid
 import json
-import shutil
 
 from flask import render_template, request, redirect, url_for, session, jsonify, send_file
 
@@ -284,7 +283,7 @@ def register(app):
             return '仅支持 .docx 和 .doc 格式', 400
 
         session_id = str(uuid.uuid4())
-        stored_name = f'{session_id}.{ext}'
+        stored_name = session_id + ('.doc' if ext == 'doc' else '.docx')
         filepath = os.path.join(helpers.UPLOAD_FOLDER, stored_name)
         file.save(filepath)
 
@@ -296,8 +295,6 @@ def register(app):
                 os.remove(filepath)
                 new_stored = f'{session_id}.docx'
                 new_path = os.path.join(helpers.UPLOAD_FOLDER, new_stored)
-                if os.path.abspath(converted) != os.path.abspath(new_path):
-                    shutil.move(converted, new_path)
                 filepath = new_path
                 stored_name = new_stored
                 get_logger().info('DOC converted successfully')

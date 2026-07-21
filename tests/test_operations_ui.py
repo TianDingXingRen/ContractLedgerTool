@@ -184,7 +184,9 @@ class OperationsUiTests(unittest.TestCase):
 
             self.assertEqual(ledger_store.get_contract_stats()['total'], 1)
             self.assertTrue(os.path.exists(output_path))
-            self.assertIn('before_full_restore', restore_payload['rollback']['filename'])
+            self.assertTrue(
+                restore_payload['rollback']['filename'].startswith('handover_full_')
+            )
 
     def test_full_backup_upload_rejects_non_app_zip(self):
         bad_zip = io.BytesIO()

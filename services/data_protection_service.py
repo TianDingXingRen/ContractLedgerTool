@@ -137,7 +137,7 @@ def data_protection_status(runtime_paths, *, backend=None) -> dict:
     backend = backend or _backend()
     try:
         supported = backend.volume_supports_encryption(Path(runtime_paths.base_dir))
-    except DataProtectionError as exc:
+    except DataProtectionError:
         return {
             'supported': False,
             'enabled': False,
@@ -145,7 +145,7 @@ def data_protection_status(runtime_paths, *, backend=None) -> dict:
             'encrypted_files': 0,
             'unencrypted_files': 0,
             'scan_truncated': False,
-            'description': str(exc),
+            'description': '无法检测当前磁盘的数据保护能力，请查看日志',
             'warning': warning,
         }
     if not supported:

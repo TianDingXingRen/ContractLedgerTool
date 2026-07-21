@@ -98,4 +98,4 @@ def test_status_reports_backend_probe_failure(tmp_path):
 
     status = protection.data_protection_status(_runtime_paths(tmp_path), backend=FailingBackend())
     assert status['supported'] is False
-    assert 'probe failed' in status['description']
+    assert status['description'] == '无法检测当前磁盘的数据保护能力，请查看日志'

@@ -104,8 +104,7 @@ def create_full_backup_package(label='handover'):
     """Create a complete handover ZIP package and return file metadata."""
     packages_dir = _package_dir()
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    safe_label = _safe_label(label)
-    target_name = os.path.basename(f'handover_full_{stamp}_{safe_label}.zip')
+    target_name = f'handover_full_{stamp}_{uuid.uuid4().hex[:8]}.zip'
     target_path = os.path.abspath(os.path.join(packages_dir, target_name))
     if not path_within(packages_dir, target_path):
         raise ValueError('完整数据包路径无效')
@@ -284,10 +283,9 @@ def upload_full_backup_package(file_storage):
     file_storage.save(temp_path)
     try:
         validate_full_backup_package(temp_path)
-        stem = os.path.splitext(filename)[0]
-        target_name = os.path.basename(
+        target_name = (
             f'uploaded_{datetime.now().strftime("%Y%m%d_%H%M%S")}_'
-            f'{uuid.uuid4().hex[:8]}_{_safe_label(stem)}.zip'
+            f'{uuid.uuid4().hex[:12]}.zip'
         )
         target_path = os.path.abspath(os.path.join(packages_dir, target_name))
         if not path_within(packages_dir, target_path):
