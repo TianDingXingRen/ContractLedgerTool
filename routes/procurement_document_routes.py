@@ -10,6 +10,19 @@ import procurement_store
 from services import procurement_file_service, project_document_service, quote_service
 
 
+DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+def _artifact_mimetype(path):
+    return {
+        '.docx': DOCX_MIME,
+        '.xlsx': XLSX_MIME,
+        '.pdf': 'application/pdf',
+        '.zip': 'application/zip',
+    }.get(os.path.splitext(os.fspath(path))[1].lower(), 'application/octet-stream')
+
+
 def register_document_routes(bp, error_redirect):
     """Attach document-focused routes to the procurement blueprint."""
 
@@ -23,7 +36,7 @@ def register_document_routes(bp, error_redirect):
             )
         return send_file(
             path, as_attachment=True, download_name=os.path.basename(path),
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            mimetype=XLSX_MIME,
         )
 
     @bp.route('/procurement/projects/<int:project_id>/inquiry')
@@ -34,7 +47,10 @@ def register_document_routes(bp, error_redirect):
             return error_redirect(
                 'procurement_project_detail', exc, exc_info=True, project_id=project_id,
             )
-        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        return send_file(
+            path, as_attachment=True, download_name=os.path.basename(path),
+            mimetype=DOCX_MIME,
+        )
 
     @bp.route('/procurement/projects/<int:project_id>/clarifications/document')
     def procurement_clarification_document(project_id):
@@ -46,7 +62,10 @@ def register_document_routes(bp, error_redirect):
             return error_redirect(
                 'procurement_project_detail', exc, exc_info=True, project_id=project_id,
             )
-        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        return send_file(
+            path, as_attachment=True, download_name=os.path.basename(path),
+            mimetype=DOCX_MIME,
+        )
 
     @bp.route('/procurement/projects/<int:project_id>/award/document')
     def procurement_award_document(project_id):
@@ -54,7 +73,10 @@ def register_document_routes(bp, error_redirect):
             path = project_document_service.generate_award_recommendation(project_id)
         except Exception as exc:
             return error_redirect('procurement_award', exc, exc_info=True, project_id=project_id)
-        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        return send_file(
+            path, as_attachment=True, download_name=os.path.basename(path),
+            mimetype=DOCX_MIME,
+        )
 
     @bp.route('/procurement/files/<int:file_id>/download')
     def procurement_file_download(file_id):
@@ -70,6 +92,7 @@ def register_document_routes(bp, error_redirect):
         return send_file(
             path, as_attachment=True,
             download_name=file_record.get('original_name') or path.name,
+            mimetype=_artifact_mimetype(path),
         )
 
     @bp.route('/procurement/projects/<int:project_id>/erp-oa-summary')
@@ -82,7 +105,7 @@ def register_document_routes(bp, error_redirect):
             )
         return send_file(
             path, as_attachment=True, download_name=os.path.basename(path),
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            mimetype=XLSX_MIME,
         )
 
     @bp.route('/procurement/projects/<int:project_id>/archive')

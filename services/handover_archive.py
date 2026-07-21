@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import PurePosixPath
 
 from utils import helpers
+from utils.logger import get_logger
 
 
 MAX_FULL_PACKAGE_MEMBERS = 20_000
@@ -15,6 +16,21 @@ MAX_FULL_PACKAGE_UNCOMPRESSED = 5 * 1024 * 1024 * 1024
 MAX_FULL_PACKAGE_MEMBER_SIZE = 1024 * 1024 * 1024
 MAX_FULL_PACKAGE_COMPRESSION_RATIO = 300
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+
+
+def read_optional_text(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as stream:
+            return stream.read().strip()
+    except OSError:
+        return ''
+
+
+def remove_file_if_exists(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        get_logger().debug('Temporary handover file already absent: %s', path)
 
 def safe_label(value, default='handover'):
     label = helpers.safe_filename_part(str(value or '').strip(), default)[:36]
@@ -92,7 +108,6 @@ def copy_database(db_path, target_path):
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     source = sqlite3.connect(db_path)
     try:
-        source.execute('PRAGMA wal_checkpoint(TRUNCATE)')
         destination = sqlite3.connect(target_path)
         try:
             source.backup(destination)

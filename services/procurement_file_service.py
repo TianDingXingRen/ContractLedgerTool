@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import uuid
@@ -98,3 +99,55 @@ def save_upload(project, file_type, file_storage):
         'sha256': sha256_file(path),
         'size_bytes': path.stat().st_size,
     }
+
+
+def save_generated(
+    project,
+    file_type,
+    original_name,
+    writer,
+    *,
+    record_type=None,
+):
+    """Atomically write and register a generated project artifact."""
+    import procurement_store
+
+    path = target_path(project, file_type, original_name)
+    stage = path.with_name(
+        f'.{path.stem}.{uuid.uuid4().hex}.stage{path.suffix}'
+    )
+    finalized = False
+    try:
+        writer(stage)
+        if not stage.is_file() or stage.stat().st_size <= 0:
+            raise ValueError('生成的项目文件为空')
+        os.replace(stage, path)
+        finalized = True
+        procurement_store.register_project_file(
+            project['id'],
+            record_type or file_type,
+            relative_path(path),
+            original_name,
+            sha256_file(path),
+            path.stat().st_size,
+        )
+        return path
+    except Exception:
+        try:
+            stage.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger('contract_tool').warning(
+                'Failed to remove generated project staging file: %s',
+                stage,
+                exc_info=True,
+            )
+        if finalized:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger('contract_tool').error(
+                    'Failed to remove unregistered generated project file: %s',
+                    path,
+                    exc_info=True,
+                )
+        raise

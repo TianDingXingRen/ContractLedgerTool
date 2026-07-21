@@ -39,19 +39,16 @@ def list_contracts(
     offset = max(0, (page - 1) * per_page)
     sql = f"""
         SELECT c.*,
-               COALESCE(pc.plan_count, 0) AS plan_count,
-               COALESCE(pc.pending_count, 0) AS pending_count,
-               COALESCE(pc.payable_count, 0) AS payable_count
+               (SELECT COUNT(*) FROM payment_plans p
+                WHERE p.contract_id = c.id) AS plan_count,
+               (SELECT COUNT(*) FROM payment_plans p
+                WHERE p.contract_id = c.id
+                  AND p.confirm_status = 'pending') AS pending_count,
+               (SELECT COUNT(*) FROM payment_plans p
+                WHERE p.contract_id = c.id
+                  AND p.confirm_status = 'confirmed'
+                  AND p.payment_status != 'paid') AS payable_count
         FROM contracts c
-        LEFT JOIN (
-            SELECT contract_id,
-                   COUNT(*) AS plan_count,
-                   SUM(CASE WHEN confirm_status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
-                   SUM(CASE WHEN confirm_status = 'confirmed' AND payment_status != 'paid'
-                            THEN 1 ELSE 0 END) AS payable_count
-            FROM payment_plans
-            GROUP BY contract_id
-        ) pc ON pc.contract_id = c.id
         {where}
         ORDER BY c.created_at DESC
         LIMIT ? OFFSET ?

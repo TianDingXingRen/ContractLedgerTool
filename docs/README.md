@@ -17,6 +17,7 @@ and planning notes stay in this index so they do not compete with setup steps.
 
 - Use `requirements.txt` for human-maintained dependency ranges.
 - Use `requirements.lock` for reproducible installs.
+- See `docs/technical-debt-audit.md` for the current repository audit and deferred non-security debt.
 - Use `python scripts/demo_data.py sample-contracts` for bulk sample contracts.
 - Use `python scripts/demo_data.py demo-flow` for end-to-end demo contracts.
 

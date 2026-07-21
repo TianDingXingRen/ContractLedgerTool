@@ -37,6 +37,23 @@ def test_office_archive_rejects_extreme_compression_ratio(tmp_path):
         validate_office_archive(path)
 
 
+def test_office_archive_rejects_duplicate_paths_and_missing_package_parts(tmp_path):
+    duplicate = tmp_path / 'duplicate.docx'
+    with pytest.warns(UserWarning, match='Duplicate name'):
+        _write_zip(duplicate, [
+            ('[Content_Types].xml', b'<Types/>'),
+            ('word/document.xml', b'<document/>'),
+            ('word/document.xml', b'<document/>'),
+        ])
+    with pytest.raises(ValueError, match='重复'):
+        validate_office_archive(duplicate)
+
+    missing = tmp_path / 'missing.docx'
+    _write_zip(missing, [('[Content_Types].xml', b'<Types/>')])
+    with pytest.raises(ValueError, match='必要的内部结构'):
+        validate_office_archive(missing)
+
+
 def test_random_non_zip_payloads_fail_with_controlled_error(tmp_path):
     rng = random.Random(20260720)
     path = tmp_path / 'fuzz.xlsx'

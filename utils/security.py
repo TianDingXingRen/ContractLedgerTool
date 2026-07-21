@@ -62,6 +62,13 @@ def limit_text(value, max_len: int = MAX_TEXT_VALUE_LENGTH) -> str:
     return text[:max_len]
 
 
+def safe_spreadsheet_value(value):
+    """Keep untrusted text from becoming an Excel formula."""
+    if isinstance(value, str) and value.startswith('='):
+        return "'" + value
+    return value
+
+
 def bounded_int(value, default: int = 0, min_value: int = 0,
                 max_value: int = 100000, label: str = '数值') -> int:
     """Parse and validate an integer within bounds."""
@@ -90,6 +97,7 @@ def validate_office_archive(path: str) -> None:
             if not members or len(members) > MAX_OFFICE_ARCHIVE_MEMBERS:
                 raise ValueError('Office 文件包含异常数量的内部文件')
             total_size = 0
+            names = set()
             for member in members:
                 normalized = str(member.filename or '').replace('\\', '/')
                 internal_path = PurePosixPath(normalized)
@@ -100,6 +108,11 @@ def validate_office_archive(path: str) -> None:
                     or ':' in internal_path.parts[0]
                 ):
                     raise ValueError('Office 文件包含不安全的内部路径')
+                if normalized in names:
+                    raise ValueError('Office 文件包含重复的内部路径')
+                names.add(normalized)
+                if member.flag_bits & 0x1:
+                    raise ValueError('Office 文件不能包含加密内容')
                 if member.file_size > MAX_OFFICE_ARCHIVE_MEMBER_SIZE:
                     raise ValueError('Office 文件中的单个内容过大')
                 total_size += member.file_size
@@ -111,7 +124,6 @@ def validate_office_archive(path: str) -> None:
                         raise ValueError('Office 文件压缩比异常，可能存在压缩包风险')
             if archive.testzip() is not None:
                 raise ValueError('Office 文件内容校验失败')
-            names = {str(member.filename or '').replace('\\', '/') for member in members}
             suffix = os.path.splitext(str(path))[1].lower()
             required = {
                 '.docx': {'[Content_Types].xml', 'word/document.xml'},

@@ -5,16 +5,17 @@ from __future__ import annotations
 from decimal import Decimal
 
 import procurement_store
+from utils.money import to_minor
 
 
 def _money_to_minor(value):
     raw = str(value or '').replace(',', '').strip()
     if not raw:
         return None
-    amount = Decimal(raw)
-    if amount < 0:
-        raise ValueError('谈判金额不能为负数')
-    return int((amount * 100).quantize(Decimal('1')))
+    try:
+        return to_minor(raw, allow_none=False)
+    except ValueError as exc:
+        raise ValueError(f'谈判金额无效：{exc}') from exc
 
 
 def negotiation_view(project_id, editing_round_no=None):

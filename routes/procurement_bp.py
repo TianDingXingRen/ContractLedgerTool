@@ -95,6 +95,24 @@ def _project_section_url(project_id, section):
     return url_for('procurement_project_detail', project_id=project_id) + f'#{section}'
 
 
+def _comparison_rules_from_form(form):
+    threshold = Decimal(str(form.get('threshold_percent') or 20))
+    min_valid = int(form.get('min_valid_suppliers') or 2)
+    if (
+        not threshold.is_finite()
+        or threshold < 0
+        or threshold > 100
+        or min_valid < 2
+        or min_valid > 20
+    ):
+        raise ValueError('比价阈值或最小供应商数量超出范围')
+    return threshold, {
+        'price_threshold_percent': threshold,
+        'min_valid_suppliers': min_valid,
+        'require_same_price_basis': form.get('require_same_price_basis') == '1',
+    }
+
+
 def register(app):
     bp = LegacyEndpointBlueprint('procurement', __name__)
     register_document_routes(bp, _error_redirect)
@@ -461,15 +479,8 @@ def register(app):
     @bp.route('/procurement/projects/<int:project_id>/comparison/run', methods=['POST'])
     def procurement_comparison_run(project_id):
         try:
-            threshold = Decimal(str(request.form.get('threshold_percent') or 20))
-            min_valid = int(request.form.get('min_valid_suppliers') or 2)
-            if threshold < 0 or threshold > 100 or min_valid < 2 or min_valid > 20:
-                raise ValueError('比价阈值或最小供应商数量超出范围')
-            procurement_store.save_rule_config(project_id, {
-                'price_threshold_percent': threshold,
-                'min_valid_suppliers': min_valid,
-                'require_same_price_basis': request.form.get('require_same_price_basis') == '1',
-            })
+            threshold, rules = _comparison_rules_from_form(request.form)
+            procurement_store.save_rule_config(project_id, rules)
             comparison_service.run_comparison(project_id, threshold)
         except Exception as exc:
             return _error_redirect('procurement_comparison', exc, exc_info=True, project_id=project_id)
@@ -563,6 +574,10 @@ def register(app):
                 return send_file(
                     result['path'], as_attachment=True,
                     download_name=result['download_name'],
+                    mimetype=(
+                        'application/vnd.openxmlformats-officedocument.'
+                        'wordprocessingml.document'
+                    ),
                 )
             except Exception as exc:
                 error = _form_error('谈判预案生成失败', exc)
@@ -585,7 +600,13 @@ def register(app):
             path = project_document_service.generate_negotiation_minutes(project_id)
         except Exception as exc:
             return _error_redirect('procurement_negotiation', exc, exc_info=True, project_id=project_id)
-        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        return send_file(
+            path, as_attachment=True, download_name=os.path.basename(path),
+            mimetype=(
+                'application/vnd.openxmlformats-officedocument.'
+                'wordprocessingml.document'
+            ),
+        )
 
     @bp.route('/procurement/projects/<int:project_id>/negotiation/commitments')
     def procurement_final_commitments(project_id):

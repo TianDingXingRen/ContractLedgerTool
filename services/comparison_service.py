@@ -10,9 +10,14 @@ from openpyxl.styles import Font, PatternFill
 import procurement_store
 from services import procurement_file_service
 from utils.money import from_minor
+from utils.security import safe_spreadsheet_value
 
 
 DEFAULT_THRESHOLD_PERCENT = Decimal('20')
+
+
+def _excel_row(values):
+    return [safe_spreadsheet_value(value) for value in values]
 
 
 def _money(value):
@@ -40,7 +45,10 @@ def run_comparison(project_id, threshold_percent=None):
     config = procurement_store.get_rule_config(project_id)
     threshold_percent = (threshold_percent if threshold_percent is not None
                          else config['price_threshold_percent'])
-    threshold = Decimal(str(threshold_percent)) / 100
+    threshold_value = Decimal(str(threshold_percent))
+    if not threshold_value.is_finite() or not 0 <= threshold_value <= 100:
+        raise ValueError('比价阈值必须是 0 到 100 之间的有限数值')
+    threshold = threshold_value / 100
     min_valid_suppliers = max(2, int(config.get('min_valid_suppliers') or 2))
     results = []
     price_bases = {quote.get('price_basis') for quote in quotes}
@@ -135,7 +143,7 @@ def run_comparison(project_id, threshold_percent=None):
             })
     run_id = procurement_store.create_comparison_run(
         project_id, [quote['id'] for quote in quotes],
-        {'threshold_percent': float(Decimal(str(threshold_percent))),
+        {'threshold_percent': float(threshold_value),
          'min_valid_suppliers': min_valid_suppliers,
          'require_same_price_basis': bool(config.get('require_same_price_basis'))}, results,
     )
@@ -213,22 +221,21 @@ def export_comparison_excel(project_id):
                 Decimal(quote_item['unit_price_minor']) / 100 if quote_item else '',
                 Decimal(quote_item['amount_minor']) / 100 if quote_item else '',
             ])
-        sheet.append(values)
+        sheet.append(_excel_row(values))
     anomaly = workbook.create_sheet('异常清单')
     anomaly.append(['类型', '供应商', '物资', '严重度', '说明', '建议'])
     if view['comparison']:
         for result in view['comparison']['results']:
-            anomaly.append([
+            anomaly.append(_excel_row([
                 result['result_type'], result.get('supplier_name') or '', result.get('item_name') or '',
                 result['severity'], result['description'], result.get('suggestion') or '',
-            ])
+            ]))
     project = view['project']
-    path = procurement_file_service.target_path(
-        project, 'comparison', f"{project['project_no']}_横向比价.xlsx"
-    )
-    workbook.save(path)
-    procurement_store.register_project_file(
-        project_id, 'comparison', procurement_file_service.relative_path(path), path.name,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
-    )
+    filename = f"{project['project_no']}_横向比价.xlsx"
+    try:
+        path = procurement_file_service.save_generated(
+            project, 'comparison', filename, workbook.save,
+        )
+    finally:
+        workbook.close()
     return str(path)

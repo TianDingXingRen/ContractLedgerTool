@@ -8,6 +8,8 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
+from utils.security import safe_spreadsheet_value
+
 # ── 样式常量 ──
 _HEADER_FONT = Font(name='Microsoft YaHei', bold=True, size=11)
 _TITLE_FONT = Font(name='Microsoft YaHei', bold=True, size=16)
@@ -49,7 +51,9 @@ def export_payment_plans(path, rows, title='下月付款计划'):
 
     # 标题行
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell = ws.cell(
+        row=1, column=1, value=safe_spreadsheet_value(title)
+    )
     title_cell.font = _TITLE_FONT
     title_cell.alignment = Alignment(horizontal='center')
 
@@ -82,7 +86,7 @@ def export_payment_plans(path, rows, title='下月付款计划'):
             row.get('remark') or '',
         ]
         for ci, val in enumerate(values, 1):
-            cell = ws.cell(row=ri, column=ci, value=val)
+            cell = ws.cell(row=ri, column=ci, value=safe_spreadsheet_value(val))
             cell.font = _NORMAL_FONT
             cell.border = _THIN_BORDER
             if ci in (9, 10, 11):
@@ -106,7 +110,10 @@ def export_payment_plans(path, rows, title='下月付款计划'):
     for ci, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = width
 
-    wb.save(path)
+    try:
+        wb.save(path)
+    finally:
+        wb.close()
     return path
 
 
@@ -124,7 +131,9 @@ def _export_contracts_streaming(path, contracts, title):
     for ci, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = width
 
-    title_cells = [WriteOnlyCell(ws, value=title)] + [WriteOnlyCell(ws) for _ in headers[1:]]
+    title_cells = [
+        WriteOnlyCell(ws, value=safe_spreadsheet_value(title))
+    ] + [WriteOnlyCell(ws) for _ in headers[1:]]
     title_cells[0].font = _TITLE_FONT
     title_cells[0].alignment = Alignment(horizontal='center')
     ws.append(title_cells)
@@ -162,7 +171,7 @@ def _export_contracts_streaming(path, contracts, title):
         ]
         cells = []
         for ci, value in enumerate(values, 1):
-            cell = WriteOnlyCell(ws, value=value)
+            cell = WriteOnlyCell(ws, value=safe_spreadsheet_value(value))
             cell.font = _NORMAL_FONT
             cell.border = _THIN_BORDER
             if ci == 7:
@@ -182,7 +191,10 @@ def _export_contracts_streaming(path, contracts, title):
             cell.number_format = '#,##0.00'
         summary_cells.append(cell)
     ws.append(summary_cells)
-    wb.save(path)
+    try:
+        wb.save(path)
+    finally:
+        wb.close()
     return path
 
 
@@ -204,7 +216,9 @@ def export_contracts(path, contracts, title='合同台账', streaming=False):
 
     # 标题行
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell = ws.cell(
+        row=1, column=1, value=safe_spreadsheet_value(title)
+    )
     title_cell.font = _TITLE_FONT
     title_cell.alignment = Alignment(horizontal='center')
 
@@ -235,7 +249,7 @@ def export_contracts(path, contracts, title='合同台账', streaming=False):
             c.get('plan_count', 0),
         ]
         for ci, val in enumerate(values, 1):
-            cell = ws.cell(row=ri, column=ci, value=val)
+            cell = ws.cell(row=ri, column=ci, value=safe_spreadsheet_value(val))
             cell.font = _NORMAL_FONT
             cell.border = _THIN_BORDER
             if ci == 7:
@@ -256,7 +270,10 @@ def export_contracts(path, contracts, title='合同台账', streaming=False):
     for ci, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = width
 
-    wb.save(path)
+    try:
+        wb.save(path)
+    finally:
+        wb.close()
     return path
 
 
@@ -265,7 +282,9 @@ def _write_handover_table(wb, sheet_name, title, headers, rows, widths, money_co
     ws = wb.create_sheet(sheet_name[:31])
     col_count = len(headers)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
-    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell = ws.cell(
+        row=1, column=1, value=safe_spreadsheet_value(title)
+    )
     title_cell.font = _TITLE_FONT
     title_cell.alignment = Alignment(horizontal='center')
 
@@ -276,7 +295,9 @@ def _write_handover_table(wb, sheet_name, title, headers, rows, widths, money_co
     if rows:
         for ri, row in enumerate(rows, 4):
             for ci, value in enumerate(row, 1):
-                cell = ws.cell(row=ri, column=ci, value=value)
+                cell = ws.cell(
+                    row=ri, column=ci, value=safe_spreadsheet_value(value)
+                )
                 cell.font = _NORMAL_FONT
                 cell.alignment = Alignment(vertical='top', wrap_text=True)
                 cell.border = _THIN_BORDER
@@ -307,7 +328,9 @@ def export_handover_checklist(path, data):
 
     title = f"{data.get('owner', '')} 交接清单"
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
-    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell = ws.cell(
+        row=1, column=1, value=safe_spreadsheet_value(title)
+    )
     title_cell.font = _TITLE_FONT
     title_cell.alignment = Alignment(horizontal='center')
 
@@ -329,7 +352,7 @@ def export_handover_checklist(path, data):
     _apply_header_style(ws, 3, 2)
     for ri, row in enumerate(overview_rows, 4):
         ws.cell(row=ri, column=1, value=row[0])
-        ws.cell(row=ri, column=2, value=row[1])
+        ws.cell(row=ri, column=2, value=safe_spreadsheet_value(row[1]))
         for ci in (1, 2):
             cell = ws.cell(row=ri, column=ci)
             cell.font = _NORMAL_FONT
@@ -467,5 +490,8 @@ def export_handover_checklist(path, data):
         [6, 12, 18, 28, 14, 24, 48, 14, 20],
     )
 
-    wb.save(path)
+    try:
+        wb.save(path)
+    finally:
+        wb.close()
     return path

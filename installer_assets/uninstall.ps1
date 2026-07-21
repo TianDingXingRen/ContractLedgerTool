@@ -8,15 +8,28 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Assert-SafeInstallDirectory($Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Install directory cannot be empty."
+    }
     $Resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
-    $Forbidden = @(
-        [System.IO.Path]::GetPathRoot($Resolved).TrimEnd('\'),
-        [System.IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\'),
-        [System.IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\'),
-        [System.IO.Path]::GetFullPath($env:APPDATA).TrimEnd('\')
+    $Candidates = @(
+        [System.IO.Path]::GetPathRoot($Resolved),
+        $env:USERPROFILE,
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
+        $env:SystemRoot,
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        [Environment]::GetFolderPath("Desktop"),
+        [Environment]::GetFolderPath("MyDocuments"),
+        [System.IO.Path]::GetTempPath()
     )
-    foreach ($Root in $Forbidden) {
-        if ($Resolved.Equals($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
+    foreach ($Candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($Candidate)) {
+            continue
+        }
+        $Forbidden = [System.IO.Path]::GetFullPath($Candidate).TrimEnd('\')
+        if ($Resolved.Equals($Forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Refusing to uninstall from unsafe directory: $Resolved"
         }
     }

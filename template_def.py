@@ -9,6 +9,7 @@ import re
 import shutil
 import time
 import logging
+import uuid
 from datetime import datetime
 
 from utils.security import path_within as _path_within
@@ -72,10 +73,20 @@ class TemplateDef:
         _ensure_dir()
         self._path = path or self._path or self._default_path()
         _backup_before_save(self._path)
-        tmp = self._path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self._path)
+        tmp = self._path + f'.tmp-{uuid.uuid4().hex}'
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        finally:
+            try:
+                os.remove(tmp)
+            except FileNotFoundError:
+                logging.getLogger('contract_tool').debug(
+                    '模板暂存文件已不存在: %s', tmp
+                )
         return self._path
 
     def _default_path(self):
@@ -435,12 +446,22 @@ def restore_version(template_name, version_filename):
     if os.path.exists(main_path):
         before_restore = os.path.join(vdir,
             datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_before_restore.contract-template')
-        try:
-            shutil.copy2(main_path, before_restore)
-        except Exception:
-            logging.getLogger('contract_tool').warning(
-                '版本回滚前备份当前模板失败: %s', template_name, exc_info=True)
+        shutil.copy2(main_path, before_restore)
+        with open(before_restore, 'r', encoding='utf-8') as f:
+            json.load(f)
     with open(src, 'r', encoding='utf-8') as f:
         json.load(f)
-    shutil.copy2(src, main_path)
+    staged = main_path + f'.restore-{uuid.uuid4().hex}'
+    try:
+        shutil.copy2(src, staged)
+        with open(staged, 'r', encoding='utf-8') as f:
+            json.load(f)
+        os.replace(staged, main_path)
+    finally:
+        try:
+            os.remove(staged)
+        except FileNotFoundError:
+            logging.getLogger('contract_tool').debug(
+                '模板恢复暂存文件已不存在: %s', staged
+            )
     return main_path

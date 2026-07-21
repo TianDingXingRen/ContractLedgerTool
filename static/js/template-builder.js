@@ -62,7 +62,7 @@
                     <div class="config-row flex items-start gap-3 mb-3">
                         <label class="text-xs text-base-content/60 w-12 pt-1">选项：</label>
                         <textarea name="field_options_${idx}" class="config-input options-input textarea textarea-bordered textarea-xs flex-1"
-                                  rows="3" placeholder="每行一个选项">${data.options ? data.options.join('\n') : '选项1\n选项2\n选项3'}</textarea>
+                                  rows="3" placeholder="每行一个选项">${escapeHtml(data.options ? data.options.join('\n') : '选项1\n选项2\n选项3')}</textarea>
                     </div>
                 </div>
 

@@ -74,7 +74,10 @@ class ContractGenerationService:
         output_path = os.path.abspath(request.output_path)
         output_dir = os.path.dirname(output_path)
         os.makedirs(output_dir, exist_ok=True)
-        staging_dir = self.staging_dir or os.path.join(output_dir, '.staging')
+        # The final rename must stay on one filesystem on Windows. Runtime
+        # reconfiguration and tests can replace output_path after this service
+        # was constructed, so a cached staging directory is not authoritative.
+        staging_dir = os.path.join(output_dir, '.staging')
         os.makedirs(staging_dir, exist_ok=True)
         job_id = uuid.uuid4().hex
         staged_path = os.path.join(

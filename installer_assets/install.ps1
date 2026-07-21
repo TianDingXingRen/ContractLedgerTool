@@ -15,6 +15,35 @@ function Write-Step($Text) {
     Write-Host "==> $Text" -ForegroundColor Cyan
 }
 
+function Assert-SafeInstallDirectory($Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Install directory cannot be empty."
+    }
+    $Resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $Candidates = @(
+        [System.IO.Path]::GetPathRoot($Resolved),
+        $env:USERPROFILE,
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
+        $env:SystemRoot,
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        [Environment]::GetFolderPath("Desktop"),
+        [Environment]::GetFolderPath("MyDocuments"),
+        [System.IO.Path]::GetTempPath()
+    )
+    foreach ($Candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($Candidate)) {
+            continue
+        }
+        $Forbidden = [System.IO.Path]::GetFullPath($Candidate).TrimEnd('\')
+        if ($Resolved.Equals($Forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to install into unsafe directory: $Resolved"
+        }
+    }
+    return $Resolved
+}
+
 function Set-WritableIfExists($Path) {
     if (Test-Path -LiteralPath $Path) {
         try {
@@ -149,6 +178,7 @@ function Stop-ProcessIfRunning($ProcessId, $Reason) {
 
 function Stop-PreviousVersions($InstallDir, $AppExe, $Port) {
     $fullInstallDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    $installPrefix = $fullInstallDir + '\'
     $fullAppExe = [System.IO.Path]::GetFullPath($AppExe)
 
     Get-CimInstance Win32_Process |
@@ -156,10 +186,10 @@ function Stop-PreviousVersions($InstallDir, $AppExe, $Port) {
             $path = [string]$_.ExecutablePath
             $cmd = [string]$_.CommandLine
             $isInstalledApp = $path -and $path.Equals($fullAppExe, [System.StringComparison]::OrdinalIgnoreCase)
-            $isUnderInstallDir = $path -and $path.StartsWith($fullInstallDir, [System.StringComparison]::OrdinalIgnoreCase)
+            $isUnderInstallDir = $path -and $path.StartsWith($installPrefix, [System.StringComparison]::OrdinalIgnoreCase)
             $isLegacySourceCommand = (
                 $cmd -and
-                ($cmd.IndexOf($fullInstallDir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -and
+                ($cmd.IndexOf($installPrefix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -and
                 ($cmd.IndexOf("app.py", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
             )
             $_.ProcessId -ne $PID -and ($isInstalledApp -or $isUnderInstallDir -or $isLegacySourceCommand)
@@ -420,6 +450,7 @@ function Register-Uninstaller($InstallDir, $AppExe, $Version) {
 }
 
 $PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$InstallDir = Assert-SafeInstallDirectory $InstallDir
 $AppExeSource = Join-Path $PackageRoot "ContractLedgerTool.exe"
 if (-not (Test-Path -LiteralPath $AppExeSource)) {
     throw "Package is incomplete: ContractLedgerTool.exe was not found."

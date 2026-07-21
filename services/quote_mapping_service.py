@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 
 from docx import Document
 from openpyxl import load_workbook
@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 import procurement_store
 from services import procurement_file_service
 from utils.logger import get_logger
+from utils.money import to_minor
 from utils.security import validate_office_archive
 
 
@@ -22,6 +23,21 @@ MAPPING_FIELDS = [
     ('delivery_period', '分项交期'), ('technical_deviation', '技术偏离'),
     ('commercial_deviation', '商务偏离'), ('remark', '备注'),
 ]
+MAX_MAPPING_TABLES = 50
+MAX_MAPPING_ROWS = 10_000
+MAX_MAPPING_COLUMNS = 200
+MAX_MAPPING_CELL_TEXT = 2_000
+MAX_MAPPING_PDF_PAGES = 50
+
+
+def _bounded_cell(value):
+    return str(_json_value(value))[:MAX_MAPPING_CELL_TEXT]
+
+
+def _close_resource(resource):
+    close = getattr(resource, 'close', None)
+    if close is not None:
+        close()
 
 
 def _json_value(value):
@@ -38,16 +54,20 @@ def _extract_excel(path):
     workbook = load_workbook(path, data_only=False, read_only=True)
     try:
         tables = []
-        for sheet in workbook.worksheets:
+        total_rows = 0
+        for sheet in workbook.worksheets[:MAX_MAPPING_TABLES]:
             rows = []
             for row in sheet.iter_rows(values_only=True):
-                values = [_json_value(value) for value in row]
+                values = [_bounded_cell(value) for value in row[:MAX_MAPPING_COLUMNS]]
                 if any(value not in ('', None) for value in values):
                     rows.append(values)
-                if len(rows) >= 5000:
+                    total_rows += 1
+                if len(rows) >= 5000 or total_rows >= MAX_MAPPING_ROWS:
                     break
             if rows:
                 tables.append({'name': sheet.title, 'rows': rows})
+            if total_rows >= MAX_MAPPING_ROWS:
+                break
         return tables, []
     finally:
         workbook.close()
@@ -56,10 +76,21 @@ def _extract_excel(path):
 def _extract_word(path):
     document = Document(path)
     tables = []
-    for index, table in enumerate(document.tables, start=1):
-        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+    total_rows = 0
+    for index, table in enumerate(document.tables[:MAX_MAPPING_TABLES], start=1):
+        rows = []
+        for row in table.rows:
+            rows.append([
+                str(cell.text or '').strip()[:MAX_MAPPING_CELL_TEXT]
+                for cell in row.cells[:MAX_MAPPING_COLUMNS]
+            ])
+            total_rows += 1
+            if total_rows >= MAX_MAPPING_ROWS:
+                break
         if rows:
             tables.append({'name': f'表格{index}', 'rows': rows})
+        if total_rows >= MAX_MAPPING_ROWS:
+            break
     return tables, []
 
 
@@ -71,11 +102,31 @@ def _extract_pdf(path):
         return [], ['缺少 pdfplumber，安装 requirements.txt 后可解析文本型 PDF']
     tables = []
     with pdfplumber.open(path) as pdf:
-        for page_number, page in enumerate(pdf.pages, start=1):
+        total_rows = 0
+        for page_number, page in enumerate(
+            pdf.pages[:MAX_MAPPING_PDF_PAGES], start=1
+        ):
             for table_index, raw_table in enumerate(page.extract_tables() or [], start=1):
-                rows = [[str(cell or '').strip() for cell in row] for row in raw_table if row]
+                rows = []
+                for row in raw_table:
+                    if not row:
+                        continue
+                    rows.append([
+                        str(cell or '').strip()[:MAX_MAPPING_CELL_TEXT]
+                        for cell in row[:MAX_MAPPING_COLUMNS]
+                    ])
+                    total_rows += 1
+                    if total_rows >= MAX_MAPPING_ROWS:
+                        break
                 if rows:
                     tables.append({'name': f'第{page_number}页表格{table_index}', 'rows': rows})
+                if (
+                    len(tables) >= MAX_MAPPING_TABLES
+                    or total_rows >= MAX_MAPPING_ROWS
+                ):
+                    break
+            if len(tables) >= MAX_MAPPING_TABLES or total_rows >= MAX_MAPPING_ROWS:
+                break
     if tables:
         return tables, diagnostics
     try:
@@ -85,13 +136,35 @@ def _extract_pdf(path):
         if tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
         pdf = pdfium.PdfDocument(path)
-        images = [page.render(scale=3).to_pil() for page in pdf]
         rows = []
-        for page_number, image in enumerate(images, start=1):
-            text = pytesseract.image_to_string(image, lang='chi_sim+eng')
-            page_rows = [[part.strip() for part in line.split('\t')]
-                         for line in text.splitlines() if line.strip()]
-            rows.extend(page_rows)
+        try:
+            for page_index in range(min(len(pdf), MAX_MAPPING_PDF_PAGES)):
+                page = pdf[page_index]
+                bitmap = None
+                image = None
+                try:
+                    bitmap = page.render(scale=3)
+                    image = bitmap.to_pil()
+                    text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+                    for line in text.splitlines():
+                        if not line.strip():
+                            continue
+                        rows.append([
+                            part.strip()[:MAX_MAPPING_CELL_TEXT]
+                            for part in line.split('\t')[:MAX_MAPPING_COLUMNS]
+                        ])
+                        if len(rows) >= MAX_MAPPING_ROWS:
+                            break
+                finally:
+                    if image is not None:
+                        _close_resource(image)
+                    if bitmap is not None:
+                        _close_resource(bitmap)
+                    _close_resource(page)
+                if len(rows) >= MAX_MAPPING_ROWS:
+                    break
+        finally:
+            _close_resource(pdf)
         if rows:
             tables.append({'name': 'OCR识别结果', 'rows': rows})
     except Exception as exc:
@@ -143,6 +216,9 @@ def _decimal(value, label, errors, row_number, required=True):
     except InvalidOperation:
         errors.append(f'第 {row_number} 行{label}格式无效')
         return None
+    if not number.is_finite():
+        errors.append(f'第 {row_number} 行{label}必须是有限数值')
+        return None
     if number < 0:
         errors.append(f'第 {row_number} 行{label}不能为负数')
         return None
@@ -150,7 +226,7 @@ def _decimal(value, label, errors, row_number, required=True):
 
 
 def _minor(number):
-    return int((number * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return to_minor(number, allow_none=False)
 
 
 def _cell(row, mapping, key):
@@ -250,7 +326,7 @@ def map_to_import_job(mapping_job_id, form):
     if tax_raw:
         try:
             tax = Decimal(tax_raw)
-            if tax < 0 or tax > 100:
+            if not tax.is_finite() or tax < 0 or tax > 100:
                 raise InvalidOperation
             tax_bps = int(tax * 100)
         except InvalidOperation:

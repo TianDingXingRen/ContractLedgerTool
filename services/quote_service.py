@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -13,7 +13,8 @@ from openpyxl.worksheet.datavalidation import DataValidation
 import procurement_store
 from services import procurement_file_service
 from utils.logger import get_logger
-from utils.security import validate_office_archive
+from utils.money import to_minor
+from utils.security import safe_spreadsheet_value, validate_office_archive
 
 
 FORMAT_VERSION = '1.0'
@@ -33,6 +34,9 @@ def _decimal(value, label, errors, row=None, allow_zero=True):
     except InvalidOperation:
         errors.append(f'{label}{f"（第 {row} 行）" if row else ""}格式无效')
         return None
+    if not result.is_finite():
+        errors.append(f'{label}{f"（第 {row} 行）" if row else ""}必须是有限数值')
+        return None
     if result < 0 or (not allow_zero and result == 0):
         errors.append(f'{label}{f"（第 {row} 行）" if row else ""}必须大于 0')
         return None
@@ -40,7 +44,7 @@ def _decimal(value, label, errors, row=None, allow_zero=True):
 
 
 def _money_minor(value):
-    return int((value * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return to_minor(value, allow_none=False)
 
 
 def _date_text(value):
@@ -88,7 +92,7 @@ def generate_quote_template(project_id, supplier_id):
         ('报价总额', ''),
     ]
     for label, value in info_rows:
-        info.append([label, value])
+        info.append([label, safe_spreadsheet_value(value)])
         info.cell(info.max_row, 2).fill = _INPUT_FILL if label not in {'项目编号', '项目名称', '供应商名称'} else _LOCKED_FILL
     price_basis = DataValidation(type='list', formula1='"含税,不含税"', allow_blank=False)
     info.add_data_validation(price_basis)
@@ -109,9 +113,12 @@ def generate_quote_template(project_id, supplier_id):
         detail.column_dimensions[detail.cell(1, index).column_letter].width = width
     for row_index, item in enumerate(items, start=2):
         detail.append([
-            item['id'], item['line_no'], item['item_name'], item.get('spec_model') or '',
-            item.get('drawing_no') or '', Decimal(item['quantity_text']), item['unit'], '',
-            f'=ROUND(F{row_index}*H{row_index},2)', item.get('required_delivery_date') or '',
+            item['id'], item['line_no'], safe_spreadsheet_value(item['item_name']),
+            safe_spreadsheet_value(item.get('spec_model') or ''),
+            safe_spreadsheet_value(item.get('drawing_no') or ''),
+            Decimal(item['quantity_text']), safe_spreadsheet_value(item['unit']), '',
+            f'=ROUND(F{row_index}*H{row_index},2)',
+            safe_spreadsheet_value(item.get('required_delivery_date') or ''),
             '', '', '',
         ])
         for col in range(1, 8):
@@ -144,16 +151,15 @@ def generate_quote_template(project_id, supplier_id):
         ('format_version', FORMAT_VERSION), ('project_id', project_id),
         ('project_no', project['project_no']), ('supplier_id', supplier_id),
     ]:
-        meta.append([key, value])
+        meta.append([key, safe_spreadsheet_value(value)])
 
     filename = f"{project['project_no']}_{supplier['supplier_name']}_标准报价模板.xlsx"
-    path = procurement_file_service.target_path(project, 'quote_template', filename)
-    workbook.save(path)
-    relative = procurement_file_service.relative_path(path)
-    procurement_store.register_project_file(
-        project_id, 'quote_template', relative, filename,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
-    )
+    try:
+        path = procurement_file_service.save_generated(
+            project, 'quote_template', filename, workbook.save,
+        )
+    finally:
+        workbook.close()
     if project['status'] == 'draft':
         procurement_store.transition_project_status(project_id, 'documents_ready', '已生成标准报价模板')
     return str(path)
@@ -180,6 +186,35 @@ def parse_standard_quote(path, project_id, supplier_id, expected_round):
         workbook = load_workbook(path, data_only=False, read_only=False)
     except Exception as exc:
         return {}, [f'Excel 文件无法读取：{exc}'], []
+    try:
+        return _parse_standard_quote_workbook(
+            workbook,
+            path,
+            project_id,
+            supplier_id,
+            expected_round,
+            project,
+            supplier,
+            expected_items,
+            errors,
+            warnings,
+        )
+    finally:
+        workbook.close()
+
+
+def _parse_standard_quote_workbook(
+    workbook,
+    path,
+    project_id,
+    supplier_id,
+    expected_round,
+    project,
+    supplier,
+    expected_items,
+    errors,
+    warnings,
+):
     required_sheets = {'_meta', '报价信息', '报价明细'}
     missing = required_sheets - set(workbook.sheetnames)
     if missing:

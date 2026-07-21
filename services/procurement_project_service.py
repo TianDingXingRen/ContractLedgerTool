@@ -26,6 +26,7 @@ from utils.security import MAX_TEXT_VALUE_LENGTH, limit_text, validate_office_ar
 
 
 MAX_PROCUREMENT_IMPORT_ROWS = 1000
+MAX_PROCUREMENT_QUANTITY = Decimal('1000000000000')
 STATUS_TRANSITIONS = {
     'draft': {'documents_ready', 'inquiry_sent', 'quotes_received', 'archived'},
     'documents_ready': {'draft', 'inquiry_sent', 'quotes_received', 'archived'},
@@ -63,6 +64,20 @@ STAGE_ACTIONS = {
     'contract': {'endpoint': 'procurement_direct_contract', 'label': '直接生成合同'},
     'archive': {'endpoint': 'procurement_project_archive', 'label': '生成归档包'},
 }
+
+
+def _positive_quantity(value):
+    try:
+        quantity = Decimal(str(value or '').strip())
+    except InvalidOperation as exc:
+        raise ValueError('数量格式无效') from exc
+    if not quantity.is_finite():
+        raise ValueError('数量必须是有限数值')
+    if quantity <= 0:
+        raise ValueError('数量必须大于 0')
+    if quantity > MAX_PROCUREMENT_QUANTITY:
+        raise ValueError('数量超出允许范围')
+    return quantity
 
 
 def money_to_minor(value, label='金额', allow_empty=True):
@@ -312,12 +327,7 @@ def add_item(project_id, form):
         raise ValueError('物资名称不能为空')
     if not unit:
         raise ValueError('单位不能为空')
-    try:
-        quantity = Decimal(str(form.get('quantity') or '').strip())
-    except InvalidOperation as exc:
-        raise ValueError('数量格式无效') from exc
-    if quantity <= 0:
-        raise ValueError('数量必须大于 0')
+    quantity = _positive_quantity(form.get('quantity'))
     normalized = format(quantity.normalize(), 'f')
     return procurement_store.add_project_item(project_id, {
         'item_name': item_name,
@@ -336,12 +346,7 @@ def update_item(project_id, item_id, form):
     unit = str(form.get('unit') or '').strip()
     if not item_name or not unit:
         raise ValueError('物资名称和单位不能为空')
-    try:
-        quantity = Decimal(str(form.get('quantity') or '').strip())
-    except InvalidOperation as exc:
-        raise ValueError('数量格式无效') from exc
-    if quantity <= 0:
-        raise ValueError('数量必须大于 0')
+    quantity = _positive_quantity(form.get('quantity'))
     procurement_store.update_project_item(project_id, item_id, {
         'item_name': item_name,
         'spec_model': str(form.get('spec_model') or '').strip(),
@@ -366,11 +371,11 @@ def add_items_from_rows(project_id, rows):
         item_name = limit_text(values[0], MAX_TEXT_VALUE_LENGTH).strip()
         unit = limit_text(values[4], 120).strip()
         try:
-            quantity = Decimal(str(values[3] or '').strip())
-        except InvalidOperation:
-            errors.append(f'第 {row_number} 行数量格式无效')
+            quantity = _positive_quantity(values[3])
+        except ValueError as exc:
+            errors.append(f'第 {row_number} 行{exc}')
             continue
-        if not item_name or not unit or quantity <= 0:
+        if not item_name or not unit:
             errors.append(f'第 {row_number} 行物资名称、正数数量和单位为必填项')
             continue
         parsed.append({

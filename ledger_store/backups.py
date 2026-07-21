@@ -161,26 +161,22 @@ def replace_database(db_path, data_dir, source_path):
 
 
 def _copy_database(db_path, target_path):
+    temp_target = f'{target_path}.tmp-{uuid.uuid4().hex}'
     src = sqlite3.connect(db_path)
     try:
-        src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        dst = sqlite3.connect(target_path)
+        dst = sqlite3.connect(temp_target)
         try:
             src.backup(dst)
         finally:
             dst.close()
-    except Exception:
-        get_logger().warning(
-            'SQLite backup API failed; falling back to file copy',
-            exc_info=True,
-        )
-        try:
-            shutil.copy2(db_path, target_path)
-        except Exception:
-            get_logger().error('Database backup failed completely', exc_info=True)
-            raise
+        _validate_sqlite_backup(temp_target)
+        os.replace(temp_target, target_path)
     finally:
         src.close()
+        try:
+            os.remove(temp_target)
+        except FileNotFoundError:
+            get_logger().debug('Backup staging file already absent: %s', temp_target)
 
 
 def _validate_sqlite_backup(path):

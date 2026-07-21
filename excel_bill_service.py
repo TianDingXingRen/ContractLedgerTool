@@ -16,6 +16,7 @@ from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from utils.security import safe_spreadsheet_value
 
 import ledger_store
 import template_def
@@ -430,9 +431,15 @@ def generate_bill_excel(preset_key, header_data, detail_rows, output_dir):
     # 保存
     bill_no = header_data.get("bill_no", uuid.uuid4().hex[:12])
     safe_name = re.sub(r'[^\w一-鿿-]', '_', str(bill_no))
-    filename = safe_name + "_" + datetime.now().strftime('%Y%m%d_%H%M%S') + ".xlsx"
+    filename = (
+        safe_name + "_" + datetime.now().strftime('%Y%m%d_%H%M%S')
+        + "_" + uuid.uuid4().hex[:8] + ".xlsx"
+    )
     path = os.path.join(output_dir, filename)
-    wb.save(path)
+    try:
+        wb.save(path)
+    finally:
+        wb.close()
     return path
 
 
@@ -446,7 +453,9 @@ def _write_header_sheet(ws, columns, data):
         cell_label.border = _THIN_BORDER
 
         val = data.get(col_def["key"], "")
-        cell_value = ws.cell(row=2, column=ci, value=val)
+        cell_value = ws.cell(
+            row=2, column=ci, value=safe_spreadsheet_value(val)
+        )
         cell_value.font = _NORMAL_FONT
         cell_value.border = _THIN_BORDER
         cell_value.alignment = Alignment(vertical='center')
@@ -467,7 +476,9 @@ def _write_detail_sheet(ws, columns, rows):
     for ri, row_data in enumerate(rows, 2):
         for ci, col_def in enumerate(columns, 1):
             val = row_data.get(col_def["key"], "")
-            cell = ws.cell(row=ri, column=ci, value=val)
+            cell = ws.cell(
+                row=ri, column=ci, value=safe_spreadsheet_value(val)
+            )
             cell.font = _NORMAL_FONT
             cell.border = _THIN_BORDER
             cell.alignment = Alignment(vertical='center')

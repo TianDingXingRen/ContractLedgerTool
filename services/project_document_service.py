@@ -18,10 +18,15 @@ import procurement_store
 from services import procurement_file_service
 from utils.constants import PROCUREMENT_METHOD_LABELS
 from utils.logger import get_logger
+from utils.security import safe_spreadsheet_value
 
 
 def _money(value):
     return f'{Decimal(int(value or 0)) / 100:,.2f}'
+
+
+def _excel_row(values):
+    return [safe_spreadsheet_value(value) for value in values]
 
 
 def _strip_text(value):
@@ -84,12 +89,9 @@ def _title(document, text):
 
 
 def _save_and_register(document, project, file_type, filename):
-    path = procurement_file_service.target_path(project, file_type, filename)
     _apply_document_font(document)
-    document.save(path)
-    procurement_store.register_project_file(
-        project['id'], file_type, procurement_file_service.relative_path(path), filename,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
+    path = procurement_file_service.save_generated(
+        project, file_type, filename, document.save,
     )
     return str(path)
 
@@ -414,21 +416,21 @@ def export_project_items(project_id):
         cell.font = Font(color='FFFFFF', bold=True)
         cell.fill = PatternFill('solid', fgColor='1D4ED8')
     for item in items:
-        sheet.append([
+        sheet.append(_excel_row([
             item['item_name'], item.get('spec_model') or '', item.get('drawing_no') or '',
             Decimal(item['quantity_text']), item['unit'], item.get('required_delivery_date') or '',
             item.get('technical_requirement') or '', item.get('remark') or '',
-        ])
+        ]))
     for column, width in zip('ABCDEFGH', [24, 18, 16, 12, 10, 16, 32, 24]):
         sheet.column_dimensions[column].width = width
-    path = procurement_file_service.target_path(
-        project, 'quote_template', f"{project['project_no']}_采购明细.xlsx"
-    )
-    workbook.save(path)
-    procurement_store.register_project_file(
-        project_id, 'project_items', procurement_file_service.relative_path(path), path.name,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
-    )
+    filename = f"{project['project_no']}_采购明细.xlsx"
+    try:
+        path = procurement_file_service.save_generated(
+            project, 'quote_template', filename, workbook.save,
+            record_type='project_items',
+        )
+    finally:
+        workbook.close()
     return str(path)
 
 
@@ -496,21 +498,20 @@ def export_final_commitments(project_id):
         latest_amount = Decimal(supplier['latest_amount_minor']) / 100 if supplier['latest_amount_minor'] is not None else ''
         reduction_amount = Decimal(supplier['reduction_minor']) / 100 if supplier['first_amount_minor'] is not None else ''
         reduction_percent = Decimal(supplier['reduction_percent']) if supplier['first_amount_minor'] is not None else ''
-        sheet.append([
+        sheet.append(_excel_row([
             supplier['supplier_name'], first_amount,
             latest_amount, reduction_amount,
             reduction_percent, commitment.get('delivery_period') or quote.get('delivery_period') or '',
             commitment.get('payment_terms') or quote.get('payment_terms') or '', commitment.get('commitment') or '',
-        ])
+        ]))
     project = view['project']
-    path = procurement_file_service.target_path(
-        project, 'negotiation', f"{project['project_no']}_最终承诺表.xlsx"
-    )
-    workbook.save(path)
-    procurement_store.register_project_file(
-        project_id, 'negotiation', procurement_file_service.relative_path(path), path.name,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
-    )
+    filename = f"{project['project_no']}_最终承诺表.xlsx"
+    try:
+        path = procurement_file_service.save_generated(
+            project, 'negotiation', filename, workbook.save,
+        )
+    finally:
+        workbook.close()
     return str(path)
 
 
@@ -543,25 +544,25 @@ def generate_erp_oa_summary(project_id):
         ('合同注意事项', award.get('contract_notice') or ''),
     ]
     for field, value in fields:
-        summary.append([field, value])
+        summary.append(_excel_row([field, value]))
     summary.column_dimensions['A'].width = 22
     summary.column_dimensions['B'].width = 60
     items_sheet = workbook.create_sheet('成交明细')
     items_sheet.append(['供应商', '物资名称', '规格型号', '数量', '单位', '单价', '金额'])
     for item in award['items']:
-        items_sheet.append([
+        items_sheet.append(_excel_row([
             item.get('supplier_name') or award['supplier_name'], item['item_name'],
             item.get('spec_model') or '', Decimal(item['quantity_text']), item['unit'],
             Decimal(item['unit_price_minor']) / 100, Decimal(item['amount_minor']) / 100,
-        ])
-    project_path = procurement_file_service.target_path(
-        project, 'contract', f"{project['project_no']}_ERP_OA填报摘要.xlsx"
-    )
-    workbook.save(project_path)
-    procurement_store.register_project_file(
-        project_id, 'erp_oa_summary', procurement_file_service.relative_path(project_path),
-        project_path.name, procurement_file_service.sha256_file(project_path), project_path.stat().st_size,
-    )
+        ]))
+    filename = f"{project['project_no']}_ERP_OA填报摘要.xlsx"
+    try:
+        project_path = procurement_file_service.save_generated(
+            project, 'contract', filename, workbook.save,
+            record_type='erp_oa_summary',
+        )
+    finally:
+        workbook.close()
     return str(project_path)
 
 
@@ -582,28 +583,39 @@ def generate_project_archive(project_id):
         'contract_links': procurement_store.get_project_contract_links(project_id),
         'files': files,
     }
-    path = procurement_file_service.target_path(
-        project, 'archive', f"{project['project_no']}_完整归档包.zip"
-    )
-    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
-        used_names = set()
-        for record in files:
-            if record['file_type'] == 'archive':
-                continue
-            try:
-                source = procurement_file_service.absolute_path(record['relative_path'])
-            except ValueError:
-                continue
-            if not source.is_file():
-                continue
-            name = f"{record['file_type']}/{record.get('original_name') or source.name}"
-            if name in used_names:
-                name = f"{record['file_type']}/v{record['version']}_{record.get('original_name') or source.name}"
-            used_names.add(name)
-            archive.write(source, name)
-    procurement_store.register_project_file(
-        project_id, 'archive', procurement_file_service.relative_path(path), path.name,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
+    filename = f"{project['project_no']}_完整归档包.zip"
+
+    def write_archive(stage_path):
+        with zipfile.ZipFile(stage_path, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                'manifest.json',
+                json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
+            )
+            used_names = set()
+            for record in files:
+                if record['file_type'] == 'archive':
+                    continue
+                try:
+                    source = procurement_file_service.absolute_path(
+                        record['relative_path']
+                    )
+                except ValueError:
+                    continue
+                if not source.is_file():
+                    continue
+                name = (
+                    f"{record['file_type']}/"
+                    f"{record.get('original_name') or source.name}"
+                )
+                if name in used_names:
+                    name = (
+                        f"{record['file_type']}/v{record['version']}_"
+                        f"{record.get('original_name') or source.name}"
+                    )
+                used_names.add(name)
+                archive.write(source, name)
+
+    path = procurement_file_service.save_generated(
+        project, 'archive', filename, write_archive,
     )
     return str(path)

@@ -22,7 +22,9 @@ Most business logic has been moved to dedicated sub-modules:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import uuid
 from typing import Any
 
 import template_def
@@ -84,10 +86,20 @@ def save_session_data(sid: str, data: dict[str, Any]) -> None:
     if SESSION_FOLDER is None:
         raise RuntimeError('SESSION_FOLDER 未初始化，请先调用 init_runtime()')
     path = safe_join_file(SESSION_FOLDER, f'{sid}.json', allowed_ext={'.json'})
-    tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    tmp = path + f'.tmp-{uuid.uuid4().hex}'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            logging.getLogger('contract_tool').debug(
+                '会话暂存文件已不存在: %s', tmp
+            )
 
 
 def load_session_data(sid: str) -> dict[str, Any]:

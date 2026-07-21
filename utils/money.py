@@ -10,6 +10,9 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional, Union
 
 
+SQLITE_MAX_INTEGER = 2**63 - 1
+
+
 def to_minor(value: Union[str, float, Decimal, int, None], *, allow_none: bool = True) -> Optional[int]:
     """将金额（元）转换为分（整数），失败抛出 ValueError。
 
@@ -38,7 +41,13 @@ def to_minor(value: Union[str, float, Decimal, int, None], *, allow_none: bool =
         raise ValueError('金额必须是有限数值')
     if number < 0:
         raise ValueError('金额不能为负数')
-    return int((number * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    try:
+        minor = int((number * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, OverflowError, ValueError) as exc:
+        raise ValueError('金额超出可存储范围') from exc
+    if minor > SQLITE_MAX_INTEGER:
+        raise ValueError('金额超出可存储范围')
+    return minor
 
 
 def from_minor(minor_value: Optional[int], decimal_places: int = 2) -> str:

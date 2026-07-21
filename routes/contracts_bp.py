@@ -11,6 +11,7 @@ from urllib.parse import quote
 from flask import current_app, render_template, request, redirect, url_for, send_file, session, jsonify
 
 from routes.legacy_blueprint import LegacyEndpointBlueprint
+from routes import contract_batch_support
 
 from core.domain_errors import DocumentGenerationError, ProcurementLinkError, ValidationError
 import template_def
@@ -22,28 +23,35 @@ from services import dashboard_service
 from services.contract_preview_service import editor_preview_model
 from services.contract_generation_service import ContractGenerationRequest, ProcurementLink
 from utils import helpers
-from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH, limit_text
+from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH
 from utils.logger import get_logger
 from utils.errors import safe_error, safe_file_error, GENERIC_ERROR, GENERIC_GENERATE_ERROR
 
 
 def _remove_generated_file(path):
-    try:
-        if path and os.path.isfile(path):
-            os.remove(path)
-    except OSError:
-        get_logger().warning('Failed to remove generated file: %s', path, exc_info=True)
+    contract_batch_support.remove_generated_file(path, get_logger())
 
 
 def _discard_generated_contract(contract_id, output_path):
-    if contract_id:
-        try:
-            ledger_store.discard_unlinked_contract(contract_id)
-        except Exception:
-            get_logger().error(
-                'Failed to discard unlinked generated contract %s', contract_id, exc_info=True
-            )
-    _remove_generated_file(output_path)
+    return contract_batch_support.discard_generated_contract(
+        contract_id,
+        output_path,
+        ledger_store=ledger_store,
+        remove_file=_remove_generated_file,
+        logger=get_logger(),
+    )
+
+
+def _batch_archive(path, failures):
+    return contract_batch_support.batch_archive(
+        path, failures, zipfile.ZipFile, zipfile.ZIP_DEFLATED
+    )
+
+
+def _rollback_batch_contract(item):
+    return contract_batch_support.rollback_batch_contract(
+        item, discard_generated=_discard_generated_contract, logger=get_logger()
+    )
 
 
 def register(app):
@@ -301,7 +309,6 @@ def register(app):
 
         tpl_name = data.get('template_name', '') or tpl.name
         fields = tpl.data.get('fields', [])
-
         batch_field_keys = helpers.counterparty_batch_keys(
             fields, request.form.get('batch_field_key', '').strip()
         )
@@ -318,8 +325,6 @@ def register(app):
             classification = helpers.parse_contract_classification(request.form)
         except ValueError as e:
             return safe_error(e, '批生成合同分类解析')
-
-
         counterparties_text = request.form.get('batch_counterparties', '').strip()
         counterparties = [c.strip() for c in counterparties_text.split('\n') if c.strip()]
         if not counterparties:
@@ -338,10 +343,14 @@ def register(app):
         zip_path = os.path.join(helpers.OUTPUT_FOLDER, f'{sid}_{uuid.uuid4().hex[:8]}_batch.zip')
         gen_errors = []
         success_count = 0
+        archive_failures = []
+        archived_contracts = []
         batch_contract_number_keys = helpers.contract_number_keys(fields)
         generation_service = current_app.extensions['contract_tool'].contract_generation
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for idx, counterparty in enumerate(counterparties):
+        with _batch_archive(zip_path, archive_failures) as zf:
+            for idx, counterparty in (
+                enumerate(counterparties) if zf is not None else ()
+            ):
                 batch_values = deepcopy(field_values)
                 for batch_field_key in batch_field_keys:
                     batch_values[batch_field_key] = counterparty
@@ -381,6 +390,13 @@ def register(app):
                     contract_id = result.contract_id
                     out_path = result.output_path
                     linked_project_previous_status = result.previous_project_status
+                    generated_item = {
+                        'contract_id': contract_id,
+                        'output_path': out_path,
+                        'project_id': linked_project_id,
+                        'previous_status': linked_project_previous_status,
+                    }
+                    archived_contracts.append(generated_item)
                 except DocumentGenerationError as e:
                     details = e.errors or ['合同生成失败']
                     gen_errors.extend(f'{counterparty}: {detail}' for detail in details)
@@ -409,29 +425,23 @@ def register(app):
                 except Exception as e:
                     get_logger().error('Batch ZIP write failed for contract %s: %s', contract_id, e, exc_info=True)
                     gen_errors.append(f'{counterparty}: ZIP 写入失败')
-                    if linked_project_id is not None:
-                        try:
-                            import procurement_store
-                            procurement_store.remove_contract_ref(
-                                linked_project_id, contract_id,
-                                restore_status=linked_project_previous_status,
-                            )
-                        except Exception:
-                            get_logger().error(
-                                'Batch rollback failed to remove procurement ref for contract %s',
-                                contract_id,
-                                exc_info=True,
-                            )
-                    _discard_generated_contract(contract_id, out_path)
+                    _rollback_batch_contract(generated_item)
+                    archived_contracts.remove(generated_item)
+                    archive_failures.append(e)
+                    break
+
+        if archive_failures:
+            return contract_batch_support.batch_failure_response(
+                archive_failures, archived_contracts, zip_path,
+                rollback=_rollback_batch_contract,
+                remove_file=_remove_generated_file,
+                logger=get_logger(),
+            )
 
         if success_count == 0:
-            try:
-                os.remove(zip_path)
-            except OSError:
-                get_logger().warning(
-                    '批量生成全部失败后无法删除空 ZIP: %s', zip_path, exc_info=True,
-                )
-            return '批量合同生成失败：\n' + '\n'.join(gen_errors[:20]), 500
+            return contract_batch_support.empty_batch_response(
+                zip_path, gen_errors, _remove_generated_file
+            )
 
         download_name = f'{tpl_name}_批量合同_{success_count}份.zip' if tpl_name else f'批量合同_{success_count}份.zip'
         response = send_file(
@@ -649,18 +659,10 @@ def register(app):
         if new_status not in {'draft', 'signed', 'active', 'completed', 'void'}:
             return '无效的状态值', 400
         try:
-            classification = helpers.parse_contract_classification(request.form)
-            ledger_store.update_contract(contract_id, {
-                'contract_no': limit_text(request.form.get('contract_no', '').strip(), 80),
-                'title': limit_text(request.form.get('title', '').strip(), 200) or '未命名合同',
-                'counterparty': limit_text(request.form.get('counterparty', '').strip(), MAX_COUNTERPARTY_LENGTH),
-                'amount': helpers.float_or_none(request.form.get('amount')),
-                'sign_date': helpers.normalize_date(request.form.get('sign_date')) or '',
-                'expiry_date': helpers.normalize_date(request.form.get('expiry_date')) or '',
-                'owner': limit_text(request.form.get('owner', '').strip(), 60),
-                'status': new_status,
-                **classification,
-            })
+            update = contract_batch_support.parse_contract_update(
+                request.form, new_status
+            )
+            ledger_store.update_contract(contract_id, update)
         except ValueError as e:
             return safe_error(e, '合同更新失败')
         return redirect(url_for('contract_detail', contract_id=contract_id))

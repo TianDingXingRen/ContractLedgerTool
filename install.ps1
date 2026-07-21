@@ -7,6 +7,37 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Assert-SafeInstallDirectory($Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Install directory cannot be empty."
+    }
+    $Resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $Candidates = @(
+        [System.IO.Path]::GetPathRoot($Resolved),
+        $env:USERPROFILE,
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
+        $env:SystemRoot,
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        [Environment]::GetFolderPath("Desktop"),
+        [Environment]::GetFolderPath("MyDocuments"),
+        [System.IO.Path]::GetTempPath()
+    )
+    foreach ($Candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($Candidate)) {
+            continue
+        }
+        $Forbidden = [System.IO.Path]::GetFullPath($Candidate).TrimEnd('\')
+        if ($Resolved.Equals($Forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to install into unsafe directory: $Resolved"
+        }
+    }
+    return $Resolved
+}
+
+$InstallDir = Assert-SafeInstallDirectory $InstallDir
 $PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppSource = Join-Path $PackageRoot "app"
 if (-not (Test-Path -LiteralPath (Join-Path $AppSource "app.py"))) {

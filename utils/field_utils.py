@@ -137,8 +137,14 @@ def to_calc_number(value):
 
 
 def float_or_none(value) -> Optional[float]:
-    parsed = parse_number(value)
-    return parsed if parsed is not None else None
+    text = str(value or '').strip().replace(',', '').replace('，', '')
+    if not text:
+        return None
+    try:
+        parsed = float(text)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def normalize_number_field_value(value, field=None) -> str:

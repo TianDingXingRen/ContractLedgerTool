@@ -24,6 +24,8 @@ from services.handover_archive import (
     sha256_zip_member as _sha256_zip_member,
     validate_sqlite_file as _validate_sqlite_file,
     validate_package_archive as _validate_package_archive,
+    read_optional_text as _read_optional_text,
+    remove_file_if_exists as _remove_file_if_exists,
     MAX_MANIFEST_BYTES,
 )
 from utils import helpers
@@ -98,15 +100,6 @@ def _member_allowed(name):
     return member_allowed(name, _restore_targets(), MANIFEST_NAME)
 
 
-def _read_version():
-    version_path = os.path.join(_base_dir(), 'version.txt')
-    try:
-        with open(version_path, 'r', encoding='utf-8') as f:
-            return f.read().strip()
-    except OSError:
-        return ''
-
-
 def create_full_backup_package(label='handover'):
     """Create a complete handover ZIP package and return file metadata."""
     packages_dir = _package_dir()
@@ -144,7 +137,7 @@ def create_full_backup_package(label='handover'):
                 'package_type': PACKAGE_TYPE,
                 'manifest_version': 1,
                 'created_at': _now(),
-                'app': {'version': _read_version()},
+                'app': {'version': _read_optional_text(os.path.join(_base_dir(), 'version.txt'))},
                 'database': {
                     'archive_path': 'data/contracts.db',
                     'integrity_ok': True,
@@ -156,6 +149,9 @@ def create_full_backup_package(label='handover'):
                 MANIFEST_NAME,
                 json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8'),
             )
+    except Exception:
+        _remove_file_if_exists(target_path)
+        raise
     finally:
         try:
             os.remove(temp_db)
@@ -258,7 +254,11 @@ def validate_full_backup_package(path):
             if int(item.get('size', -1)) != info.file_size:
                 raise ValueError('完整数据包文件大小与清单不一致')
             expected_sha = str(item.get('sha256') or '').lower()
-            if expected_sha and _sha256_zip_member(zf, name) != expected_sha:
+            if len(expected_sha) != 64 or any(
+                character not in '0123456789abcdef' for character in expected_sha
+            ):
+                raise ValueError('完整数据包文件摘要无效')
+            if _sha256_zip_member(zf, name) != expected_sha:
                 raise ValueError('完整数据包文件校验失败')
         if 'data/contracts.db' not in names:
             raise ValueError('完整数据包缺少数据库文件')
@@ -286,7 +286,10 @@ def upload_full_backup_package(file_storage):
     try:
         validate_full_backup_package(temp_path)
         stem = os.path.splitext(filename)[0]
-        target_name = f'uploaded_{datetime.now().strftime("%Y%m%d_%H%M%S")}_{_safe_label(stem)}.zip'
+        target_name = (
+            f'uploaded_{datetime.now().strftime("%Y%m%d_%H%M%S")}_'
+            f'{uuid.uuid4().hex[:8]}_{_safe_label(stem)}.zip'
+        )
         target_path = os.path.abspath(os.path.join(packages_dir, target_name))
         if not path_within(packages_dir, target_path):
             raise ValueError('上传文件名无效')
