@@ -8,12 +8,12 @@ Windows 10 / Windows 11
 
 安装方法：
 1. 双击“ContractLedgerTool_OfflineInstaller.exe”。
-2. 等待安装完成。
-3. 安装完成后会自动启动浏览器，打开合同管理工具。
-4. 开机自启动默认关闭；如确有需要，可使用 PowerShell 运行 install.ps1 -EnableAutostart。
+2. 等待安装完成提示；安装过程不会显示 CMD 黑色窗口。
+3. 后台服务会静默启动，直接在浏览器输入默认地址即可使用。
+4. 服务默认在登录 Windows 后静默自启动，不会弹出 CMD 窗口；如不需要，可使用 PowerShell 运行 install.ps1 -NoAutostart。
 
 日常使用：
-桌面会生成“合同管理工具”快捷方式，以后双击它即可启动。
+直接在浏览器输入默认地址即可；桌面也会生成“合同管理工具”快捷方式，用于服务未运行时重新启动。
 
 默认访问地址：
 http://127.0.0.1:5000/

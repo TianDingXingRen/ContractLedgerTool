@@ -145,22 +145,32 @@ function Remove-InstallRollbackSnapshot($Snapshot) {
 
 function Invoke-InstalledAppSelfCheck($AppExe) {
     Write-Step "Verifying installed application"
-    $output = @(& $AppExe --self-check 2>&1)
-    $exitCode = $LASTEXITCODE
-    foreach ($line in $output) {
-        Write-Host $line
-    }
-    if ($exitCode -ne 0) {
-        throw "Installed application self-check failed (exit code: $exitCode)."
-    }
-
+    $reportPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "ContractLedgerTool-self-check-" + [guid]::NewGuid().ToString("N") + ".json"
+    )
     try {
-        $result = $output[-1] | ConvertFrom-Json
-    } catch {
-        throw "Installed application self-check did not return valid JSON."
-    }
-    if (-not $result.ok -or $result.http_status -ne 200 -or $result.integrity_check -ne "ok") {
-        throw "Installed application self-check reported an unhealthy runtime."
+        $process = Start-Process -FilePath $AppExe `
+            -ArgumentList @("--self-check", "--self-check-output", "`"$reportPath`"") `
+            -WorkingDirectory (Split-Path -Parent $AppExe) `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+        if ($process.ExitCode -ne 0) {
+            throw "Installed application self-check failed (exit code: $($process.ExitCode))."
+        }
+        if (-not (Test-Path -LiteralPath $reportPath)) {
+            throw "Installed application self-check did not create a report."
+        }
+        try {
+            $result = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        } catch {
+            throw "Installed application self-check did not return valid JSON."
+        }
+        if (-not $result.ok -or $result.http_status -ne 200 -or $result.integrity_check -ne "ok") {
+            throw "Installed application self-check reported an unhealthy runtime."
+        }
+    } finally {
+        Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -516,7 +526,7 @@ if (-not $SkipSystemIntegrationCleanup) {
     Clear-ExistingAutostart
 }
 
-if ($EnableAutostart -and -not $NoAutostart) {
+if (-not $NoAutostart) {
     Write-Step "Enabling auto-start"
     $SetupScript = Join-Path $InstallDir "setup_autostart.ps1"
     $AutostartEnabled = Invoke-OptionalPowerShellFile "Auto-start setup" $SetupScript @("-AppDir", $InstallDir, "-NoPrompt", "-Port", "$Port")
@@ -556,14 +566,14 @@ if (-not $NoDesktopShortcut) {
         Write-Host "Desktop launcher:  skipped"
     }
 }
-if ($EnableAutostart -and -not $NoAutostart) {
+if (-not $NoAutostart) {
     if ($AutostartEnabled) {
         Write-Host "Auto-start:        enabled"
     } else {
         Write-Host "Auto-start:        skipped"
     }
 } else {
-    Write-Host "Auto-start:        disabled (opt in with -EnableAutostart)"
+    Write-Host "Auto-start:        disabled by -NoAutostart"
 }
 Write-Host ""
 

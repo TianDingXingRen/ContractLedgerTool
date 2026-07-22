@@ -216,14 +216,15 @@ class FrontendAssetTests(unittest.TestCase):
             build_installer.APP_RES_DIR, 'build-info.json',
         )))
 
-    def test_offline_installer_uses_opt_in_autostart_and_cleans_previous_versions(self):
+    def test_offline_installer_uses_default_silent_autostart_and_cleans_previous_versions(self):
         installer_path = os.path.join(app.RESOURCE_DIR, 'installer_assets', 'install.ps1')
         with open(installer_path, 'r', encoding='utf-8-sig') as f:
             script = f.read()
 
         self.assertIn('[switch]$NoAutostart', script)
         self.assertIn('[switch]$EnableAutostart', script)
-        self.assertIn('if ($EnableAutostart -and -not $NoAutostart)', script)
+        self.assertIn('if (-not $NoAutostart)', script)
+        self.assertNotIn('if ($EnableAutostart -and -not $NoAutostart)', script)
         self.assertIn('setup_autostart.ps1', script)
         self.assertIn('-Port $Port', script)
         self.assertIn('Stop-PreviousVersions', script)
@@ -251,6 +252,8 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('New-InstallRollbackSnapshot', script)
         self.assertIn('Restore-InstallRollbackSnapshot', script)
         self.assertIn('Invoke-InstalledAppSelfCheck', script)
+        self.assertIn('--self-check-output', script)
+        self.assertIn('-WindowStyle Hidden', script)
         self.assertIn('Installation failed; restoring previous version', script)
 
     def test_offline_installer_build_outputs_single_release_exe_only(self):

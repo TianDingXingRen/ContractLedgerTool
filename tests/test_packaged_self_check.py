@@ -8,8 +8,12 @@ from procurement_store import schema as procurement_schema
 
 def test_self_check_uses_isolated_runtime(tmp_path):
     runtime_dir = tmp_path / 'isolated-runtime'
+    report_path = tmp_path / 'self-check.json'
 
-    assert app.run_self_check(str(runtime_dir)) is True
+    assert app.run_self_check(str(runtime_dir), str(report_path)) is True
+    report = report_path.read_text(encoding='utf-8')
+    assert '"ok": true' in report
+    assert '"http_status": 200' in report
     assert os.path.isfile(runtime_dir / 'data' / 'contracts.db')
     with sqlite3.connect(runtime_dir / 'data' / 'contracts.db') as conn:
         ledger_version = conn.execute('SELECT MAX(version) FROM schema_version').fetchone()[0]

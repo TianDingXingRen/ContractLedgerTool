@@ -76,10 +76,13 @@ def setup_logging(log_dir=None, level=logging.INFO):
         file_handler.setFormatter(fmt)
         _logger.addHandler(file_handler)
 
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.WARNING)
-        console_handler.setFormatter(fmt)
-        _logger.addHandler(console_handler)
+        # PyInstaller's windowed mode intentionally has no stdout stream.
+        # File logging remains available for background-service diagnostics.
+        if sys.stdout is not None:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(logging.WARNING)
+            console_handler.setFormatter(fmt)
+            _logger.addHandler(console_handler)
 
         return _logger
 

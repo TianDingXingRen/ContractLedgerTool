@@ -162,6 +162,7 @@ def build_app_exe():
     cmd = build_pyinstaller_cmd(
         ROOT / 'app.py', APP_EXE_NAME, dist_path, work_path, spec_path,
         APP_RES_DIR, extra_data=extra_data, icon_path=ICON_PATH,
+        windowed=True,
     )
     print(' '.join(cmd))
     subprocess.check_call(cmd, cwd=str(ROOT))
@@ -180,9 +181,17 @@ def write_bootstrap(path):
 
 from __future__ import annotations
 
+import ctypes
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+MB_OK = 0x00000000
+MB_ICONINFORMATION = 0x00000040
+MB_ICONERROR = 0x00000010
 
 
 def _payload_root() -> Path:
@@ -198,7 +207,22 @@ def _payload_root() -> Path:
     raise FileNotFoundError('安装包内容不完整：未找到 install.ps1 或 ContractLedgerTool.exe')
 
 
+def _message_box(message: str, *, error: bool = False) -> None:
+    flags = MB_OK | (MB_ICONERROR if error else MB_ICONINFORMATION)
+    ctypes.windll.user32.MessageBoxW(None, message, '合同管理工具安装程序', flags)
+
+
+def _argument_value(name: str, default: str) -> str:
+    target = name.casefold()
+    arguments = sys.argv[1:]
+    for index, value in enumerate(arguments[:-1]):
+        if value.casefold() == target:
+            return arguments[index + 1]
+    return default
+
+
 def main() -> int:
+    log_path = Path(tempfile.gettempdir()) / 'ContractLedgerTool-installer.log'
     try:
         payload = _payload_root()
         script = payload / 'install.ps1'
@@ -211,13 +235,38 @@ def main() -> int:
             str(script),
             *sys.argv[1:],
         ]
-        return subprocess.run(cmd, cwd=str(payload)).returncode
+        completed = subprocess.run(
+            cmd,
+            cwd=str(payload),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=CREATE_NO_WINDOW,
+            check=False,
+        )
+        log_path.write_bytes(completed.stdout or b'')
+        if completed.returncode != 0:
+            _message_box(
+                f'安装失败。\n\n请将日志提供给技术人员：\n{log_path}',
+                error=True,
+            )
+            return completed.returncode
+
+        port = _argument_value('-Port', '5000')
+        no_start = any(arg.casefold() == '-nostart' for arg in sys.argv[1:])
+        no_autostart = any(arg.casefold() == '-noautostart' for arg in sys.argv[1:])
+        lines = ['安装完成。']
+        if not no_start:
+            lines.extend(['后台服务已静默启动。', '', f'浏览器访问：http://127.0.0.1:{port}/'])
+        if not no_autostart:
+            lines.extend(['', '登录 Windows 后，服务会自动在后台启动。'])
+        _message_box('\n'.join(lines))
+        return 0
     except Exception as exc:
-        print(f'安装器启动失败：{exc}')
         try:
-            input('按 Enter 退出...')
-        except Exception as input_exc:
-            print(f'无法等待退出确认：{input_exc}', file=sys.stderr)
+            log_path.write_text(f'安装器启动失败：{exc}', encoding='utf-8')
+        except OSError:
+            pass
+        _message_box(f'安装器启动失败：{exc}\n\n日志：{log_path}', error=True)
         return 1
 
 
@@ -244,7 +293,7 @@ def build_installer_exe(stage):
         '--noconfirm',
         '--clean',
         '--onefile',
-        '--console',
+        '--windowed',
         '--name', INSTALLER_EXE_NAME,
         '--distpath', str(dist_path),
         '--workpath', str(work_path),

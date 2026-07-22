@@ -71,7 +71,7 @@ def test_ci_and_release_workflows_use_the_shared_quality_gate():
     assert 'check_authenticode(RELEASE_EXE)' in quality_gate
 
 
-def test_installer_registers_standard_uninstaller_and_opt_in_autostart():
+def test_installer_registers_standard_uninstaller_and_default_autostart():
     install_script = (ROOT / 'installer_assets' / 'install.ps1').read_text(
         encoding='utf-8'
     )
@@ -82,9 +82,32 @@ def test_installer_registers_standard_uninstaller_and_opt_in_autostart():
     assert 'CurrentVersion\\Uninstall\\ContractLedgerTool' in install_script
     assert 'QuietUninstallString' in install_script
     assert '[switch]$EnableAutostart' in install_script
-    assert 'if ($EnableAutostart -and -not $NoAutostart)' in install_script
+    assert 'if (-not $NoAutostart)' in install_script
+    assert 'if ($EnableAutostart -and -not $NoAutostart)' not in install_script
+    assert '--self-check-output' in install_script
     assert '[switch]$RemoveData' in uninstall_script
     assert 'Contracts, ledger, templates, settings, and backups were kept' in uninstall_script
+
+
+def test_offline_binaries_use_windowed_mode_and_hidden_powershell(tmp_path):
+    command = _pyinstaller_common.build_pyinstaller_cmd(
+        ROOT / 'app.py',
+        'ContractLedgerTool',
+        tmp_path / 'dist',
+        tmp_path / 'work',
+        tmp_path / 'spec',
+        tmp_path / 'resources',
+        windowed=True,
+    )
+    assert '--windowed' in command
+    assert '--console' not in command
+
+    build_script = (ROOT / 'build_installer.py').read_text(encoding='utf-8')
+    assert "windowed=True" in build_script
+    assert "'--windowed'" in build_script
+    assert "'--console'" not in build_script
+    assert "CREATE_NO_WINDOW" in build_script
+    assert "MessageBoxW" in build_script
 
 
 def test_open_source_governance_files_are_present():

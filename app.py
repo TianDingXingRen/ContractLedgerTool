@@ -265,7 +265,7 @@ def _open_browser_later(url):
     open_browser_later(url)
 
 
-def run_self_check(runtime_base_dir=None):
+def run_self_check(runtime_base_dir=None, output_path=None):
     """Initialize an isolated runtime and verify HTTP plus SQLite health."""
     original_base_dir = BASE_DIR
     original_resource_dir = RESOURCE_DIR
@@ -295,7 +295,14 @@ def run_self_check(runtime_base_dir=None):
                 ].generation_recovery.diagnostics(),
             }
             result['ok'] = result['ok'] and result['generation_integrity']['ok']
-            print(json.dumps(result, ensure_ascii=False))
+            report = json.dumps(result, ensure_ascii=False)
+            if output_path:
+                report_path = os.path.abspath(output_path)
+                os.makedirs(os.path.dirname(report_path), exist_ok=True)
+                with open(report_path, 'w', encoding='utf-8') as handle:
+                    handle.write(report)
+            if sys.stdout is not None:
+                print(report)
             return result['ok']
         finally:
             reset_runtime()
@@ -315,10 +322,11 @@ if __name__ == '__main__':
     parser.add_argument('--port', default=app_config.PORT, type=int)
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--self-check', action='store_true')
+    parser.add_argument('--self-check-output')
     parser.add_argument('--runtime-dir')
     args = parser.parse_args()
     if args.self_check:
-        sys.exit(0 if run_self_check(args.runtime_dir) else 1)
+        sys.exit(0 if run_self_check(args.runtime_dir, args.self_check_output) else 1)
     try:
         validate_bind_host(
             args.host, app_config.ALLOW_REMOTE,

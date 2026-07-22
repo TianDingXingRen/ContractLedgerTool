@@ -32,11 +32,12 @@
 ### 离线安装包（推荐）
 
 下载并双击 `ContractLedgerTool_OfflineInstaller.exe`。安装包不需要 Python 或网络，默认安装到
-`%LOCALAPPDATA%\ContractLedgerTool`，创建桌面快捷方式并启动本机服务；若 5000 端口已占用，
-安装程序会自动选择后续可用端口。开机自启动默认关闭，如确有需要，可从安装包目录运行：
+`%LOCALAPPDATA%\ContractLedgerTool`，创建桌面快捷方式并静默启动本机服务；安装和日常运行均不显示
+CMD 控制台。安装完成后直接在浏览器访问 `http://127.0.0.1:5000/`。服务默认在登录 Windows 后
+静默自启动；若 5000 端口已占用，安装程序会自动选择后续可用端口。若不需要开机自启动，可运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -EnableAutostart
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoAutostart
 ```
 
 可在 Windows“设置 → 应用 → 已安装的应用”中卸载。普通卸载保留合同、台账、模板、配置和备份；

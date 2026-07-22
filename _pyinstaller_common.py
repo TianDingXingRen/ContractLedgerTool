@@ -262,7 +262,8 @@ def prepare_app_resources(res_dir, write_version=True):
 
 
 def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,
-                         res_dir, extra_data=None, icon_path=None):
+                          res_dir, extra_data=None, icon_path=None,
+                          windowed=False):
     """构建 PyInstaller 命令行参数列表。
 
     extra_data: 额外的 (src, dst_semicolon) 元组列表，用于 --add-data。
@@ -273,7 +274,7 @@ def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,
         '--noconfirm',
         '--clean',
         '--onefile',
-        '--console',
+        '--windowed' if windowed else '--console',
         '--name', name,
         '--distpath', str(dist_path),
         '--workpath', str(work_path),

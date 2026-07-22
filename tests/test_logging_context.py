@@ -1,11 +1,27 @@
 import logging
 
+import utils.logger as logger_module
 from utils.logger import (
     SensitiveDataFilter,
+    close_logging,
     get_request_id,
     reset_request_id,
     set_request_id,
 )
+
+
+def test_windowed_runtime_uses_file_logging_without_stdout(tmp_path, monkeypatch):
+    close_logging()
+    monkeypatch.setattr(logger_module.sys, 'stdout', None)
+    try:
+        logger = logger_module.setup_logging(str(tmp_path))
+        assert len(logger.handlers) == 1
+        logger.warning('background-service-warning')
+        assert 'background-service-warning' in (
+            tmp_path / 'app.log'
+        ).read_text(encoding='utf-8')
+    finally:
+        close_logging()
 
 
 def test_sensitive_filter_redacts_formatted_arguments():
