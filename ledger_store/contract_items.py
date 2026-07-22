@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 from contextlib import nullcontext
 
 from . import money_fields
 
 
-_INTEGER_QUANTITY = re.compile(r'^\s*(\d+)(?:\.0+)?\s*(?:个|件|套|台|支|只|组|批)?\s*$')
+_QUANTITY_UNITS = frozenset({'个', '件', '套', '台', '支', '只', '组', '批'})
 
 
 def parse_contracted_qty(value):
@@ -17,10 +16,17 @@ def parse_contracted_qty(value):
     if isinstance(value, bool):
         raise ValueError('合同数量必须是正整数')
     text = str(value or '').strip()
-    match = _INTEGER_QUANTITY.fullmatch(text)
-    if not match or int(match.group(1)) <= 0:
+    number_text = text
+    if number_text[-1:] in _QUANTITY_UNITS:
+        number_text = number_text[:-1].strip()
+    whole, separator, fraction = number_text.partition('.')
+    valid_decimal = not separator or (fraction and not fraction.strip('0'))
+    if not whole.isdigit() or not valid_decimal:
         raise ValueError(f'合同数量“{text or "空"}”不是正整数，请人工确认')
-    return int(match.group(1))
+    quantity = int(whole)
+    if quantity <= 0:
+        raise ValueError(f'合同数量“{text or "空"}”不是正整数，请人工确认')
+    return quantity
 
 
 class ContractItemRepository:

@@ -3,6 +3,8 @@ import sqlite3
 import pytest
 
 import ledger_store
+from ledger_store.contract_items import parse_contracted_qty
+from routes.invoices_bp import _resolved_invoice_file
 
 
 def _contract():
@@ -68,6 +70,22 @@ def _notice(contract_id, item_id, qty, start, end, number):
             'serial_end': str(end),
         }],
     )
+
+
+def test_contract_quantity_parser_is_linear_and_preserves_supported_formats():
+    assert parse_contracted_qty(' 12.00 件 ') == 12
+    assert parse_contracted_qty('１２套') == 12
+    for invalid in ('0', '1.20', '12.0.0', '0' + (' ' * 20_000) + '件'):
+        with pytest.raises(ValueError, match='不是正整数'):
+            parse_contracted_qty(invalid)
+
+
+def test_invoice_storage_rejects_paths_outside_runtime_root(client):
+    with client.application.app_context():
+        with pytest.raises(ValueError, match='路径无效'):
+            _resolved_invoice_file('../outside.pdf')
+        with pytest.raises(ValueError, match='路径无效'):
+            _resolved_invoice_file(r'..\outside.pdf')
 
 
 def test_issue_notice_locks_quantity_and_generates_payment(tmp_db):

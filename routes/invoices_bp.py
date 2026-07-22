@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 
 from flask import current_app, jsonify, redirect, render_template, request, send_file, url_for
-from werkzeug.utils import secure_filename
+from werkzeug.utils import safe_join, secure_filename
 
 import ledger_store
 from routes.legacy_blueprint import LegacyEndpointBlueprint
@@ -126,7 +126,10 @@ def _invoice_storage_root():
 
 def _resolved_invoice_file(storage_path):
     root = _invoice_storage_root()
-    candidate = (root / storage_path).resolve()
+    joined = safe_join(str(root), str(storage_path or ''))
+    if joined is None:
+        raise ValueError('发票附件路径无效')
+    candidate = Path(joined).resolve()
     if candidate != root and root not in candidate.parents:
         raise ValueError('发票附件路径无效')
     return candidate
