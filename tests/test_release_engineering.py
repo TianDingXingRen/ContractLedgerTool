@@ -1,3 +1,4 @@
+import importlib.util
 import re
 from pathlib import Path
 
@@ -108,6 +109,24 @@ def test_offline_binaries_use_windowed_mode_and_hidden_powershell(tmp_path):
     assert "'--console'" not in build_script
     assert "CREATE_NO_WINDOW" in build_script
     assert "MessageBoxW" in build_script
+
+
+def test_windowed_installer_reports_the_resolved_local_url(tmp_path):
+    import build_installer
+
+    bootstrap_path = tmp_path / 'offline_installer_bootstrap.py'
+    build_installer.write_bootstrap(bootstrap_path)
+    spec = importlib.util.spec_from_file_location('installer_bootstrap_test', bootstrap_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._installed_url(
+        b'Local URL:         http://127.0.0.1:5007/\r\n',
+        '5000',
+    ) == 'http://127.0.0.1:5007/'
+    assert module._installed_url(b'no url in output', '5050') == (
+        'http://127.0.0.1:5050/'
+    )
 
 
 def test_open_source_governance_files_are_present():

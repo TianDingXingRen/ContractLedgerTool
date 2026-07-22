@@ -182,6 +182,7 @@ def write_bootstrap(path):
 from __future__ import annotations
 
 import ctypes
+import re
 import subprocess
 import sys
 import tempfile
@@ -221,6 +222,13 @@ def _argument_value(name: str, default: str) -> str:
     return default
 
 
+def _installed_url(output: bytes, fallback_port: str) -> str:
+    match = re.search(rb'Local URL:\s*(http://127\.0\.0\.1:\d+/)', output)
+    if match:
+        return match.group(1).decode('ascii')
+    return f'http://127.0.0.1:{fallback_port}/'
+
+
 def main() -> int:
     log_path = Path(tempfile.gettempdir()) / 'ContractLedgerTool-installer.log'
     try:
@@ -252,11 +260,12 @@ def main() -> int:
             return completed.returncode
 
         port = _argument_value('-Port', '5000')
+        url = _installed_url(completed.stdout or b'', port)
         no_start = any(arg.casefold() == '-nostart' for arg in sys.argv[1:])
         no_autostart = any(arg.casefold() == '-noautostart' for arg in sys.argv[1:])
         lines = ['安装完成。']
         if not no_start:
-            lines.extend(['后台服务已静默启动。', '', f'浏览器访问：http://127.0.0.1:{port}/'])
+            lines.extend(['后台服务已静默启动。', '', f'浏览器访问：{url}'])
         if not no_autostart:
             lines.extend(['', '登录 Windows 后，服务会自动在后台启动。'])
         _message_box('\n'.join(lines))
