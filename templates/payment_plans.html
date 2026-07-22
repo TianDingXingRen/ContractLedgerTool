@@ -1,296 +1,57 @@
 {% extends "base.html" %}
+{% import "_ui_macros.html" as ui %}
 {% block title %}付款计划 - 采购业务平台{% endblock %}
 {% block breadcrumb %}付款计划{% endblock %}
 {% block content %}
+{% set today_str = today.strftime('%Y-%m-%d') %}
+{% set current_filter = {'view': view_mode, 'confirm_status': confirm_status, 'payment_status': payment_status, 'project_name': project_name, 'start_date': start_date, 'end_date': end_date} %}
+<div class="ui-page">
+  <header class="ui-page-header">
+    <div><h1 class="ui-page-title">付款计划</h1><p class="ui-page-subtitle">集中处理确认、到期提醒和付款登记；完整规则在合同工作区维护</p></div>
+    <div class="ui-page-actions"><a class="ui-button secondary" href="{{ url_for('contract_ledger') }}">合同台账</a><a class="ui-button secondary" href="{{ url_for('export_payment_plans', confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date) }}"><i data-lucide="download"></i>导出当前筛选</a><a class="ui-button primary" href="{{ url_for('export_next_month_payments') }}"><i data-lucide="file-spreadsheet"></i>导出下月计划</a></div>
+  </header>
 
-<div class="flex items-center justify-between mb-5">
-    <div>
-        <h1 style="font-size:24px;font-weight:700;color:var(--apple-text);letter-spacing:-0.4px">付款计划</h1>
-        <p style="color:var(--apple-text2);font-size:13px;margin-top:3px">
-            下月范围：{{ next_start }} 至 {{ next_end }}
-        </p>
+  <section class="ui-metrics">
+    {{ ui.metric('当前结果', payment_summary.count ~ ' 笔', '筛选后的全部记录') }}
+    {{ ui.metric('待付款', payment_summary.unpaid_count ~ ' 笔', format_money(payment_summary.unpaid_amount), 'orange') }}
+    {{ ui.metric('已逾期', payment_summary.overdue_count ~ ' 笔', format_money(payment_summary.overdue_amount), 'red' if payment_summary.overdue_count else '') }}
+    {{ ui.metric('下月范围', next_start, '至 ' ~ next_end, 'blue') }}
+  </section>
+
+  <div class="ledger-toolbar">
+    <div class="ledger-view-switch" aria-label="付款计划视图">
+      <a class="{{ 'active' if view_mode == 'work' }}" href="{{ url_for('payment_plan_list', view='work', confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date) }}"><i data-lucide="list-checks"></i>处理视图</a>
+      <a class="{{ 'active' if view_mode == 'detail' }}" href="{{ url_for('payment_plan_list', view='detail', confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date) }}"><i data-lucide="rows-3"></i>明细视图</a>
     </div>
-    <div class="flex gap-2">
-        <a href="{{ url_for('contract_ledger') }}" class="apple-btn apple-btn-ghost">合同台账</a>
-        <a href="{{ url_for('export_payment_plans', confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date) }}" class="apple-btn apple-btn-ghost">
-            <i data-lucide="download" style="width:15px;height:15px"></i> 导出当前筛选
-        </a>
-        <a href="{{ url_for('export_next_month_payments') }}" class="apple-btn apple-btn-primary">
-            <i data-lucide="file-spreadsheet" style="width:15px;height:15px"></i> 导出 Excel
-        </a>
+  </div>
+
+  <form class="ui-filterbar" method="get" action="{{ url_for('payment_plan_list') }}">
+    <input type="hidden" name="view" value="{{ view_mode }}">
+    <div class="flex gap-1 flex-wrap"><a class="ui-button ghost compact" href="{{ url_for('payment_plan_list', view=view_mode, payment_status='unpaid', end_date=today_str) }}">逾期</a><a class="ui-button ghost compact" href="{{ url_for('payment_plan_list', view=view_mode, payment_status='unpaid', start_date=today_str, end_date=due_soon_end) }}">7 天内</a><a class="ui-button ghost compact" href="{{ url_for('payment_plan_list', view=view_mode, payment_status='unpaid', start_date=next_start, end_date=next_end) }}">下月</a><a class="ui-button ghost compact" href="{{ url_for('payment_plan_list', view=view_mode, confirm_status='pending') }}">待确认</a></div>
+    <label class="ui-field"><span>付款状态</span><select class="ui-select" name="payment_status"><option value="">全部</option>{% for value,label in payment_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if payment_status == value }}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="ui-field"><span>确认状态</span><select class="ui-select" name="confirm_status"><option value="">全部</option>{% for value,label in confirm_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if confirm_status == value }}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="ui-field"><span>项目</span><select class="ui-select" name="project_name"><option value="">全部项目</option>{% for name in project_names %}<option value="{{ name }}" {{ 'selected' if project_name == name }}>{{ name }}</option>{% endfor %}</select></label>
+    <label class="ui-field"><span>开始日期</span><input class="ui-input" type="date" name="start_date" value="{{ start_date }}"></label>
+    <label class="ui-field"><span>结束日期</span><input class="ui-input" type="date" name="end_date" value="{{ end_date }}"></label>
+    <button class="ui-button secondary" type="submit">应用筛选</button>
+    {% if confirm_status or payment_status or start_date or end_date or project_name %}<a class="ui-button ghost" href="{{ url_for('payment_plan_list', view=view_mode) }}">清除</a>{% endif %}
+  </form>
+
+  <section class="ui-panel" x-data="{ selected: [], toggleAll(el, ids) { this.selected = el.checked ? ids : []; } }">
+    <div class="ui-panel-header">
+      <div class="ui-panel-heading"><h2 class="ui-panel-title">{{ '待办处理' if view_mode == 'work' else '付款明细' }}</h2><p class="ui-panel-subtitle">共 {{ total }} 笔，当前第 {{ page }} 页</p></div>
+      {% if view_mode == 'work' %}<div class="flex items-center gap-2" x-show="selected.length" x-cloak><span class="ui-badge blue" x-text="'已选 ' + selected.length + ' 项'"></span><form method="post" action="{{ url_for('payment_plans_batch_confirm') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ids" :value="JSON.stringify(selected)">{% for key,value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<button class="ui-button secondary compact" type="submit">批量确认</button></form><button class="ui-button primary compact" type="button" data-drawer-open="batchPayDrawer">批量登记已付</button><button class="ui-button ghost compact" type="button" @click="selected=[]">取消选择</button></div>{% endif %}
     </div>
+    <div class="ui-panel-body flush">
+      {% if plans %}<div class="ui-table-wrap"><table class="ui-table"><thead><tr>{% if view_mode == 'work' %}<th style="width:38px"><input type="checkbox" aria-label="全选当前页" @change="toggleAll($el, {{ plans|map(attribute='id')|list|tojson }})"></th>{% endif %}<th>应付日期</th><th>合同</th><th>对方单位 / 项目</th><th>款项</th><th class="number">应付金额</th><th class="number">未付余额</th><th>状态</th><th></th></tr></thead><tbody>
+        {% for p in plans %}<tr>{% if view_mode == 'work' %}<td><input type="checkbox" value="{{ p.id }}" x-model="selected" aria-label="选择 {{ p.phase_name or '付款计划' }}"></td>{% endif %}<td><div class="primary-text" style="color:{{ 'var(--ui-red)' if p.is_overdue else 'var(--ui-text)' }}">{{ format_date(p.due_date, '待定') }}</div>{% if p.is_overdue %}<div class="secondary-text" style="color:var(--ui-red)">已逾期</div>{% elif p.is_due_soon %}<div class="secondary-text" style="color:var(--ui-orange)">即将到期</div>{% endif %}</td><td><a class="primary-text" style="color:var(--ui-blue);text-decoration:none" href="{{ url_for('contract_detail', contract_id=p.contract_id, tab='payments') }}">{{ p.contract_title }}</a><div class="secondary-text">{{ p.contract_no or '未编号' }}{% if p.coverage_start is not none %} · {{ p.coverage_start }}—{{ p.coverage_end }}号{% endif %}</div></td><td><div class="primary-text">{{ p.counterparty or '—' }}</div><div class="secondary-text">{{ p.project_name or '—' }}</div></td><td><div class="primary-text">{{ p.phase_name or '—' }}</div><div class="secondary-text">{{ p.trigger_event or p.condition_text or '—' }}</div></td><td class="number">{{ format_money(p.due_amount) }}</td><td class="number"><span style="color:{{ 'var(--ui-green)' if p.payment_status == 'paid' else 'var(--ui-red)' if p.unpaid_amount > 0 else 'var(--ui-text)' }}">{{ '已结清' if p.payment_status == 'paid' else format_money(p.unpaid_amount) }}</span></td><td><div class="flex gap-1 flex-wrap">{{ ui.badge(payment_status_labels.get(p.payment_status, p.payment_status), ui_tone(p.payment_status)) }}{% if p.confirm_status == 'pending' %}{{ ui.badge('待确认', 'orange') }}{% endif %}</div></td><td><div class="ui-table-actions">{% if view_mode == 'work' and p.confirm_status == 'pending' %}<form method="post" action="{{ url_for('payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="confirm">{% for key,value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<button class="ui-button secondary compact" type="submit">确认</button></form>{% endif %}{% if view_mode == 'work' and p.payment_status != 'paid' %}<button class="ui-button secondary compact" type="button" data-drawer-open="workbenchPayDrawer{{ p.id }}">登记付款</button>{% endif %}<a class="ui-button ghost compact" href="{{ url_for('contract_detail', contract_id=p.contract_id, tab='payments') }}#payment-plan-{{ p.id }}">编辑</a></div></td></tr>{% endfor %}
+      </tbody></table></div>{% else %}{{ ui.empty_state('banknote', '暂无付款计划', '调整筛选条件，或在合同工作区新增付款计划。') }}{% endif %}
+    </div>
+    {% if view_mode == 'work' %}<dialog class="ui-drawer narrow" id="batchPayDrawer" aria-labelledby="batchPayTitle"><form method="post" action="{{ url_for('payment_plans_batch_paid') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ids" :value="JSON.stringify(selected)">{% for key,value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="batchPayTitle">批量登记已付</h2><p class="ui-drawer-subtitle" x-text="'将更新 ' + selected.length + ' 笔付款计划'"></p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="ui-drawer-body"><label class="ui-field"><span>统一实付日期</span><input class="ui-input" type="date" name="paid_date" value="{{ today_str }}" required><small>批量操作会将选中计划登记为全额付款</small></label></div><footer class="ui-drawer-footer"><button class="ui-button secondary" type="button" data-drawer-close>取消</button><button class="ui-button primary" type="submit">确认批量登记</button></footer></form></dialog>{% endif %}
+  </section>
+
+  {% if pages > 1 %}<div class="ui-pagination"><span>第 {{ page }} / {{ pages }} 页 · 共 {{ total }} 笔</span><div class="ui-pagination-actions">{% if page > 1 %}<a class="ui-button secondary compact" href="{{ url_for('payment_plan_list', view=view_mode, confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date, page=page-1) }}">上一页</a>{% endif %}{% if page < pages %}<a class="ui-button secondary compact" href="{{ url_for('payment_plan_list', view=view_mode, confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date, page=page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
 </div>
 
-<!-- Summary Stats -->
-{% set unpaid_total = namespace(amount=0, count=0) %}
-{% set overdue_total = namespace(amount=0, count=0) %}
-{% set today_str = today.strftime('%Y-%m-%d') if today is defined else '' %}
-{% for p in plans %}
-    {% if p.payment_status != 'paid' %}
-        {% set unpaid_total.count = unpaid_total.count + 1 %}
-        {% set unpaid_total.amount = unpaid_total.amount + (p.due_amount or 0) - (p.paid_amount or 0) %}
-    {% endif %}
-    {% if p.due_date and p.due_date <= today_str and p.payment_status != 'paid' %}
-        {% set overdue_total.count = overdue_total.count + 1 %}
-        {% set overdue_total.amount = overdue_total.amount + (p.due_amount or 0) - (p.paid_amount or 0) %}
-    {% endif %}
-{% endfor %}
-
-<div class="apple-stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:16px">
-    <div class="apple-stat" style="padding:14px 18px">
-        <div class="stat-label" style="font-size:11px;color:var(--apple-text2)">全部记录</div>
-        <div class="stat-num" style="font-size:26px">{{ total }}</div>
-    </div>
-    <div class="apple-stat orange" style="padding:14px 18px">
-        <div class="stat-label" style="font-size:11px;color:var(--apple-text2)">待付款</div>
-        <div class="stat-num" style="font-size:26px">{{ unpaid_total.count }}<span style="font-size:13px;font-weight:450;color:var(--apple-text3);margin-left:6px">笔</span></div>
-        {% if unpaid_total.amount > 0 %}
-        <div style="font-size:12px;color:var(--apple-orange);margin-top:2px;font-weight:550">{{ '%.2f'|format(unpaid_total.amount) }}</div>
-        {% endif %}
-    </div>
-    <div class="apple-stat red" style="padding:14px 18px">
-        <div class="stat-label" style="font-size:11px;color:var(--apple-text2)">已逾期</div>
-        <div class="stat-num" style="font-size:26px">{{ overdue_total.count }}<span style="font-size:13px;font-weight:450;color:var(--apple-text3);margin-left:6px">笔</span></div>
-        {% if overdue_total.amount > 0 %}
-        <div style="font-size:12px;color:var(--apple-red);margin-top:2px;font-weight:550">{{ '%.2f'|format(overdue_total.amount) }}</div>
-        {% endif %}
-    </div>
-    <div class="apple-stat blue" style="padding:14px 18px">
-        <div class="stat-label" style="font-size:11px;color:var(--apple-text2)">下月范围</div>
-        <div class="stat-num" style="font-size:15px;font-weight:600">{{ next_start }}<span style="font-size:12px;color:var(--apple-text3)"> → </span>{{ next_end }}</div>
-    </div>
-</div>
-
-<!-- Main card -->
-<div class="flex flex-wrap gap-2 mb-3">
-    <a href="{{ url_for('payment_plan_list', view='work', confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date) }}"
-       class="apple-btn {{ 'apple-btn-primary' if view_mode == 'work' else 'apple-btn-ghost' }}">处理视图</a>
-    <a href="{{ url_for('payment_plan_list', view='detail', confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date) }}"
-       class="apple-btn {{ 'apple-btn-primary' if view_mode == 'detail' else 'apple-btn-ghost' }}">明细视图</a>
-    <span style="font-size:12px;color:var(--apple-text3);align-self:center">完整编辑仍在合同详情页维护。</span>
-</div>
-
-{% set current_filter = {
-    'view': view_mode,
-    'confirm_status': confirm_status,
-    'payment_status': payment_status,
-    'project_name': project_name,
-    'start_date': start_date,
-    'end_date': end_date
-} %}
-
-<div class="apple-section"
-     x-data="{ filterOpen: {{ 'true' if confirm_status or payment_status or start_date or end_date or project_name else 'false' }}, selected: [], toggleAll(el, ids) { this.selected = el.checked ? ids : []; } }">
-    <!-- Filter: collapsible -->
-    <div class="apple-section-header" style="cursor:pointer" @click="filterOpen = !filterOpen">
-        <span class="apple-section-title" style="gap:6px">
-            <i data-lucide="chevron-right" style="width:16px;height:16px;transition:transform 0.2s" :style="filterOpen ? 'transform:rotate(90deg)' : ''"></i>
-            筛选条件
-        </span>
-        <span style="font-size:12px;color:var(--apple-text3)" x-text="filterOpen ? '收起' : '展开'"></span>
-    </div>
-    <form method="get" action="{{ url_for('payment_plan_list') }}" x-show="filterOpen" x-cloak
-          style="padding:12px 20px;border-bottom:0.5px solid var(--apple-sep);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <input type="hidden" name="view" value="{{ view_mode }}">
-        <a href="{{ url_for('payment_plan_list', payment_status='unpaid', end_date=today_str) }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px">逾期</a>
-        <a href="{{ url_for('payment_plan_list', payment_status='unpaid', start_date=today_str, end_date=due_soon_end) }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px">7 天内</a>
-        <a href="{{ url_for('payment_plan_list', payment_status='unpaid', start_date=next_start, end_date=next_end) }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px">下月</a>
-        <a href="{{ url_for('payment_plan_list', confirm_status='pending') }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px">待确认</a>
-        <a href="{{ url_for('payment_plan_list', payment_status='partial') }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px">部分付款</a>
-        <select name="payment_status" style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--apple-text);background:var(--apple-bg);outline:none">
-            <option value="">付款状态：全部</option>
-            {% for value, label in payment_status_labels.items() %}
-            <option value="{{ value }}" {% if payment_status == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
-        <select name="confirm_status" style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--apple-text);background:var(--apple-bg);outline:none">
-            <option value="">确认状态：全部</option>
-            {% for value, label in confirm_status_labels.items() %}
-            <option value="{{ value }}" {% if confirm_status == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
-        <select name="project_name" style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 10px;font-size:13px;max-width:170px;color:var(--apple-text);background:var(--apple-bg);outline:none">
-            <option value="">全部项目</option>
-            {% for name in project_names %}
-            <option value="{{ name }}" {% if project_name == name %}selected{% endif %}>{{ name }}</option>
-            {% endfor %}
-        </select>
-        <span style="color:var(--apple-text3);font-size:12px">日期</span>
-        <input type="date" name="start_date" value="{{ start_date }}" placeholder="开始"
-               style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 8px;font-size:13px;width:90px;text-align:center;color:var(--apple-text);background:var(--apple-bg);outline:none"
-               class="payment-filter-input">
-        <span style="color:var(--apple-text3)">—</span>
-        <input type="date" name="end_date" value="{{ end_date }}" placeholder="结束"
-               style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:6px 8px;font-size:13px;width:90px;text-align:center;color:var(--apple-text);background:var(--apple-bg);outline:none"
-               class="payment-filter-input">
-        <button type="submit" class="apple-btn apple-btn-primary" style="padding:6px 16px;font-size:12px">筛选</button>
-        {% if confirm_status or payment_status or start_date or end_date or project_name %}
-        <a href="{{ url_for('payment_plan_list') }}" class="apple-btn apple-btn-ghost" style="padding:6px 12px;font-size:12px;color:var(--apple-red)">清除</a>
-        {% endif %}
-    </form>
-
-    {% if view_mode == 'work' %}
-    <div x-show="selected.length > 0" x-cloak
-         style="display:flex;align-items:center;gap:8px;padding:9px 20px;background:rgba(40,112,200,0.04);border-bottom:0.5px solid var(--apple-sep);font-size:12px;flex-wrap:wrap">
-        <span style="color:var(--apple-blue);font-weight:600" x-text="'已选 ' + selected.length + ' 项'"></span>
-        <form method="post" action="{{ url_for('payment_plans_batch_confirm') }}" style="display:contents">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="ids" :value="JSON.stringify(selected)">
-            {% for key, value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-            <button class="apple-btn apple-btn-ghost" style="padding:4px 12px;font-size:11px">批量确认</button>
-        </form>
-        <form method="post" action="{{ url_for('payment_plans_batch_paid') }}" style="display:flex;align-items:center;gap:6px">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="ids" :value="JSON.stringify(selected)">
-            {% for key, value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-            <input type="date" name="paid_date" value="{{ today_str }}"
-                   style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:4px 8px;font-size:12px;background:var(--apple-card);color:var(--apple-text)">
-            <button class="apple-btn" style="padding:4px 12px;font-size:11px;background:var(--apple-green);color:#fff">批量已付</button>
-        </form>
-        <button type="button" @click="selected = []"
-                style="font-size:11px;color:var(--apple-text3);background:none;border:none;cursor:pointer;margin-left:auto">取消选择</button>
-    </div>
-    {% endif %}
-
-    <!-- Table -->
-    <div class="overflow-x-auto" style="padding:0">
-        <table class="apple-table">
-            <thead>
-                <tr>
-                    {% if view_mode == 'work' %}
-                    <th style="width:34px"><input type="checkbox" x-on:change="toggleAll($el, {{ plans|map(attribute='id')|list|tojson }})"></th>
-                    {% endif %}
-                    <th style="width:90px">应付日期</th>
-                    <th>合同信息</th>
-                    <th>对方单位</th>
-                    <th>项目</th>
-                    <th>款项</th>
-                    <th style="text-align:right">应付金额</th>
-                    <th style="text-align:right">未付余额</th>
-                    <th style="width:80px">状态</th>
-                    <th style="width:{{ '230px' if view_mode == 'work' else '70px' }}">操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for p in plans %}
-                {% set unpaid = p.unpaid_amount if p.unpaid_amount is defined else (p.due_amount or 0) - (p.paid_amount or 0) %}
-                {% set is_overdue = p.is_overdue if p.is_overdue is defined else false %}
-                {% set is_soon = p.is_due_soon if p.is_due_soon is defined else false %}
-                <tr style="{% if is_overdue %}background:rgba(255,59,48,0.03);border-left:3px solid var(--apple-red);padding-left:17px{% elif is_soon %}background:rgba(255,149,0,0.02){% endif %}">
-                    {% if view_mode == 'work' %}
-                    <td><input type="checkbox" value="{{ p.id }}" x-model="selected"></td>
-                    {% endif %}
-                    <td>
-                        <div style="font-weight:{{ '700' if is_overdue else '550' }};font-size:13px;color:{{ 'var(--apple-red)' if is_overdue else 'var(--apple-orange)' if is_soon else 'var(--apple-text)' }}">
-                            {{ p.due_date or '待定' }}
-                        </div>
-                        {% if is_overdue %}<div style="font-size:10px;color:var(--apple-red);font-weight:600">已逾期</div>{% endif %}
-                        {% if is_soon %}<div style="font-size:10px;color:var(--apple-orange);font-weight:550">即将到期</div>{% endif %}
-                    </td>
-                    <td>
-                        <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
-                           style="font-weight:550;color:var(--apple-blue);text-decoration:none;font-size:13px"
-                           onmouseover="this.style.textDecoration='underline'"
-                           onmouseout="this.style.textDecoration='none'">{{ p.contract_title }}</a>
-                        <div style="font-size:11px;color:var(--apple-text3)">{{ p.contract_no or '未编号' }}{% if p.coverage_start is not none %} · {{ p.coverage_start }}-{{ p.coverage_end }}号{% endif %}</div>
-                    </td>
-                    <td style="font-size:13px">{{ p.counterparty or '-' }}</td>
-                    <td style="font-size:12px;color:var(--apple-text2)">{{ p.project_name or '-' }}</td>
-                    <td style="font-size:13px">{{ p.phase_name or '-' }}</td>
-                    <td style="text-align:right;font-weight:550;font-variant-numeric:tabular-nums;font-size:13px">
-                        {{ '%.2f'|format(p.due_amount) if p.due_amount is not none else '-' }}
-                    </td>
-                    <td style="text-align:right;font-weight:{{ '700' if unpaid > 0 else '400' }};color:{{ 'var(--apple-red)' if unpaid > 0 else 'var(--apple-text3)' }};font-variant-numeric:tabular-nums;font-size:13px">
-                        {% if p.payment_status == 'paid' %}
-                        <span style="color:var(--apple-green)">已结清</span>
-                        {% else %}
-                        {{ '%.2f'|format(unpaid) }}
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% set ps = 'red' if p.payment_status == 'unpaid' else 'orange' if p.payment_status == 'partial' else 'green' if p.payment_status == 'paid' else 'gray' %}
-                        <span class="apple-badge {{ ps }}">{{ payment_status_labels.get(p.payment_status, p.payment_status) }}</span>
-                        {% if p.confirm_status == 'pending' %}
-                        <div style="margin-top:3px"><span class="apple-badge orange" style="font-size:10px">待确认</span></div>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if view_mode == 'work' %}
-                        <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">
-                            {% if p.confirm_status == 'pending' %}
-                            <form method="post" action="{{ url_for('payment_plan_quick_update', plan_id=p.id) }}" style="display:contents">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <input type="hidden" name="action" value="confirm">
-                                {% for key, value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-                                <button class="apple-btn apple-btn-ghost" style="padding:4px 10px;font-size:11px">确认</button>
-                            </form>
-                            {% endif %}
-                            {% if p.payment_status != 'paid' %}
-                            <form method="post" action="{{ url_for('payment_plan_quick_update', plan_id=p.id) }}" style="display:flex;gap:4px;align-items:center">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <input type="hidden" name="action" value="paid">
-                                {% for key, value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-                                <input type="date" name="paid_date" value="{{ today_str }}"
-                                       style="width:112px;border:0.5px solid var(--apple-sep);border-radius:8px;padding:4px 6px;font-size:11px;background:var(--apple-card);color:var(--apple-text)">
-                                <button class="apple-btn" style="padding:4px 10px;font-size:11px;background:var(--apple-green);color:#fff">已付</button>
-                            </form>
-                            <details style="font-size:11px">
-                                <summary style="cursor:pointer;color:var(--apple-blue)">部分</summary>
-                                <form method="post" action="{{ url_for('payment_plan_quick_update', plan_id=p.id) }}" style="display:grid;gap:4px;margin-top:5px;min-width:170px">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="action" value="partial">
-                                    {% for key, value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-                                    <input name="paid_amount" placeholder="实付金额" inputmode="decimal"
-                                           style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:4px 6px;font-size:11px;background:var(--apple-card);color:var(--apple-text)">
-                                    <input type="date" name="paid_date" value="{{ today_str }}"
-                                           style="border:0.5px solid var(--apple-sep);border-radius:8px;padding:4px 6px;font-size:11px;background:var(--apple-card);color:var(--apple-text)">
-                                    <button class="apple-btn apple-btn-ghost" style="padding:4px 10px;font-size:11px;justify-content:center">保存部分付款</button>
-                                </form>
-                            </details>
-                            {% endif %}
-                            <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
-                               class="apple-btn apple-btn-ghost" style="padding:4px 10px;font-size:11px;white-space:nowrap">详情</a>
-                        </div>
-                        {% else %}
-                        <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
-                           class="apple-btn" style="padding:4px 12px;font-size:11px;background:var(--apple-blue);color:#fff;border-radius:14px;white-space:nowrap">详情</a>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="{{ 10 if view_mode == 'work' else 9 }}" style="text-align:center;padding:48px 0;color:var(--apple-text3)">
-                        <i data-lucide="banknote" style="width:40px;height:40px;margin:0 auto 14px;display:block;color:var(--apple-text3);opacity:0.5"></i>
-                        <div style="font-size:14px;font-weight:500;color:var(--apple-text2)">暂无付款计划</div>
-                        <div style="font-size:12px;color:var(--apple-text3);margin-top:4px">生成合同后，系统将自动提取付款条款</div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Pagination -->
-    {% if pages > 1 %}
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-top:0.5px solid var(--apple-sep)">
-        <span style="font-size:12px;color:var(--apple-text3)">第 {{ page }} / {{ pages }} 页 · 共 {{ total }} 条</span>
-        <div style="display:flex;gap:4px">
-            {% if page > 1 %}
-            <a href="{{ url_for('payment_plan_list', view=view_mode, confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date, page=page-1) }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">上一页</a>
-            {% endif %}
-            {% for p in range(1, pages + 1) %}
-            {% if p >= page - 2 and p <= page + 2 %}
-            <a href="{{ url_for('payment_plan_list', view=view_mode, confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date, page=p) }}"
-               class="apple-btn"
-               style="padding:5px 14px;font-size:12px;{% if p == page %}background:var(--apple-blue);color:#fff;border-radius:8px{% else %}border-radius:8px{% endif %}">{{ p }}</a>
-            {% endif %}
-            {% endfor %}
-            {% if page < pages %}
-            <a href="{{ url_for('payment_plan_list', view=view_mode, confirm_status=confirm_status, payment_status=payment_status, project_name=project_name, start_date=start_date, end_date=end_date, page=page+1) }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">下一页</a>
-            {% endif %}
-        </div>
-    </div>
-    {% endif %}
-</div>
-
+{% if view_mode == 'work' %}{% for p in plans %}{% if p.payment_status != 'paid' %}<dialog class="ui-drawer narrow" id="workbenchPayDrawer{{ p.id }}" aria-labelledby="workbenchPayTitle{{ p.id }}"><header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="workbenchPayTitle{{ p.id }}">登记付款</h2><p class="ui-drawer-subtitle">{{ p.contract_title }} · {{ p.phase_name or '付款计划' }}</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="ui-drawer-body"><form class="ui-form-section" method="post" action="{{ url_for('payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="paid">{% for key,value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<div class="ui-form-section-title">全额付款 · {{ format_money(p.due_amount) }}</div><label class="ui-field"><span>实付日期</span><input class="ui-input" type="date" name="paid_date" value="{{ today_str }}" required></label><button class="ui-button primary" type="submit">登记全额付款</button></form><form class="ui-form-section" method="post" action="{{ url_for('payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="partial">{% for key,value in current_filter.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<div class="ui-form-section-title">部分付款</div><label class="ui-field"><span>累计已付金额</span><input class="ui-input" name="paid_amount" inputmode="decimal" value="{{ p.paid_amount or '' }}" required></label><label class="ui-field"><span>最近实付日期</span><input class="ui-input" type="date" name="paid_date" value="{{ today_str }}" required></label><button class="ui-button secondary" type="submit">保存部分付款</button></form></div></dialog>{% endif %}{% endfor %}{% endif %}
 {% endblock %}

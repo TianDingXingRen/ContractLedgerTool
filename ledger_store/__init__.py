@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
+from functools import partial
 
 from utils.logger import get_logger
 from core.maintenance_gate import maintenance_gate
@@ -23,15 +24,7 @@ from .invoices import InvoiceRepository
 from .payment_plans import PaymentPlanRepository
 from .payment_rules import PaymentRuleRepository
 from .production_notices import ProductionNoticeRepository
-from .schema import (
-    CURRENT_SCHEMA_VERSION, DOCUMENT_PATH_MIGRATION_VERSION,
-    FRESH_DATABASE_INDEX_SQL,
-    LEDGER_INDEX_SQL,
-    LEDGER_TABLE_SQL,
-    MIGRATION_BACKFILLS,
-    MIGRATIONS,
-    SCHEMA_VERSION_SQL,
-)
+from .schema import CURRENT_SCHEMA_VERSION, DOCUMENT_PATH_MIGRATION_VERSION, FRESH_DATABASE_INDEX_SQL, LEDGER_INDEX_SQL, LEDGER_TABLE_SQL, MIGRATION_BACKFILLS, MIGRATIONS, SCHEMA_VERSION_SQL
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -719,6 +712,7 @@ def sync_contract_items_from_procurement(contract_id, *, conn=None, strict=True)
 
 
 list_production_notices = _PRODUCTION_NOTICES.list
+summarize_production_notices = _PRODUCTION_NOTICES.summary
 get_production_notice = _PRODUCTION_NOTICES.get
 create_production_notice = _PRODUCTION_NOTICES.create
 save_production_notice_draft = _PRODUCTION_NOTICES.save_draft
@@ -729,6 +723,7 @@ cancel_production_notice = _PRODUCTION_NOTICES.cancel
 revise_production_notice = _PRODUCTION_NOTICES.revise
 
 list_invoices = _INVOICES.list
+summarize_invoices = _INVOICES.summary
 get_invoice = _INVOICES.get
 save_invoice = _INVOICES.save
 add_invoice_file = _INVOICES.add_file
@@ -745,6 +740,12 @@ def next_month_payment_plans(start_date, end_date):
 def get_contract_stats():
     """合约统计：总数、各状态数、金额合计（排除已软删除的合同）"""
     return dashboard_queries.get_contract_stats(get_conn)
+
+
+get_contract_workspace_summary = partial(
+    dashboard_queries.get_contract_workspace_summary, get_conn
+)
+summarize_payment_plans = partial(dashboard_queries.summarize_payment_plans, get_conn)
 
 
 def get_payment_stats():

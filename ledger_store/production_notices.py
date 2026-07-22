@@ -101,6 +101,35 @@ class ProductionNoticeRepository:
             'per_page': per_page,
         }
 
+    def summary(self, contract_id=None, status=''):
+        conditions = []
+        params = []
+        if contract_id is not None:
+            conditions.append('contract_id = ?')
+            params.append(contract_id)
+        if status:
+            conditions.append('status = ?')
+            params.append(status)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ''
+        with self.get_conn() as conn:
+            row = conn.execute(
+                f"""SELECT COUNT(*),
+                           SUM(CASE WHEN status IN ('issued','acknowledged')
+                                    THEN 1 ELSE 0 END),
+                           COALESCE(SUM(CASE WHEN status IN ('issued','acknowledged','closed')
+                                             THEN total_qty ELSE 0 END), 0),
+                           COALESCE(SUM(CASE WHEN status IN ('issued','acknowledged','closed')
+                                             THEN total_amount_minor ELSE 0 END), 0)
+                      FROM production_notices {where}""",
+                params,
+            ).fetchone()
+        return {
+            'count': row[0] or 0,
+            'active_count': row[1] or 0,
+            'total_qty': row[2] or 0,
+            'total_amount': float(row[3] or 0) / 100,
+        }
+
     def get(self, notice_id):
         with self.get_conn() as conn:
             row = conn.execute(

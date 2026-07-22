@@ -140,7 +140,6 @@ class BrowserUiSmokeTests(unittest.TestCase):
             if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
                 self.skipTest('Playwright browser binaries are not installed')
             raise
-
     def test_full_contract_generation_flow(self):
         """Select template, fill fields, download DOCX, and verify ledger UI."""
         try:
@@ -201,6 +200,87 @@ class BrowserUiSmokeTests(unittest.TestCase):
             if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
                 self.skipTest('Playwright browser binaries are not installed')
             raise
+    def test_contract_workspace_desktop_layout_and_drawer(self):
+        contract_id = ledger_store.create_contract(
+            {
+                'contract_no': 'UI-130-001',
+                'title': '桌面工作区浏览器验收合同',
+                'counterparty': '华北工业控制设备有限公司',
+                'amount': 780000,
+            },
+            {},
+            '',
+        )
+        ledger_store.insert_payment_plans(contract_id, [{
+            'phase_name': '投产进度款',
+            'payment_type': 'conditional',
+            'trigger_event': '投产通知发出',
+            'due_date': '2026-08-18',
+            'due_amount': 234000,
+            'paid_amount': 0,
+            'confirm_status': 'confirmed',
+            'payment_status': 'unpaid',
+            'parse_status': 'manual',
+        }])
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                for width, height in ((1280, 800), (1440, 900), (1920, 1080)):
+                    page = browser.new_page(viewport={'width': width, 'height': height})
+                    page.goto(
+                        f'{self.base_url}/contracts/{contract_id}',
+                        wait_until='networkidle',
+                    )
+                    sizes = page.evaluate("""({
+                        scroll: document.documentElement.scrollWidth,
+                        client: document.documentElement.clientWidth
+                    })""")
+                    self.assertLessEqual(sizes['scroll'], sizes['client'] + 1)
+                    self.assertEqual(
+                        page.locator('.ui-panel input:not([type="hidden"])').count(), 0
+                    )
+                    page.close()
+
+                page = browser.new_page(viewport={'width': 1440, 'height': 900})
+                page.goto(
+                    f'{self.base_url}/contracts/{contract_id}?tab=payments',
+                    wait_until='networkidle',
+                )
+                page.locator('[data-testid="payment-plan-table"]').wait_for()
+                self.assertEqual(
+                    page.locator(
+                        '[data-testid="payment-plan-table"] input:not([type="hidden"])'
+                    ).count(),
+                    0,
+                )
+                page.evaluate("document.documentElement.style.zoom='1.25'")
+                zoom_sizes = page.evaluate("""({
+                    scroll: document.documentElement.scrollWidth,
+                    client: document.documentElement.clientWidth
+                })""")
+                self.assertLessEqual(zoom_sizes['scroll'], zoom_sizes['client'] + 1)
+                page.goto(
+                    f'{self.base_url}/contracts/{contract_id}',
+                    wait_until='networkidle',
+                )
+                page.locator('[data-drawer-open="contractEditDrawer"]').first.click()
+                page.locator('#contractEditDrawer[open]').wait_for()
+                page.wait_for_timeout(250)
+                drawer = page.locator('#contractEditDrawer').bounding_box()
+                self.assertIsNotNone(drawer)
+                self.assertGreaterEqual(drawer['x'], 0)
+                self.assertLessEqual(drawer['x'] + drawer['width'], 1441)
+                page.get_by_role('button', name='关闭').click()
+                page.locator('#contractEditDrawer').wait_for(state='hidden')
+                browser.close()
+        except Exception as exc:
+            if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
+                self.skipTest('Playwright browser binaries are not installed')
+            raise
+        finally:
+            if ledger_store.get_contract(contract_id):
+                ledger_store.soft_delete_contract(contract_id)
+                ledger_store.permanently_delete_contract(contract_id)
 
 
 if __name__ == '__main__':

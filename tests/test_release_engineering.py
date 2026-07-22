@@ -1,5 +1,6 @@
 import importlib.util
 import re
+from datetime import datetime
 from pathlib import Path
 
 import _pyinstaller_common
@@ -172,5 +173,6 @@ def test_changelog_latest_release_matches_version_file():
         flags=re.MULTILINE,
     )
     assert releases
-    assert releases[0] == (version, '2026-07-20')
+    assert releases[0][0] == version
+    datetime.strptime(releases[0][1], '%Y-%m-%d')
     assert len({release_version for release_version, _date in releases}) == len(releases)

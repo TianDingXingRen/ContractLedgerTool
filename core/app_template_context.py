@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from decimal import Decimal, InvalidOperation
 
 from flask import session, url_for
 from werkzeug.utils import safe_join
@@ -32,6 +33,33 @@ def register_template_context(app, csrf_token_func=csrf_token):
             version = 'missing'
         return url_for('static', filename=filename, v=version)
 
+    def format_money(value, empty='—'):
+        if value is None or value == '':
+            return empty
+        try:
+            amount = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return empty
+        return f'¥{amount:,.2f}'
+
+    def format_date(value, empty='—'):
+        text = str(value or '').strip()
+        if not text:
+            return empty
+        return text[:10] if len(text) >= 10 else text
+
+    def ui_tone(value):
+        return {
+            'active': 'blue', 'signed': 'blue', 'issued': 'blue',
+            'acknowledged': 'blue', 'confirmed': 'blue', 'exact': 'green',
+            'completed': 'green', 'closed': 'green', 'paid': 'green',
+            'verified': 'green', 'valid': 'green', 'partial': 'orange',
+            'pending': 'orange', 'unpaid': 'orange', 'draft': 'gray',
+            'void': 'gray', 'cancelled': 'gray', 'manual': 'gray',
+            'conflict': 'red', 'unsupported': 'red', 'exception': 'red',
+            'red': 'red', 'overdue': 'red',
+        }.get(str(value or '').strip(), 'gray')
+
     @app.context_processor
     def inject_label_maps():
         return {
@@ -51,4 +79,7 @@ def register_template_context(app, csrf_token_func=csrf_token):
             'quote_import_status_labels': helpers.QUOTE_IMPORT_STATUS_LABELS,
             'csrf_token': csrf_token_func,
             'static_url': static_url,
+            'format_money': format_money,
+            'format_date': format_date,
+            'ui_tone': ui_tone,
         }

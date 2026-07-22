@@ -105,10 +105,15 @@ def test_contract_detail_separates_rules_from_payment_instances(client):
         rules=extraction.rules,
     )
 
-    response = client.get(f'/contracts/{contract_id}')
+    response = client.get(f'/contracts/{contract_id}?tab=payments')
 
     assert response.status_code == 200
     assert '合同付款规则'.encode() in response.data
     assert '实际付款计划'.encode() in response.data
     assert '重复触发'.encode() in response.data
     assert '本次投产通知产品总价'.encode() in response.data
+
+    overview = client.get(f'/contracts/{contract_id}')
+    assert overview.status_code == 200
+    assert '合同信息'.encode() in overview.data
+    assert 'data-testid="payment-plan-table"'.encode() not in overview.data

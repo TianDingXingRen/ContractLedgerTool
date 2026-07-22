@@ -150,6 +150,9 @@ def _register_notice_routes(bp):
         result = ledger_store.list_production_notices(
             contract_id=contract_id, status=status, page=page
         )
+        summary = ledger_store.summarize_production_notices(
+            contract_id=contract_id, status=status
+        )
         return render_template(
             'production_notice_list.html',
             notices=result['rows'],
@@ -158,6 +161,7 @@ def _register_notice_routes(bp):
             page=result['page'],
             pages=result['pages'],
             total=result['total'],
+            summary=summary,
         )
 
     @bp.route('/contracts/<int:contract_id>/production-notices/new', methods=['GET', 'POST'])

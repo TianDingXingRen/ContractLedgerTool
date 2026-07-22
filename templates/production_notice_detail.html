@@ -1,41 +1,28 @@
 {% extends "base.html" %}
+{% import "_ui_macros.html" as ui %}
 {% block title %}投产通知 {{ notice.notice_no }}{% endblock %}
-{% block breadcrumb %}投产通知详情{% endblock %}
+{% block breadcrumb %}投产通知 / 通知详情{% endblock %}
 {% block content %}
 {% set status_labels = {'draft':'草稿','issued':'已发出','acknowledged':'已确认','closed':'已关闭','cancelled':'已取消'} %}
-<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
-  <div><a class="text-sm text-blue-600" href="{{ url_for('production_notice_list') }}">← 返回投产通知台账</a><h1 class="text-2xl font-semibold mt-2">{{ notice.notice_no }} <span class="text-base text-gray-400">V{{ notice.version }}</span></h1><p class="text-sm text-gray-500 mt-1">{{ notice.contract_no or notice.contract_title }} · {{ status_labels.get(notice.status, notice.status) }}</p></div>
-  <div class="flex flex-wrap gap-2">
-    {% if notice.status == 'draft' %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('production_notice_edit', notice_id=notice.id) }}">编辑草稿</a>{% endif %}
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('invoice_new', contract_id=notice.contract_id) }}">登记发票</a>
+<div class="ui-page">
+  {% if error %}<div class="ui-alert" role="alert">{{ error }}</div>{% endif %}
+  {% if message %}<div class="ui-alert" style="color:var(--ui-green);border-color:rgba(46,139,87,.18);background:rgba(46,139,87,.06)">{{ message }}</div>{% endif %}
+  <header class="ui-page-header"><div><div class="flex items-center gap-2"><h1 class="ui-page-title">{{ notice.notice_no }}</h1>{{ ui.badge('V' ~ notice.version, 'gray') }}{{ ui.badge(status_labels.get(notice.status, notice.status), ui_tone(notice.status)) }}</div><p class="ui-page-subtitle"><a class="ui-link" href="{{ url_for('contract_detail', contract_id=notice.contract_id, tab='production') }}">{{ notice.contract_no or notice.contract_title }}</a>{% if notice.project_name %} · {{ notice.project_name }}{% endif %}</p></div><div class="ui-page-actions">{% if notice.status == 'draft' %}<a class="ui-button primary" href="{{ url_for('production_notice_edit', notice_id=notice.id) }}"><i data-lucide="pencil-line"></i>编辑草稿</a>{% else %}<a class="ui-button primary" href="{{ url_for('invoice_new', contract_id=notice.contract_id) }}"><i data-lucide="receipt-text"></i>登记发票</a>{% endif %}<a class="ui-button secondary" href="{{ url_for('production_notice_list') }}">返回台账</a></div></header>
+  <section class="ui-metrics">{{ ui.metric('通知日期', format_date(notice.notice_date), '当前版本') }}{{ ui.metric('本次数量', notice.total_qty ~ ' 件', notice['items']|length ~ ' 项产品', 'blue') }}{{ ui.metric('通知金额', format_money(notice.total_amount), '动态付款计算基数') }}{{ ui.metric('发票分摊', format_money(notice.allocated_amount), '已关联有效发票', 'green' if notice.allocated_amount else '') }}</section>
+  <div class="ui-layout">
+    <div class="ui-stack">
+      <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">投产产品明细</h2><p class="ui-panel-subtitle">通知发出后产品与数量将锁定</p></div></div><div class="ui-panel-body flush"><div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>产品</th><th>规格</th><th class="number">本次数量</th><th class="number">单价</th><th class="number">金额</th><th>号段</th><th>交付日期</th></tr></thead><tbody>{% for item in notice['items'] %}<tr><td><div class="primary-text">{{ item.item_name }}</div></td><td>{{ item.spec_model or '—' }}</td><td class="number">{{ item.notice_qty }} {{ item.unit }}</td><td class="number">{{ format_money(item.unit_price) }}</td><td class="number">{{ format_money(item.amount) }}</td><td>{{ (item.serial_start ~ '—' ~ item.serial_end) if item.serial_start is not none else '—' }}</td><td>{{ format_date(item.required_delivery_date) }}</td></tr>{% endfor %}</tbody></table></div></div></section>
+      <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">操作记录</h2><p class="ui-panel-subtitle">通知状态变化按时间倒序保留</p></div></div><div class="ui-panel-body">{% if notice.history %}<div class="ui-timeline">{% for row in notice.history %}<div class="ui-timeline-item"><div class="ui-timeline-title">{{ row.action }}</div><div class="ui-timeline-note">{{ row.note or '无补充说明' }}{% if row.operator %} · {{ row.operator }}{% endif %}</div><div class="ui-timeline-time">{{ row.created_at }}</div></div>{% endfor %}</div>{% else %}{{ ui.empty_state('history', '暂无操作记录', '通知状态发生变化后会显示在这里。') }}{% endif %}</div></section>
+    </div>
+    <aside class="ui-stack">
+      <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">通知信息</h2></div></div><div class="ui-panel-body"><dl class="ui-kv-grid"><div class="ui-kv"><dt>供应商</dt><dd>{{ notice.supplier_name or '—' }}</dd></div><div class="ui-kv"><dt>项目</dt><dd>{{ notice.project_name or '—' }}</dd></div><div class="ui-kv"><dt>动态付款事件</dt><dd>{{ notice.payment_trigger_event_id or '未生成' }}</dd></div><div class="ui-kv"><dt>当前状态</dt><dd>{{ status_labels.get(notice.status, notice.status) }}</dd></div><div class="ui-kv span-2"><dt>备注</dt><dd>{{ notice.remark or '—' }}</dd></div></dl></div></section>
+      <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">状态操作</h2><p class="ui-panel-subtitle">不可逆操作会要求确认</p></div></div><div class="ui-panel-body ui-stack">
+        {% if notice.status == 'draft' %}<form class="ui-field" method="post" action="{{ url_for('production_notice_issue', notice_id=notice.id) }}" data-confirm="发出后通知内容将锁定，确定继续？" data-confirm-title="正式发出投产通知" data-confirm-ok="发出"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><span>经办人</span><input class="ui-input" name="operator"><button class="ui-button primary" type="submit">正式发出并锁定</button></form>{% endif %}
+        {% if notice.status == 'issued' %}<form class="ui-field" method="post" action="{{ url_for('production_notice_acknowledge', notice_id=notice.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><span>确认人</span><input class="ui-input" name="operator"><button class="ui-button primary" type="submit">登记供应商收悉</button></form>{% endif %}
+        {% if notice.status in ('issued','acknowledged') %}<form method="post" action="{{ url_for('production_notice_close', notice_id=notice.id) }}" data-confirm="确定关闭此投产通知？" data-confirm-title="关闭投产通知" data-confirm-ok="关闭"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="operator"><button class="ui-button secondary" type="submit">关闭通知</button></form><form method="post" action="{{ url_for('production_notice_revise', notice_id=notice.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="operator"><button class="ui-button secondary" type="submit">创建修订版</button></form>{% endif %}
+        {% if notice.status != 'cancelled' %}<form class="ui-field" method="post" action="{{ url_for('production_notice_cancel', notice_id=notice.id) }}" data-confirm="取消后本版本不再生效，确定继续？" data-confirm-title="取消投产通知" data-confirm-ok="取消" data-confirm-danger="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="operator"><span>取消原因</span><input class="ui-input" name="reason" required><button class="ui-button danger" type="submit">取消通知</button></form>{% endif %}
+      </div></section>
+    </aside>
   </div>
 </div>
-{% if error %}<div class="alert-warning mb-4">{{ error }}</div>{% endif %}
-{% if message %}<div class="alert-success mb-4">{{ message }}</div>{% endif %}
-
-<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
-  <div class="apple-card p-4"><div class="text-xs text-gray-500">通知日期</div><div class="font-semibold mt-1">{{ notice.notice_date or '—' }}</div></div>
-  <div class="apple-card p-4"><div class="text-xs text-gray-500">本次数量</div><div class="font-semibold mt-1">{{ notice.total_qty }}</div></div>
-  <div class="apple-card p-4"><div class="text-xs text-gray-500">通知金额</div><div class="font-semibold mt-1">¥{{ '%.2f'|format(notice.total_amount) }}</div></div>
-  <div class="apple-card p-4"><div class="text-xs text-gray-500">已分摊发票</div><div class="font-semibold mt-1">¥{{ '%.2f'|format(notice.allocated_amount) }}</div></div>
-  <div class="apple-card p-4"><div class="text-xs text-gray-500">动态付款事件</div><div class="font-semibold mt-1">{{ notice.payment_trigger_event_id or '未生成' }}</div></div>
-</div>
-
-<div class="apple-card overflow-x-auto mb-4">
-  <table class="apple-table min-w-full"><thead><tr><th>产品</th><th>规格</th><th>本次数量</th><th>单价</th><th>金额</th><th>号段</th><th>交付日期</th></tr></thead><tbody>
-  {% for item in notice['items'] %}<tr><td>{{ item.item_name }}</td><td>{{ item.spec_model or '—' }}</td><td>{{ item.notice_qty }} {{ item.unit }}</td><td>{{ '¥%.2f'|format(item.unit_price) if item.unit_price is not none else '—' }}</td><td>¥{{ '%.2f'|format(item.amount) }}</td><td>{{ (item.serial_start ~ '—' ~ item.serial_end) if item.serial_start is not none else '—' }}</td><td>{{ item.required_delivery_date or '—' }}</td></tr>{% endfor %}
-  </tbody></table>
-</div>
-
-<div class="apple-card p-5 mb-4">
-  <h2 class="font-semibold mb-3">状态操作</h2>
-  <div class="flex flex-wrap gap-3 items-end">
-    {% if notice.status == 'draft' %}<form method="post" action="{{ url_for('production_notice_issue', notice_id=notice.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label class="text-sm">经办人<input class="input input-bordered input-sm ml-2" name="operator"></label><button class="apple-btn apple-btn-primary ml-2" type="submit">正式发出并锁定</button></form>{% endif %}
-    {% if notice.status == 'issued' %}<form method="post" action="{{ url_for('production_notice_acknowledge', notice_id=notice.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="input input-bordered input-sm" name="operator" placeholder="确认人"><button class="apple-btn apple-btn-primary ml-2" type="submit">登记收悉</button></form>{% endif %}
-    {% if notice.status in ('issued','acknowledged') %}<form method="post" action="{{ url_for('production_notice_close', notice_id=notice.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="operator"><button class="apple-btn apple-btn-ghost" type="submit">关闭</button></form><form method="post" action="{{ url_for('production_notice_revise', notice_id=notice.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="operator"><button class="apple-btn apple-btn-ghost" type="submit">创建修订版</button></form>{% endif %}
-    {% if notice.status != 'cancelled' %}<form method="post" action="{{ url_for('production_notice_cancel', notice_id=notice.id) }}" class="flex gap-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="operator"><input class="input input-bordered input-sm" name="reason" required placeholder="取消原因"><button class="apple-btn apple-btn-ghost text-red-600" type="submit">取消通知</button></form>{% endif %}
-  </div>
-</div>
-
-<div class="apple-card p-5"><h2 class="font-semibold mb-3">操作记录</h2><div class="space-y-3">{% for row in notice.history %}<div class="border-b pb-3 text-sm"><span class="font-medium">{{ row.action }}</span> · {{ row.created_at }}{% if row.operator %} · {{ row.operator }}{% endif %}<div class="text-gray-500 mt-1">{{ row.note }}</div></div>{% else %}<div class="text-sm text-gray-400">暂无记录</div>{% endfor %}</div></div>
 {% endblock %}

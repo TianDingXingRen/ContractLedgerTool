@@ -1,0 +1,20 @@
+{% macro badge(label, tone='gray') -%}
+<span class="ui-badge {{ tone }}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro metric(label, value, hint='', tone='') -%}
+<div class="ui-metric {{ tone }}">
+  <div class="ui-metric-label">{{ label }}</div>
+  <div class="ui-metric-value">{{ value }}</div>
+  {% if hint %}<div class="ui-metric-hint">{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro empty_state(icon, title, description, action_href='', action_label='') -%}
+<div class="ui-empty">
+  <span class="ui-empty-icon"><i data-lucide="{{ icon }}"></i></span>
+  <strong>{{ title }}</strong>
+  <p>{{ description }}</p>
+  {% if action_href and action_label %}<a class="ui-button secondary" href="{{ action_href }}">{{ action_label }}</a>{% endif %}
+</div>
+{%- endmacro %}

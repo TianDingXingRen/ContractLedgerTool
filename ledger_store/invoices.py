@@ -104,6 +104,57 @@ class InvoiceRepository:
             'per_page': per_page,
         }
 
+    def summary(self, contract_id=None, review_status='', invoice_status=''):
+        conditions = []
+        params = []
+        if contract_id is not None:
+            conditions.append(
+                'EXISTS (SELECT 1 FROM invoice_allocations link '
+                'WHERE link.invoice_id = i.id AND link.contract_id = ?)'
+            )
+            params.append(contract_id)
+        if review_status:
+            conditions.append('i.review_status = ?')
+            params.append(review_status)
+        if invoice_status:
+            conditions.append('i.invoice_status = ?')
+            params.append(invoice_status)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ''
+        with self.get_conn() as conn:
+            rows = conn.execute(
+                f"""SELECT i.*,
+                           COALESCE((SELECT SUM(ia.allocated_amount_minor)
+                                       FROM invoice_allocations ia
+                                      WHERE ia.invoice_id = i.id), 0)
+                               AS allocated_amount_minor,
+                           EXISTS(SELECT 1 FROM invoices red
+                                   WHERE red.original_invoice_id = i.id
+                                     AND red.invoice_status = 'red') AS has_red_offset
+                      FROM invoices i {where}""",
+                params,
+            ).fetchall()
+        count = len(rows)
+        valid_total = 0
+        unallocated = 0
+        pending = 0
+        exception = 0
+        for row in rows:
+            pending += int(row['review_status'] == 'pending')
+            exception += int(row['review_status'] == 'exception')
+            effective = row['invoice_status'] == 'valid' and not row['has_red_offset']
+            if effective:
+                total = int(row['total_amount_minor'] or 0)
+                allocated = int(row['allocated_amount_minor'] or 0)
+                valid_total += total
+                unallocated += max(total - allocated, 0)
+        return {
+            'count': count,
+            'valid_total': valid_total / 100,
+            'unallocated_amount': unallocated / 100,
+            'pending_count': pending,
+            'exception_count': exception,
+        }
+
     def get(self, invoice_id):
         with self.get_conn() as conn:
             row = conn.execute(

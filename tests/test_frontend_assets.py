@@ -157,24 +157,27 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
         self.assertIn("style-src 'self' 'unsafe-inline'", csp)
 
-    def test_contract_detail_exposes_resizable_payment_columns(self):
+    def test_contract_detail_uses_read_only_tables_and_accessible_drawers(self):
         detail_path = os.path.join(app.RESOURCE_DIR, 'templates', 'contract_detail.html')
         style_path = os.path.join(app.RESOURCE_DIR, 'static', 'style.css')
         with open(detail_path, 'r', encoding='utf-8') as f:
             html = f.read()
         with open(style_path, 'r', encoding='utf-8') as f:
             css = f.read()
-        behavior_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'contract-detail.js')
+        behavior_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'ui-drawer.js')
         with open(behavior_path, 'r', encoding='utf-8') as f:
             behavior = f.read()
 
         self.assertIn('data-testid="payment-plan-table"', html)
-        self.assertIn('<colgroup>', html)
-        self.assertEqual(html.count('class="col-resize-handle"'), 13)
-        self.assertIn("localStorage.setItem(storageKey", behavior)
-        self.assertIn("handle.addEventListener('mousedown'", behavior)
-        self.assertIn('.col-resize-handle', css)
-        self.assertIn('cursor: col-resize', css)
+        self.assertIn('data-testid="contract-workspace"', html)
+        self.assertIn('class="ui-drawer', html)
+        self.assertIn('aria-labelledby=', html)
+        self.assertNotIn('<colgroup>', html)
+        self.assertNotIn('col-resize-handle', html)
+        self.assertIn('window.confirmAction', behavior)
+        self.assertIn("event.target.classList.contains('ui-drawer')", behavior)
+        self.assertIn('.ui-drawer', css)
+        self.assertIn('transform:translate3d', css)
 
     def test_windows_launcher_uses_fast_new_ui_probe(self):
         launcher_path = os.path.join(app.RESOURCE_DIR, 'installer_assets', 'start.ps1')

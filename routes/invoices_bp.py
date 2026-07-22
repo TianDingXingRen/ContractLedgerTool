@@ -145,6 +145,9 @@ def _register_invoice_routes(bp):
         result = ledger_store.list_invoices(
             review_status=review_status, invoice_status=invoice_status, page=page
         )
+        summary = ledger_store.summarize_invoices(
+            review_status=review_status, invoice_status=invoice_status
+        )
         return render_template(
             'invoice_list.html',
             invoices=result['rows'],
@@ -153,6 +156,7 @@ def _register_invoice_routes(bp):
             page=result['page'],
             pages=result['pages'],
             total=result['total'],
+            summary=summary,
         )
 
     @bp.route('/api/contracts/<int:contract_id>/invoice-targets')

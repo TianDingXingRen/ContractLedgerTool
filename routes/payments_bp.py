@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from flask import render_template, request, redirect, url_for, send_file, jsonify
 
 from routes.legacy_blueprint import LegacyEndpointBlueprint
+from routes.workspace_navigation import contract_detail_location
 
 import ledger_store
 import xlsx_exporter
@@ -28,6 +29,16 @@ def _payment_filter_args(form_or_args):
 
 
 def _payment_redirect(form_or_args):
+    raw_contract_id = str(form_or_args.get('return_contract_id', '') or '').strip()
+    if raw_contract_id:
+        try:
+            contract_id = int(raw_contract_id)
+        except ValueError:
+            contract_id = 0
+        if contract_id > 0:
+            return redirect(contract_detail_location(
+                contract_id, form_or_args, default_tab='payments'
+            ))
     return redirect(url_for('payment_plan_list', **_payment_filter_args(form_or_args)))
 
 
@@ -63,10 +74,12 @@ def _register_payment_rule_routes(bp):
             if not changed:
                 return '付款规则不存在', 404
         except ValueError as exc:
-            return redirect(url_for(
-                'contract_detail', contract_id=contract_id, error=str(exc)
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments', error=str(exc)
             ))
-        return redirect(url_for('contract_detail', contract_id=contract_id))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments'
+        ))
 
     @bp.route(
         '/contracts/<int:contract_id>/payment-rules/<int:rule_id>/edit',
@@ -110,10 +123,12 @@ def _register_payment_rule_routes(bp):
             if not changed:
                 return '付款规则不存在', 404
         except (TypeError, ValueError) as exc:
-            return redirect(url_for(
-                'contract_detail', contract_id=contract_id, error=str(exc)
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments', error=str(exc)
             ))
-        return redirect(url_for('contract_detail', contract_id=contract_id))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments'
+        ))
 
     @bp.route(
         '/contracts/<int:contract_id>/payment-rules/<int:rule_id>/trigger',
@@ -128,8 +143,8 @@ def _register_payment_rule_routes(bp):
         amount_raw = str(request.form.get('base_amount', '') or '').strip()
         base_amount = helpers.float_or_none(amount_raw)
         if event_date and not helpers.normalize_date(event_date):
-            return redirect(url_for(
-                'contract_detail', contract_id=contract_id,
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments',
                 error='业务事件日期格式无效，请使用 YYYY-MM-DD',
             ))
         try:
@@ -142,10 +157,12 @@ def _register_payment_rule_routes(bp):
                 reference_name=reference_name,
             )
         except ValueError as exc:
-            return redirect(url_for(
-                'contract_detail', contract_id=contract_id, error=str(exc)
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments', error=str(exc)
             ))
-        return redirect(url_for('contract_detail', contract_id=contract_id))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments'
+        ))
 
 def _register_contract_payment_routes(bp):
     @bp.route('/contracts/<int:contract_id>/payments/save', methods=['POST'])
@@ -187,7 +204,9 @@ def _register_contract_payment_routes(bp):
             ledger_store.save_payment_plan_changes(contract_id, changes)
         except ValueError as e:
             return str(e), 400
-        return redirect(url_for('contract_detail', contract_id=contract_id))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments'
+        ))
 
     @bp.route('/contracts/<int:contract_id>/payments/confirm-all', methods=['POST'])
     def payment_plans_confirm_all(contract_id):
@@ -195,7 +214,9 @@ def _register_contract_payment_routes(bp):
         confirmable_ids = [plan['id'] for plan in plans if helpers.can_bulk_confirm_payment(plan)]
         if confirmable_ids:
             ledger_store.batch_confirm_plans(confirmable_ids, contract_id)
-        return redirect(url_for('contract_detail', contract_id=contract_id))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments'
+        ))
 
 def _register_payment_view_routes(bp):
     @bp.route('/api/payments/due-soon')
@@ -261,6 +282,14 @@ def _register_payment_view_routes(bp):
             row['is_overdue'] = bool(due_date and due_date <= today_str and is_unpaid)
             row['is_due_soon'] = bool(due_date and today_str < due_date <= due_soon_end and is_unpaid)
         next_start, next_end = helpers.next_month_range()
+        payment_summary = ledger_store.summarize_payment_plans(
+            confirm_status=confirm_status,
+            payment_status=payment_status,
+            start_date=start_date,
+            end_date=end_date,
+            project_name=project_name,
+            today=today,
+        )
         return render_template(
             'payment_plans.html',
             plans=result['rows'],
@@ -278,6 +307,7 @@ def _register_payment_view_routes(bp):
             today=today,
             due_soon_end=due_soon_end,
             view_mode=view_mode,
+            payment_summary=payment_summary,
         )
 
 def _register_payment_action_routes(bp):

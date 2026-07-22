@@ -490,6 +490,8 @@ def test_production_and_invoice_pages_render(client):
 
     for path in (
         f'/contracts/{contract_id}',
+        f'/contracts/{contract_id}?tab=production',
+        f'/contracts/{contract_id}?tab=invoices',
         f'/contracts/{contract_id}/items',
         f'/contracts/{contract_id}/production-notices/new',
         '/production-notices',
@@ -528,6 +530,14 @@ def test_paginated_ledgers_and_invoice_target_api(client):
     )
     assert (notices['total'], notices['pages'], len(notices['rows'])) == (2, 2, 1)
     assert (invoices['total'], invoices['page'], len(invoices['rows'])) == (2, 2, 1)
+    notice_summary = ledger_store.summarize_production_notices(contract_id=contract_id)
+    invoice_summary = ledger_store.summarize_invoices(contract_id=contract_id)
+    assert notice_summary == {
+        'count': 2, 'active_count': 1, 'total_qty': 1, 'total_amount': 100.0,
+    }
+    assert invoice_summary['count'] == 2
+    assert invoice_summary['valid_total'] == 2
+    assert invoice_summary['unallocated_amount'] == 0
 
     response = client.get(f'/api/contracts/{contract_id}/invoice-targets')
     assert response.status_code == 200

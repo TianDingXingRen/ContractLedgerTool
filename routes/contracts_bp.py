@@ -12,6 +12,8 @@ from flask import current_app, render_template, request, redirect, url_for, send
 
 from routes.legacy_blueprint import LegacyEndpointBlueprint
 from routes import contract_batch_support
+from routes.contract_workspace import register_contract_workspace
+from routes.workspace_navigation import contract_detail_location
 
 from core.domain_errors import DocumentGenerationError, ProcurementLinkError, ValidationError
 import template_def
@@ -89,7 +91,9 @@ def _register_contract_update_route(bp):
             ledger_store.update_contract(contract_id, update)
         except ValueError as e:
             return safe_error(e, '合同更新失败')
-        return redirect(url_for('contract_detail', contract_id=contract_id))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='overview'
+        ))
 
 
 def register(app):
@@ -634,35 +638,6 @@ def register(app):
         get_logger().info('Permanently deleted contract %d', contract_id)
         return redirect(url_for('contract_trash'))
 
-    @bp.route('/contracts/<int:contract_id>')
-    def contract_detail(contract_id):
-        contract = ledger_store.get_contract(contract_id)
-        if not contract:
-            return '合同记录不存在', 404
-        import procurement_store
-        procurement_linked = procurement_store.contract_has_refs(contract_id)
-        plans = ledger_store.list_payment_plans(contract_id=contract_id)
-        payment_rules = ledger_store.list_payment_rules(contract_id)
-        payment_events = ledger_store.list_payment_trigger_events(contract_id)
-        contract_items = ledger_store.list_contract_items(contract_id)
-        production_notices = ledger_store.list_production_notices(contract_id=contract_id)
-        invoices = ledger_store.list_invoices(contract_id=contract_id)
-        history = ledger_store.get_contract_history(contract_id)
-        return render_template(
-            'contract_detail.html',
-            contract=contract,
-            plans=plans,
-            payment_rules=payment_rules,
-            payment_events=payment_events,
-            contract_items=contract_items,
-            production_notices=production_notices,
-            invoices=invoices,
-            history=history,
-            project_names=ledger_store.list_project_names(),
-            procurement_linked=procurement_linked,
-            error=request.args.get('error', ''),
-        )
-
     @bp.route('/contracts/<int:contract_id>/download')
     def contract_download(contract_id):
         contract = ledger_store.get_contract(contract_id)
@@ -710,5 +685,6 @@ def register(app):
             mimetype='application/pdf',
         )
 
+    register_contract_workspace(bp)
     _register_contract_update_route(bp)
     app.register_blueprint(bp)
