@@ -47,8 +47,107 @@ def _normalized_form_date(form, name, default=''):
     return normalized
 
 
-def register(app):
-    bp = LegacyEndpointBlueprint('payments', __name__)
+def _register_payment_rule_routes(bp):
+    @bp.route(
+        '/contracts/<int:contract_id>/payment-rules/<int:rule_id>/status',
+        methods=['POST'],
+    )
+    def payment_rule_status(contract_id, rule_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+        status = str(request.form.get('status', '') or '').strip()
+        try:
+            changed = ledger_store.set_payment_rule_confirm_status(
+                rule_id, contract_id, status
+            )
+            if not changed:
+                return '付款规则不存在', 404
+        except ValueError as exc:
+            return redirect(url_for(
+                'contract_detail', contract_id=contract_id, error=str(exc)
+            ))
+        return redirect(url_for('contract_detail', contract_id=contract_id))
+
+    @bp.route(
+        '/contracts/<int:contract_id>/payment-rules/<int:rule_id>/edit',
+        methods=['POST'],
+    )
+    def payment_rule_edit(contract_id, rule_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+
+        def optional_number(name, label):
+            raw = str(request.form.get(name, '') or '').strip()
+            if not raw:
+                return None
+            value = helpers.float_or_none(raw)
+            if value is None:
+                raise ValueError(f'{label}必须是有效数字')
+            return value
+
+        try:
+            days_raw = str(request.form.get('trigger_days', '') or '').strip()
+            trigger_days = int(days_raw) if days_raw else None
+            if trigger_days is not None and not 0 <= trigger_days <= 36_500:
+                raise ValueError('后置天数必须在0到36500之间')
+            changed = ledger_store.update_payment_rule_manual(
+                rule_id,
+                contract_id,
+                {
+                    'phase_name': str(request.form.get('phase_name', '') or '').strip()[:120],
+                    'scope': str(request.form.get('scope', 'contract') or 'contract'),
+                    'trigger_event_type': str(request.form.get('trigger_event_type', 'other') or 'other')[:80],
+                    'trigger_event': str(request.form.get('trigger_event', '') or '').strip()[:200],
+                    'trigger_days': trigger_days,
+                    'amount_basis': str(request.form.get('amount_basis', 'unknown') or 'unknown')[:80],
+                    'amount_basis_text': str(request.form.get('amount_basis_text', '') or '').strip()[:300],
+                    'ratio': optional_number('ratio', '付款比例'),
+                    'explicit_amount': optional_number('explicit_amount', '合同明确金额'),
+                    'calculated_amount': optional_number('calculated_amount', '比例计算金额'),
+                    'repeat_mode': str(request.form.get('repeat_mode', 'once') or 'once'),
+                },
+            )
+            if not changed:
+                return '付款规则不存在', 404
+        except (TypeError, ValueError) as exc:
+            return redirect(url_for(
+                'contract_detail', contract_id=contract_id, error=str(exc)
+            ))
+        return redirect(url_for('contract_detail', contract_id=contract_id))
+
+    @bp.route(
+        '/contracts/<int:contract_id>/payment-rules/<int:rule_id>/trigger',
+        methods=['POST'],
+    )
+    def payment_rule_trigger(contract_id, rule_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+        reference_no = str(request.form.get('reference_no', '') or '').strip()
+        event_date = str(request.form.get('event_date', '') or '').strip()
+        reference_name = str(request.form.get('reference_name', '') or '').strip()
+        amount_raw = str(request.form.get('base_amount', '') or '').strip()
+        base_amount = helpers.float_or_none(amount_raw)
+        if event_date and not helpers.normalize_date(event_date):
+            return redirect(url_for(
+                'contract_detail', contract_id=contract_id,
+                error='业务事件日期格式无效，请使用 YYYY-MM-DD',
+            ))
+        try:
+            ledger_store.create_payment_rule_event_instance(
+                contract_id,
+                rule_id,
+                reference_no,
+                event_date=helpers.normalize_date(event_date) if event_date else '',
+                base_amount=base_amount,
+                reference_name=reference_name,
+            )
+        except ValueError as exc:
+            return redirect(url_for(
+                'contract_detail', contract_id=contract_id, error=str(exc)
+            ))
+        return redirect(url_for('contract_detail', contract_id=contract_id))
+
+def _register_contract_payment_routes(bp):
     @bp.route('/contracts/<int:contract_id>/payments/save', methods=['POST'])
     def payment_plans_save(contract_id):
         if not ledger_store.get_contract(contract_id):
@@ -98,6 +197,7 @@ def register(app):
             ledger_store.batch_confirm_plans(confirmable_ids, contract_id)
         return redirect(url_for('contract_detail', contract_id=contract_id))
 
+def _register_payment_view_routes(bp):
     @bp.route('/api/payments/due-soon')
     def api_payments_due_soon():
         days = request.args.get('days', 7, type=int)
@@ -180,6 +280,7 @@ def register(app):
             view_mode=view_mode,
         )
 
+def _register_payment_action_routes(bp):
     @bp.route('/payment-plans/batch-confirm', methods=['POST'])
     def payment_plans_batch_confirm():
         try:
@@ -246,6 +347,7 @@ def register(app):
             return str(e), 400
         return _payment_redirect(request.form)
 
+def _register_payment_export_routes(bp):
     @bp.route('/payment-plans/export')
     def export_payment_plans():
         filters = _payment_filter_args(request.args)
@@ -281,4 +383,11 @@ def register(app):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
+def register(app):
+    bp = LegacyEndpointBlueprint('payments', __name__)
+    _register_payment_rule_routes(bp)
+    _register_contract_payment_routes(bp)
+    _register_payment_view_routes(bp)
+    _register_payment_action_routes(bp)
+    _register_payment_export_routes(bp)
     app.register_blueprint(bp)

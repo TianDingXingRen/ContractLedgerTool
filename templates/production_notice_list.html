@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}投产通知台账{% endblock %}
+{% block breadcrumb %}投产通知{% endblock %}
+{% block content %}
+{% set status_labels = {'draft':'草稿','issued':'已发出','acknowledged':'已确认','closed':'已关闭','cancelled':'已取消'} %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-5">
+  <div><h1 class="text-2xl font-semibold">投产通知台账</h1><p class="text-sm text-gray-500 mt-1">管理每次发出了多少产品，并联动动态付款计划</p></div>
+  <form method="get" class="flex gap-2 items-end">
+    {% if contract_id %}<input type="hidden" name="contract_id" value="{{ contract_id }}">{% endif %}
+    <label class="text-sm">状态
+      <select class="select select-bordered select-sm ml-2" name="status">
+        <option value="">全部</option>
+        {% for value, label in status_labels.items() %}<option value="{{ value }}" {{ 'selected' if status == value }}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="apple-btn apple-btn-ghost" type="submit">筛选</button>
+  </form>
+</div>
+
+<div class="apple-card overflow-x-auto">
+  <table class="apple-table min-w-full">
+    <thead><tr><th>通知编号</th><th>合同</th><th>日期</th><th>状态</th><th>数量</th><th>通知金额</th><th>已分摊发票</th><th></th></tr></thead>
+    <tbody>
+    {% for notice in notices %}
+      <tr>
+        <td><a class="text-blue-600 font-medium" href="{{ url_for('production_notice_detail', notice_id=notice.id) }}">{{ notice.notice_no }}{% if notice.version > 1 %} · V{{ notice.version }}{% endif %}</a></td>
+        <td><div>{{ notice.contract_no or notice.contract_title }}</div><div class="text-xs text-gray-400">{{ notice.project_name }}</div></td>
+        <td>{{ notice.notice_date or '—' }}</td>
+        <td><span class="badge badge-outline">{{ status_labels.get(notice.status, notice.status) }}</span></td>
+        <td>{{ notice.total_qty }}</td>
+        <td>¥{{ '%.2f'|format(notice.total_amount) }}</td>
+        <td>¥{{ '%.2f'|format(notice.allocated_amount) }}</td>
+        <td><a class="apple-btn apple-btn-ghost" href="{{ url_for('production_notice_detail', notice_id=notice.id) }}">查看</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-center text-gray-400 py-10">暂无投产通知。请从合同详情进入，先维护产品基线后新建。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if pages > 1 %}<div class="flex justify-between items-center mt-4 text-sm"><span>共 {{ total }} 份</span><div class="flex gap-2">{% if page > 1 %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('production_notice_list', status=status, contract_id=contract_id, page=page-1) }}">上一页</a>{% endif %}<span class="px-3 py-2">{{ page }} / {{ pages }}</span>{% if page < pages %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('production_notice_list', status=status, contract_id=contract_id, page=page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
+{% endblock %}

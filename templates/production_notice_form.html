@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ '编辑' if notice else '新建' }}投产通知{% endblock %}
+{% block breadcrumb %}{{ '编辑' if notice else '新建' }}投产通知{% endblock %}
+{% block content %}
+<div class="mb-5">
+  <a class="text-sm text-blue-600" href="{{ url_for('production_notice_detail', notice_id=notice.id) if notice else url_for('contract_detail', contract_id=contract.id) }}">← 返回</a>
+  <h1 class="text-2xl font-semibold mt-2">{{ '编辑投产通知草稿' if notice else '新建投产通知' }}</h1>
+  <p class="text-sm text-gray-500 mt-1">{{ contract.contract_no or '未编号' }} · {{ contract.title }}</p>
+</div>
+{% if error %}<div class="alert-warning mb-4">{{ error }}</div>{% endif %}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="apple-card p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+    <label class="text-sm">通知编号 *<input class="input input-bordered w-full mt-1" name="notice_no" value="{{ notice.notice_no if notice else '' }}" placeholder="留空自动生成"></label>
+    <label class="text-sm">通知日期<input class="input input-bordered w-full mt-1" type="date" name="notice_date" value="{{ notice.notice_date if notice else today }}"></label>
+    <label class="text-sm">供应商<input class="input input-bordered w-full mt-1" name="supplier_name" value="{{ notice.supplier_name if notice else contract.counterparty or '' }}"></label>
+    <label class="text-sm">项目<input class="input input-bordered w-full mt-1" name="project_name" value="{{ notice.project_name if notice else contract.project_name or '' }}"></label>
+    <label class="text-sm lg:col-span-4">备注<textarea class="textarea textarea-bordered w-full mt-1" name="remark">{{ notice.remark if notice else '' }}</textarea></label>
+  </div>
+
+  <input type="hidden" name="item_count" value="{{ contract_items|length }}">
+  <div class="apple-card overflow-x-auto">
+    <table class="apple-table min-w-full">
+      <thead><tr><th>产品</th><th>合同数量</th><th>累计已发</th><th>剩余</th><th>本次投产 *</th><th>起始号</th><th>结束号</th><th>要求交付日期</th><th>备注</th></tr></thead>
+      <tbody>
+      {% for item in contract_items %}
+        {% set saved = notice_item_values.get(item.id) %}
+        <tr>
+          <td><input type="hidden" name="item_{{ loop.index0 }}_contract_item_id" value="{{ item.id }}"><div class="font-medium">{{ item.item_name }}</div><div class="text-xs text-gray-400">{{ item.spec_model }}</div></td>
+          <td>{{ item.contracted_qty }} {{ item.unit }}</td>
+          <td>{{ item.issued_qty }}</td>
+          <td class="font-semibold">{{ item.remaining_qty }}</td>
+          <td><input class="input input-bordered input-sm w-24" name="item_{{ loop.index0 }}_notice_qty" inputmode="numeric" value="{{ saved.notice_qty if saved else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-24" name="item_{{ loop.index0 }}_serial_start" inputmode="numeric" value="{{ saved.serial_start if saved and saved.serial_start is not none else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-24" name="item_{{ loop.index0 }}_serial_end" inputmode="numeric" value="{{ saved.serial_end if saved and saved.serial_end is not none else '' }}"></td>
+          <td><input class="input input-bordered input-sm" type="date" name="item_{{ loop.index0 }}_required_delivery_date" value="{{ saved.required_delivery_date if saved else '' }}"></td>
+          <td><input class="input input-bordered input-sm min-w-32" name="item_{{ loop.index0 }}_remark" value="{{ saved.remark if saved else '' }}"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="flex justify-end mt-4"><button class="apple-btn apple-btn-primary" type="submit">保存草稿</button></div>
+</form>
+{% endblock %}

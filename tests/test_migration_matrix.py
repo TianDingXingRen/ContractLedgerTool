@@ -51,6 +51,20 @@ def _create_database_at_version(path, target_version):
         for version, forward_sql, _rollback_sql in MIGRATIONS:
             if version > target_version:
                 break
+            if version == 17:
+                existing = {
+                    row[1]
+                    for row in connection.execute('PRAGMA table_info(contracts)')
+                }
+                for column, definition in {
+                    'record_origin': "TEXT NOT NULL DEFAULT 'generated'",
+                    'original_filename': "TEXT DEFAULT ''",
+                    'source_sha256': "TEXT DEFAULT ''",
+                }.items():
+                    if column not in existing:
+                        connection.execute(
+                            f'ALTER TABLE contracts ADD COLUMN {column} {definition}'
+                        )
             connection.executescript(forward_sql)
             if version in MIGRATION_BACKFILLS:
                 connection.executescript(MIGRATION_BACKFILLS[version])

@@ -279,17 +279,43 @@ def prepare_ledger_record(tpl, fields, field_values, document_path, classificati
     return summary, plans
 
 
+def prepare_ledger_payments(
+    tpl, fields, field_values, document_path, classification=None
+):
+    """Build a ledger summary plus separated payment plans and rules."""
+    summary = infer_contract_summary(tpl, fields, field_values)
+    if classification:
+        summary.update({
+            'project_name': classification.get('project_name') or '',
+            'coverage_start': classification.get('coverage_start'),
+            'coverage_end': classification.get('coverage_end'),
+        })
+    try:
+        blocks = payment_extractor.extract_docx_blocks(document_path)
+        extraction = payment_extractor.extract_payment_items(
+            blocks,
+            contract_amount=summary.get('amount'),
+            sign_date=summary.get('sign_date') or '',
+        )
+        return summary, extraction.plans, extraction.rules
+    except Exception:
+        get_logger().error(
+            'Payment rule extraction failed for %s', document_path, exc_info=True
+        )
+        return summary, [], []
+
+
 def create_ledger_record(
     tpl, fields, field_values, output_path, classification=None, *, conn=None,
     document_path=None,
 ):
     """Create one contract and its payment plans in the supplied transaction."""
-    summary, plans = prepare_ledger_record(
+    summary, plans, rules = prepare_ledger_payments(
         tpl, fields, field_values, document_path or output_path, classification
     )
     # 合同创建与付款计划插入在同一事务中完成
     contract_id, plan_count = ledger_store.create_contract_with_plans(
-        summary, field_values, output_path, plans, conn=conn,
+        summary, field_values, output_path, plans, conn=conn, rules=rules,
     )
     if plan_count:
         get_logger().info('Created contract %d with %d payment plans', contract_id, plan_count)
@@ -436,7 +462,10 @@ def has_payment_content(row):
 
 
 def can_bulk_confirm_payment(plan):
-    if (plan.get('confidence') or 'low') == 'low':
+    parse_status = str(plan.get('parse_status') or '').strip()
+    if parse_status in {'conflict', 'unsupported'}:
+        return False
+    if not parse_status and (plan.get('confidence') or 'low') == 'low':
         return False
     if plan.get('due_amount') is None and plan.get('ratio') is None:
         return False

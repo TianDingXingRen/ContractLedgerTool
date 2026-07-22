@@ -31,6 +31,23 @@ class ContractLifecycleRepository:
                 return True
         return False
 
+    @staticmethod
+    def _has_execution_refs(conn, contract_id):
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('production_notices', 'invoice_allocations')"
+            ).fetchall()
+        }
+        for table_name in ('production_notices', 'invoice_allocations'):
+            if table_name in tables and conn.execute(
+                f'SELECT 1 FROM {table_name} WHERE contract_id = ? LIMIT 1',
+                (contract_id,),
+            ).fetchone():
+                return True
+        return False
+
     def soft_delete(self, contract_id):
         now = self._now()
         with self._get_conn() as conn:
@@ -79,8 +96,12 @@ class ContractLifecycleRepository:
                 return 0
             if self._has_procurement_refs(conn, contract_id):
                 raise ValueError('该合同已关联采购项目，为保留审计记录不能永久删除')
+            if self._has_execution_refs(conn, contract_id):
+                raise ValueError('该合同已有投产通知或发票分摊，为保留审计记录不能永久删除')
             conn.execute('DELETE FROM contract_history WHERE contract_id = ?', (contract_id,))
             conn.execute('DELETE FROM payment_plans WHERE contract_id = ?', (contract_id,))
+            conn.execute('DELETE FROM payment_trigger_events WHERE contract_id = ?', (contract_id,))
+            conn.execute('DELETE FROM payment_rules WHERE contract_id = ?', (contract_id,))
             cur = conn.execute('DELETE FROM contracts WHERE id = ?', (contract_id,))
             return cur.rowcount
 
@@ -88,8 +109,12 @@ class ContractLifecycleRepository:
         with self._get_conn() as conn:
             if self._has_procurement_refs(conn, contract_id):
                 raise ValueError('合同已建立采购关联，不能作为生成失败记录清理')
+            if self._has_execution_refs(conn, contract_id):
+                raise ValueError('合同已有投产通知或发票分摊，不能作为失败记录清理')
             conn.execute('DELETE FROM contract_history WHERE contract_id = ?', (contract_id,))
             conn.execute('DELETE FROM payment_plans WHERE contract_id = ?', (contract_id,))
+            conn.execute('DELETE FROM payment_trigger_events WHERE contract_id = ?', (contract_id,))
+            conn.execute('DELETE FROM payment_rules WHERE contract_id = ?', (contract_id,))
             cur = conn.execute('DELETE FROM contracts WHERE id = ?', (contract_id,))
             return cur.rowcount
 

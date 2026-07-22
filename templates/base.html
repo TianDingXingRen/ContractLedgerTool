@@ -23,6 +23,8 @@
 <a href="{{ url_for('list_templates') }}" class="nl {{ 'act' if request.endpoint in ('list_templates','editor','create_template','template_editor','template_versions') }}"><i data-lucide="pen-line"></i> 合同生成</a>
 <a href="{{ url_for('contract_ledger') }}" class="nl {{ 'act' if request.endpoint in ('contract_ledger','contract_detail') }}"><i data-lucide="book-open"></i> 合同台账</a>
 <a href="{{ url_for('payment_plan_list') }}" class="nl {{ 'act' if request.endpoint == 'payment_plan_list' }}"><i data-lucide="calendar-days"></i> 付款计划</a>
+<a href="{{ url_for('production_notice_list') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('production_notice') }}"><i data-lucide="send"></i> 投产通知</a>
+<a href="{{ url_for('invoice_list') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('invoice_') }}"><i data-lucide="receipt-text"></i> 发票管理</a>
 </div>
 <div class="nsw"><div class="nst">资源管理</div>
 <a href="{{ url_for('excel_bill_page') }}" class="nl {{ 'act' if request.endpoint == 'excel_bill_page' }}"><i data-lucide="file-spreadsheet"></i> Excel 单据</a>

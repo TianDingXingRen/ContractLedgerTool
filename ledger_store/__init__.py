@@ -9,9 +9,7 @@ from datetime import datetime
 
 from utils.logger import get_logger
 from core.maintenance_gate import maintenance_gate
-from utils.constants import (
-    ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel,
-)
+from utils.constants import ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel
 from . import backups as backup_ops
 from . import dashboard_queries
 from . import document_paths
@@ -20,10 +18,13 @@ from . import list_queries
 from . import money_fields
 from . import project_reports
 from .contract_lifecycle import ContractLifecycleRepository
+from .contract_items import ContractItemRepository
+from .invoices import InvoiceRepository
 from .payment_plans import PaymentPlanRepository
+from .payment_rules import PaymentRuleRepository
+from .production_notices import ProductionNoticeRepository
 from .schema import (
-    CURRENT_SCHEMA_VERSION,
-    DOCUMENT_PATH_MIGRATION_VERSION,
+    CURRENT_SCHEMA_VERSION, DOCUMENT_PATH_MIGRATION_VERSION,
     FRESH_DATABASE_INDEX_SQL,
     LEDGER_INDEX_SQL,
     LEDGER_TABLE_SQL,
@@ -150,8 +151,7 @@ def get_generation_job_state_counts():
     return generation_jobs.state_counts(get_conn)
 
 
-def _amount_pair(value, *, allow_none=True):
-    return money_fields.amount_pair(value, allow_none=allow_none)
+_amount_pair = money_fields.amount_pair
 
 
 def _normalize_docx_paths_in_db(conn):
@@ -448,6 +448,21 @@ _PAYMENT_PLANS = PaymentPlanRepository(
     field_validators=PLAN_FIELD_VALIDATORS,
 )
 
+_PAYMENT_RULES = PaymentRuleRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+    validate_choice=_validate_choice,
+)
+
+_CONTRACT_ITEMS = ContractItemRepository(get_conn=get_conn, now=_now)
+_PRODUCTION_NOTICES = ProductionNoticeRepository(
+    get_conn=get_conn,
+    now=_now,
+    payment_rules=_PAYMENT_RULES,
+)
+_INVOICES = InvoiceRepository(get_conn=get_conn, now=_now)
+
 
 def create_contract(summary, field_values, docx_path):
     """创建合同记录（不含付款计划），返回 contract_id。
@@ -459,7 +474,9 @@ def create_contract(summary, field_values, docx_path):
     return contract_id
 
 
-def _create_contract_with_plans_impl(conn, summary, field_values, docx_path, plans):
+def _create_contract_with_plans_impl(
+    conn, summary, field_values, docx_path, plans, rules=None
+):
     now = _now()
     status = _validate_choice(summary.get('status') or 'draft', CONTRACT_STATUSES, '合同状态')
     record_origin = _validate_choice(
@@ -501,12 +518,19 @@ def _create_contract_with_plans_impl(conn, summary, field_values, docx_path, pla
         ),
     )
     contract_id = cur.lastrowid
+    rule_ids = _PAYMENT_RULES.insert_many_impl(conn, contract_id, rules or [])
     for plan in plans or []:
-        _insert_payment_plan_impl(conn, contract_id, plan)
+        stored_plan = dict(plan)
+        fingerprint = str(stored_plan.get('rule_fingerprint') or '')
+        if fingerprint and rule_ids.get(fingerprint):
+            stored_plan['payment_rule_id'] = rule_ids[fingerprint]
+        _insert_payment_plan_impl(conn, contract_id, stored_plan)
     return contract_id, len(plans or [])
 
 
-def create_contract_with_plans(summary, field_values, docx_path, plans, conn=None):
+def create_contract_with_plans(
+    summary, field_values, docx_path, plans, conn=None, *, rules=None
+):
     """在单个事务中创建合同并批量插入付款计划，保证原子性。
 
     返回 (contract_id, plan_count)。
@@ -514,11 +538,11 @@ def create_contract_with_plans(summary, field_values, docx_path, plans, conn=Non
     try:
         if conn is not None:
             return _create_contract_with_plans_impl(
-                conn, summary, field_values, docx_path, plans
+                conn, summary, field_values, docx_path, plans, rules
             )
         with get_conn() as managed_conn:
             return _create_contract_with_plans_impl(
-                managed_conn, summary, field_values, docx_path, plans
+                managed_conn, summary, field_values, docx_path, plans, rules
             )
     except sqlite3.IntegrityError as e:
         if 'contract_no' in str(e).lower() or 'idx_contracts_contract_no_unique' in str(e).lower():
@@ -658,67 +682,58 @@ def get_project_progress_stats():
     return project_reports.get_project_progress_stats(get_conn, row_to_dict)
 
 
-def insert_payment_plan(contract_id, plan):
-    """插入单条付款计划（公开接口，使用独立事务）"""
-    return _PAYMENT_PLANS.insert(contract_id, plan)
+insert_payment_plan = _PAYMENT_PLANS.insert
+insert_payment_plans = _PAYMENT_PLANS.insert_many
+_insert_payment_plan_impl = _PAYMENT_PLANS.insert_impl
+_normalize_payment_consistency = _PAYMENT_PLANS.normalize_consistency
+_append_plan_assignment = _PAYMENT_PLANS.append_assignment
+save_payment_plan_changes = _PAYMENT_PLANS.save_changes
+list_payment_plans = _PAYMENT_PLANS.list
+get_payment_plan = _PAYMENT_PLANS.get
+update_payment_plan = _PAYMENT_PLANS.update
+batch_confirm_plans = _PAYMENT_PLANS.batch_confirm
+batch_mark_plans_paid = _PAYMENT_PLANS.batch_mark_paid
+delete_payment_plan = _PAYMENT_PLANS.delete
+
+insert_payment_rules = _PAYMENT_RULES.insert_many
+list_payment_rules = _PAYMENT_RULES.list
+get_payment_rule = _PAYMENT_RULES.get
+set_payment_rule_confirm_status = _PAYMENT_RULES.set_confirm_status
+update_payment_rule_manual = _PAYMENT_RULES.update_manual
 
 
-def insert_payment_plans(contract_id, plans):
-    """批量插入付款计划 —— 在单个事务内完成，保证原子性。"""
-    return _PAYMENT_PLANS.insert_many(contract_id, plans)
+create_payment_rule_event_instance = _PAYMENT_RULES.create_event_instance
 
 
-def _insert_payment_plan_impl(conn, contract_id, plan):
-    """在已有连接中插入单条付款计划（由 insert_payment_plans 调用）"""
-    return _PAYMENT_PLANS.insert_impl(conn, contract_id, plan)
+list_payment_trigger_events = _PAYMENT_RULES.list_events
+list_contract_items = _CONTRACT_ITEMS.list
+get_contract_item = _CONTRACT_ITEMS.get
+save_contract_items = _CONTRACT_ITEMS.save
+list_contract_item_history = _CONTRACT_ITEMS.history
 
 
-def _normalize_payment_consistency(plan):
-    """校验金额/日期关系，并由金额统一推导付款状态。"""
-    return _PAYMENT_PLANS.normalize_consistency(plan)
-
-
-def _append_plan_assignment(assignments, values, key, row):
-    _PAYMENT_PLANS.append_assignment(assignments, values, key, row)
-
-
-def save_payment_plan_changes(contract_id, changes):
-    """在一个事务中保存付款计划的新增、修改和删除。"""
-    return _PAYMENT_PLANS.save_changes(contract_id, changes)
-
-
-def list_payment_plans(contract_id=None, confirm_status='', payment_status='',
-                       start_date='', end_date='', project_name='', page=0,
-                       per_page=20, limit=0):
-    return _PAYMENT_PLANS.list(
-        contract_id=contract_id, confirm_status=confirm_status,
-        payment_status=payment_status,
-        start_date=start_date, end_date=end_date, project_name=project_name,
-        page=page, per_page=per_page, limit=limit,
+def sync_contract_items_from_procurement(contract_id, *, conn=None, strict=True):
+    return _CONTRACT_ITEMS.sync_from_procurement(
+        contract_id, connection=conn, strict=strict
     )
 
 
-def get_payment_plan(plan_id):
-    """Return a payment plan with basic contract context."""
-    return _PAYMENT_PLANS.get(plan_id)
+list_production_notices = _PRODUCTION_NOTICES.list
+get_production_notice = _PRODUCTION_NOTICES.get
+create_production_notice = _PRODUCTION_NOTICES.create
+save_production_notice_draft = _PRODUCTION_NOTICES.save_draft
+issue_production_notice = _PRODUCTION_NOTICES.issue
+acknowledge_production_notice = _PRODUCTION_NOTICES.acknowledge
+close_production_notice = _PRODUCTION_NOTICES.close
+cancel_production_notice = _PRODUCTION_NOTICES.cancel
+revise_production_notice = _PRODUCTION_NOTICES.revise
 
-
-def update_payment_plan(plan_id, data, contract_id=None):
-    return _PAYMENT_PLANS.update(plan_id, data, contract_id=contract_id)
-
-
-def batch_confirm_plans(plan_ids, contract_id=None):
-    """在单个事务中批量确认付款计划，保证原子性。"""
-    return _PAYMENT_PLANS.batch_confirm(plan_ids, contract_id=contract_id)
-
-
-def batch_mark_plans_paid(plan_ids, paid_date):
-    """Mark confirmed unpaid plans as fully paid in one transaction."""
-    return _PAYMENT_PLANS.batch_mark_paid(plan_ids, paid_date)
-
-
-def delete_payment_plan(plan_id, contract_id=None):
-    return _PAYMENT_PLANS.delete(plan_id, contract_id=contract_id)
+list_invoices = _INVOICES.list
+get_invoice = _INVOICES.get
+save_invoice = _INVOICES.save
+add_invoice_file = _INVOICES.add_file
+get_invoice_file = _INVOICES.get_file
+delete_invoice_file = _INVOICES.delete_file
 
 
 def next_month_payment_plans(start_date, end_date):

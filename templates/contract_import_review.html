@@ -82,6 +82,51 @@
     <div class="card bg-base-100 shadow-sm mb-5">
         <div class="card-body">
             <div>
+                <h2 class="card-title text-base">合同付款规则（{{ rules|length }} 条）</h2>
+                <p class="text-xs text-base-content/50 mt-1">规则描述合同约定；“每次投产通知”等重复规则不会直接进入近期付款列表。</p>
+            </div>
+            <input type="hidden" name="rule_count" value="{{ rules|length }}">
+            <div class="overflow-x-auto border border-base-200 rounded-lg">
+                <table class="table table-sm">
+                    <thead><tr><th>保存</th><th>状态</th><th>款项</th><th>适用范围</th><th>触发条件</th><th>计算基数</th><th>比例%</th><th>原文依据</th></tr></thead>
+                    <tbody>
+                    {% for rule in rules %}
+                    {% set i = loop.index0 %}
+                    <tr>
+                        <td><input type="checkbox" name="rule_{{ i }}_include" value="1" {% if rule.get('_include', true) %}checked{% endif %} class="checkbox checkbox-sm"></td>
+                        <td>
+                            {% set ps = rule.parse_status or 'manual' %}
+                            <span class="badge badge-sm {{ 'badge-success' if ps == 'exact' else 'badge-error' if ps == 'conflict' else 'badge-warning' if ps in ('partial','unsupported') else 'badge-ghost' }}">
+                                {{ payment_parse_status_labels.get(ps, ps) }}
+                            </span>
+                        </td>
+                        <td>{{ rule.phase_name or '付款规则' }}{% if rule.repeat_mode == 'each_event' %}<span class="badge badge-info badge-xs ml-1">重复触发</span>{% endif %}</td>
+                        <td>{{ '每次投产通知' if rule.scope == 'production_notice' else '每批到货' if rule.scope == 'delivery_batch' else '合同范围' }}</td>
+                        <td>{{ rule.trigger_event or '未明确' }}</td>
+                        <td>{{ payment_amount_basis_labels.get(rule.amount_basis, rule.amount_basis_text or '未明确') }}</td>
+                        <td>{{ rule.ratio if rule.ratio is not none else '-' }}</td>
+                        <td class="min-w-64">
+                            <div class="text-xs">{{ rule.source_text }}</div>
+                            {% for code in rule.get('reason_codes', []) %}<div class="text-warning text-xs">{{ payment_reason_labels.get(code, code) }}</div>{% endfor %}
+                        </td>
+                    </tr>
+                    <tr hidden><td colspan="8">
+                        {% for key in ['group_key','phase_name','rule_type','scope','trigger_event_type','trigger_event','trigger_days','due_date','conditions_json','condition_logic','amount_basis','amount_basis_text','ratio','explicit_amount','calculated_amount','repeat_mode','source_text','source_block','rule_fingerprint','source_fingerprint','extractor_version','rule_version','parse_status','reason_codes_json','confirm_status'] %}
+                        <input type="hidden" name="rule_{{ i }}_{{ key }}" value="{{ rule.get(key, '') if rule.get(key) is not none else '' }}">
+                        {% endfor %}
+                    </td></tr>
+                    {% else %}
+                    <tr><td colspan="8" class="text-center text-base-content/40 py-6">未识别到付款规则</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm mb-5">
+        <div class="card-body">
+            <div>
                 <h2 class="card-title text-base">付款计划（{{ plans|length }} 条）</h2>
                 <p class="text-xs text-base-content/50 mt-1">取消勾选可排除误识别条目；导入后请在合同详情中再次确认。</p>
             </div>
@@ -104,6 +149,13 @@
                             <input type="hidden" name="plan_{{ i }}_payment_status" value="unpaid">
                             <input type="hidden" name="plan_{{ i }}_paid_amount" value="0">
                             <input type="hidden" name="plan_{{ i }}_paid_date" value="">
+                            <input type="hidden" name="plan_{{ i }}_amount_basis" value="{{ plan.amount_basis or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_explicit_amount" value="{{ plan.explicit_amount if plan.explicit_amount is not none else '' }}">
+                            <input type="hidden" name="plan_{{ i }}_calculated_amount" value="{{ plan.calculated_amount if plan.calculated_amount is not none else '' }}">
+                            <input type="hidden" name="plan_{{ i }}_parse_status" value="{{ plan.parse_status or 'manual' }}">
+                            <input type="hidden" name="plan_{{ i }}_reason_codes_json" value="{{ plan.reason_codes_json or '[]' }}">
+                            <input type="hidden" name="plan_{{ i }}_rule_fingerprint" value="{{ plan.rule_fingerprint or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_extractor_version" value="{{ plan.extractor_version or '' }}">
                         </td>
                         <td><select name="plan_{{ i }}_payment_type" class="select select-bordered select-xs"><option value="conditional" {% if plan.payment_type == 'conditional' %}selected{% endif %}>条件</option><option value="fixed_date" {% if plan.payment_type == 'fixed_date' %}selected{% endif %}>固定日期</option></select></td>
                         <td><input name="plan_{{ i }}_trigger_event" value="{{ plan.trigger_event or '' }}" class="input input-bordered input-xs w-24"></td>

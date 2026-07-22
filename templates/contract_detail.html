@@ -30,6 +30,9 @@
     <div class="flex gap-2">
         <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-sm">返回台账</a>
         <a href="{{ url_for('payment_plan_list') }}" class="btn btn-ghost btn-sm">付款计划</a>
+        <a href="{{ url_for('contract_items_page', contract_id=contract.id) }}" class="btn btn-ghost btn-sm">产品基线</a>
+        {% if contract_items %}<a href="{{ url_for('production_notice_new', contract_id=contract.id) }}" class="btn btn-ghost btn-sm">发投产通知</a>{% endif %}
+        <a href="{{ url_for('invoice_new', contract_id=contract.id) }}" class="btn btn-ghost btn-sm">登记发票</a>
         {% if contract.docx_path %}
         <a href="{{ url_for('contract_download', contract_id=contract.id) }}" class="btn btn-primary btn-sm gap-1">
             <i data-lucide="download" class="w-4 h-4"></i> 下载合同
@@ -158,17 +161,143 @@
     </div>
 </div>
 
-<!-- Payment Plans -->
+<!-- Production and invoice execution -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <a href="{{ url_for('contract_items_page', contract_id=contract.id) }}" class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow">
+        <div class="card-body p-5"><div class="flex items-center justify-between"><h3 class="font-semibold">合同产品基线</h3><span class="badge badge-ghost">{{ contract_items|length }} 项</span></div><p class="text-xs text-base-content/50">维护合同数量、累计已发与剩余数量</p></div>
+    </a>
+    <a href="{{ url_for('production_notice_list', contract_id=contract.id) }}" class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow">
+        <div class="card-body p-5"><div class="flex items-center justify-between"><h3 class="font-semibold">投产通知</h3><span class="badge badge-ghost">{{ production_notices|length }} 份</span></div><p class="text-xs text-base-content/50">发出后锁定，并自动触发匹配的动态付款规则</p></div>
+    </a>
+    <a href="{{ url_for('invoice_new', contract_id=contract.id) }}" class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow">
+        <div class="card-body p-5"><div class="flex items-center justify-between"><h3 class="font-semibold">进项发票</h3><span class="badge badge-ghost">{{ invoices|length }} 张</span></div><p class="text-xs text-base-content/50">维护附件、核验状态及合同/通知/付款分摊</p></div>
+    </a>
+</div>
+
+<!-- Contractual Payment Rules -->
+<div class="card bg-base-100 shadow-sm mb-6">
+    <div class="card-body">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <h3 class="card-title text-base">合同付款规则</h3>
+                <p class="text-xs text-base-content/50 mt-1">规则描述合同约定；重复规则需要绑定投产通知等业务事件后才生成实际付款计划。</p>
+            </div>
+            <span class="badge badge-ghost">{{ payment_rules|length }} 条</span>
+        </div>
+        <div class="overflow-x-auto border border-base-200 rounded-lg">
+            <table class="table table-sm">
+                <thead><tr><th>款项</th><th>解析状态</th><th>范围</th><th>触发条件</th><th>计算基数</th><th>比例%</th><th>原文与提示</th><th>操作</th></tr></thead>
+                <tbody>
+                {% for rule in payment_rules %}
+                {% set ps = rule.parse_status or 'manual' %}
+                <tr>
+                    <td>
+                        <div class="font-medium">{{ rule.phase_name or '付款规则' }}</div>
+                        {% if rule.repeat_mode == 'each_event' %}<span class="badge badge-info badge-xs">重复触发</span>{% else %}<span class="badge badge-ghost badge-xs">一次性</span>{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge badge-sm {{ 'badge-success' if ps == 'exact' else 'badge-error' if ps == 'conflict' else 'badge-warning' if ps in ('partial','unsupported') else 'badge-ghost' }}">{{ payment_parse_status_labels.get(ps, ps) }}</span>
+                        <div class="text-xs mt-1">{{ confirm_status_labels.get(rule.confirm_status, rule.confirm_status) }}</div>
+                    </td>
+                    <td>{{ '每次投产通知' if rule.scope == 'production_notice' else '每批到货' if rule.scope == 'delivery_batch' else '结算周期' if rule.scope == 'settlement_period' else '合同范围' }}</td>
+                    <td>{{ rule.trigger_event or '未明确' }}{% if rule.condition_logic in ('AND','OR') %}<span class="badge badge-xs ml-1">{{ rule.condition_logic }}</span>{% endif %}</td>
+                    <td>
+                        {{ payment_amount_basis_labels.get(rule.amount_basis, rule.amount_basis_text or '未明确') }}
+                        {% if rule.explicit_amount is not none %}<div class="text-xs">明确金额：{{ '%.2f'|format(rule.explicit_amount) }}</div>{% endif %}
+                        {% if rule.calculated_amount is not none %}<div class="text-xs">计算金额：{{ '%.2f'|format(rule.calculated_amount) }}</div>{% endif %}
+                    </td>
+                    <td>{{ rule.ratio if rule.ratio is not none else '-' }}</td>
+                    <td class="min-w-64 max-w-md">
+                        <div class="text-xs whitespace-normal">{{ rule.source_text }}</div>
+                        {% for code in rule.reason_codes %}<div class="text-warning text-xs mt-1">{{ payment_reason_labels.get(code, code) }}</div>{% endfor %}
+                        <div class="text-base-content/40 text-xs mt-1">{{ rule.source_block }} · {{ rule.extractor_version or '人工规则' }}</div>
+                    </td>
+                    <td class="min-w-64">
+                        <div class="flex gap-1 mb-2">
+                            {% if rule.confirm_status != 'confirmed' and ps not in ('conflict','unsupported') %}
+                            <form method="post" action="{{ url_for('payment_rule_status', contract_id=contract.id, rule_id=rule.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="confirmed">
+                                <button class="btn btn-primary btn-xs">确认规则</button>
+                            </form>
+                            {% endif %}
+                            {% if rule.confirm_status != 'void' %}
+                            <form method="post" action="{{ url_for('payment_rule_status', contract_id=contract.id, rule_id=rule.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="void">
+                                <button class="btn btn-ghost btn-xs">作废</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                        <details class="mb-2">
+                            <summary class="text-xs link cursor-pointer">人工修正规则</summary>
+                            <form method="post" action="{{ url_for('payment_rule_edit', contract_id=contract.id, rule_id=rule.id) }}" class="grid grid-cols-2 gap-1 mt-2">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input name="phase_name" value="{{ rule.phase_name or '' }}" placeholder="款项名称" class="input input-bordered input-xs col-span-2">
+                                <select name="scope" class="select select-bordered select-xs">
+                                    {% for value, label in [('contract','合同范围'),('production_notice','每次投产通知'),('delivery_batch','每批到货'),('settlement_period','结算周期'),('other','其他')] %}
+                                    <option value="{{ value }}" {% if rule.scope == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <select name="repeat_mode" class="select select-bordered select-xs">
+                                    <option value="once" {% if rule.repeat_mode == 'once' %}selected{% endif %}>一次性</option>
+                                    <option value="each_event" {% if rule.repeat_mode == 'each_event' %}selected{% endif %}>每次事件</option>
+                                </select>
+                                <input type="hidden" name="trigger_event_type" value="{{ rule.trigger_event_type or 'other' }}">
+                                <input name="trigger_event" value="{{ rule.trigger_event or '' }}" placeholder="触发条件" class="input input-bordered input-xs col-span-2">
+                                <input name="trigger_days" value="{{ rule.trigger_days if rule.trigger_days is not none else '' }}" placeholder="后置天数" class="input input-bordered input-xs">
+                                <input name="ratio" value="{{ rule.ratio if rule.ratio is not none else '' }}" placeholder="比例%" class="input input-bordered input-xs">
+                                <select name="amount_basis" class="select select-bordered select-xs col-span-2">
+                                    {% for value, label in payment_amount_basis_labels.items() %}
+                                    <option value="{{ value }}" {% if rule.amount_basis == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <input name="amount_basis_text" value="{{ rule.amount_basis_text or '' }}" placeholder="合同中的基数原文" class="input input-bordered input-xs col-span-2">
+                                <input name="explicit_amount" value="{{ rule.explicit_amount if rule.explicit_amount is not none else '' }}" placeholder="合同明确金额" class="input input-bordered input-xs">
+                                <input name="calculated_amount" value="{{ rule.calculated_amount if rule.calculated_amount is not none else '' }}" placeholder="比例计算金额" class="input input-bordered input-xs">
+                                <button class="btn btn-ghost btn-xs col-span-2">保存人工修正</button>
+                            </form>
+                        </details>
+                        {% if rule.repeat_mode == 'each_event' and rule.confirm_status == 'confirmed' and ps not in ('conflict','unsupported') %}
+                        <form method="post" action="{{ url_for('payment_rule_trigger', contract_id=contract.id, rule_id=rule.id) }}" class="grid grid-cols-2 gap-1">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input name="reference_no" required placeholder="通知/批次编号" class="input input-bordered input-xs col-span-2">
+                            <input name="reference_name" placeholder="事件名称" class="input input-bordered input-xs col-span-2">
+                            <input name="event_date" placeholder="YYYY-MM-DD" class="input input-bordered input-xs">
+                            <input name="base_amount" required placeholder="本次基数金额" class="input input-bordered input-xs">
+                            <button class="btn btn-primary btn-xs col-span-2">生成付款实例</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="text-center text-base-content/40 py-6">暂无合同付款规则</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if payment_events %}
+        <div class="mt-4">
+            <h4 class="font-medium text-sm mb-2">已登记业务事件</h4>
+            <div class="flex flex-wrap gap-2">
+                {% for event in payment_events %}
+                <span class="badge badge-ghost">{{ event.reference_no }} · {{ event.event_date or '日期待补充' }} · {{ '%.2f'|format(event.base_amount) if event.base_amount is not none else '金额待补充' }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Payment Plan Instances -->
 <div class="card bg-base-100 shadow-sm">
     <div class="card-body">
         <div class="flex items-center justify-between mb-4">
             <div>
-                <h3 class="card-title text-base">付款计划识别与确认</h3>
-                <p class="text-xs text-base-content/50 mt-1">自动抓取结果默认"待确认"。已确认且未付清的记录会出现在下月导出中。</p>
+                <h3 class="card-title text-base">实际付款计划</h3>
+                <p class="text-xs text-base-content/50 mt-1">这里只显示已形成具体付款义务的实例；已确认且未付清的记录会进入付款工作台。</p>
             </div>
             <form method="post" action="{{ url_for('payment_plans_confirm_all', contract_id=contract.id) }}" class="contents">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-ghost btn-sm" title="仅批量确认有金额且有日期或触发条件、置信度不是低的记录">确认完整项</button>
+                <button type="submit" class="btn btn-ghost btn-sm" title="仅确认有金额、有效触发条件且不存在解析冲突的记录">确认完整项</button>
             </form>
         </div>
 
@@ -216,11 +345,19 @@
                                 <input name="plan_{{ i }}_phase_name" value="{{ p.phase_name or '' }}" class="input input-bordered input-xs w-full">
                                 <input type="hidden" name="plan_{{ i }}_confidence" value="{{ p.confidence or 'low' }}">
                                 <input type="hidden" name="plan_{{ i }}_expected_trigger_date" value="{{ p.expected_trigger_date or '' }}">
+                                <input type="hidden" name="plan_{{ i }}_amount_basis" value="{{ p.amount_basis or '' }}">
+                                <input type="hidden" name="plan_{{ i }}_explicit_amount" value="{{ p.explicit_amount if p.explicit_amount is not none else '' }}">
+                                <input type="hidden" name="plan_{{ i }}_calculated_amount" value="{{ p.calculated_amount if p.calculated_amount is not none else '' }}">
+                                <input type="hidden" name="plan_{{ i }}_parse_status" value="{{ p.parse_status or 'manual' }}">
+                                <input type="hidden" name="plan_{{ i }}_reason_codes_json" value="{{ p.reason_codes_json or '[]' }}">
+                                <input type="hidden" name="plan_{{ i }}_rule_fingerprint" value="{{ p.rule_fingerprint or '' }}">
+                                <input type="hidden" name="plan_{{ i }}_extractor_version" value="{{ p.extractor_version or '' }}">
                                 <span class="confidence-badge badge badge-xs mt-1
-                                    {% if p.confidence == 'high' %}badge-success
-                                    {% elif p.confidence == 'medium' %}badge-warning
+                                    {% if p.parse_status == 'exact' %}badge-success
+                                    {% elif p.parse_status == 'conflict' %}badge-error
+                                    {% elif p.parse_status in ('partial','unsupported') %}badge-warning
                                     {% else %}badge-ghost{% endif %}">
-                                    {{ confidence_labels.get(p.confidence, p.confidence or '低') }}
+                                    {{ payment_parse_status_labels.get(p.parse_status or 'manual', p.parse_status or '人工录入') }}
                                 </span>
                             </td>
                             <td>

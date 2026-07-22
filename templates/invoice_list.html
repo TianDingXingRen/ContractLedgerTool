@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}进项发票台账{% endblock %}
+{% block breadcrumb %}发票管理{% endblock %}
+{% block content %}
+{% set review_labels = {'pending':'待核验','verified':'已核验','exception':'异常'} %}
+{% set status_labels = {'valid':'有效','red':'红字','void':'作废'} %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-5">
+  <div><h1 class="text-2xl font-semibold">进项发票台账</h1><p class="text-sm text-gray-500 mt-1">维护发票原件、合同分摊、投产通知和付款计划关联</p></div>
+  <div class="flex gap-2"><form method="get" class="flex gap-2"><select class="select select-bordered select-sm" name="review_status"><option value="">全部核验状态</option>{% for value,label in review_labels.items() %}<option value="{{ value }}" {{ 'selected' if review_status == value }}>{{ label }}</option>{% endfor %}</select><select class="select select-bordered select-sm" name="invoice_status"><option value="">全部票据状态</option>{% for value,label in status_labels.items() %}<option value="{{ value }}" {{ 'selected' if invoice_status == value }}>{{ label }}</option>{% endfor %}</select><button class="apple-btn apple-btn-ghost" type="submit">筛选</button></form><a class="apple-btn apple-btn-primary" href="{{ url_for('invoice_new') }}">登记发票</a></div>
+</div>
+<div class="apple-card overflow-x-auto"><table class="apple-table min-w-full"><thead><tr><th>发票号码</th><th>销方</th><th>开票日期</th><th>价税合计</th><th>已分摊</th><th>待分摊</th><th>核验</th><th>票据状态</th><th>附件</th></tr></thead><tbody>
+{% for invoice in invoices %}<tr><td><a class="text-blue-600 font-medium" href="{{ url_for('invoice_detail', invoice_id=invoice.id) }}">{{ invoice.invoice_no }}</a><div class="text-xs text-gray-400">{{ invoice.invoice_code }}</div></td><td>{{ invoice.seller_name or '—' }}</td><td>{{ invoice.issue_date or '—' }}</td><td>¥{{ '%.2f'|format(invoice.total_amount) }}</td><td>¥{{ '%.2f'|format(invoice.allocated_amount) }}</td><td class="{{ 'text-amber-600' if invoice.unallocated_amount > 0 else 'text-green-600' }}">¥{{ '%.2f'|format(invoice.unallocated_amount) }}</td><td>{{ review_labels.get(invoice.review_status, invoice.review_status) }}</td><td>{{ '已红冲' if invoice.has_red_offset else status_labels.get(invoice.invoice_status, invoice.invoice_status) }}</td><td>{{ invoice.file_count }}</td></tr>{% else %}<tr><td colspan="9" class="text-center text-gray-400 py-10">暂无发票记录</td></tr>{% endfor %}
+</tbody></table></div>
+{% if pages > 1 %}<div class="flex justify-between items-center mt-4 text-sm"><span>共 {{ total }} 张</span><div class="flex gap-2">{% if page > 1 %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('invoice_list', review_status=review_status, invoice_status=invoice_status, page=page-1) }}">上一页</a>{% endif %}<span class="px-3 py-2">{{ page }} / {{ pages }}</span>{% if page < pages %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('invoice_list', review_status=review_status, invoice_status=invoice_status, page=page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
+{% endblock %}

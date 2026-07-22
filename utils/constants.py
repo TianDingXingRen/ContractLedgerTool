@@ -71,6 +71,38 @@ CONFIDENCE_LABELS = {
     ConfidenceLevel.LOW.value: '低',
 }
 
+PAYMENT_PARSE_STATUS_LABELS = {
+    'exact': '完整匹配',
+    'partial': '需要补充',
+    'conflict': '存在冲突',
+    'unsupported': '暂不支持',
+    'manual': '人工录入',
+}
+
+PAYMENT_REASON_LABELS = {
+    'AMOUNT_MISSING': '未识别到付款金额或比例',
+    'TRIGGER_MISSING': '未识别到付款触发条件',
+    'AMOUNT_BASIS_MISSING': '付款金额计算基数不明确',
+    'AMOUNT_BASIS_INFERRED': '计算基数根据合同上下文推定',
+    'EXPLICIT_AMOUNT_MISMATCH': '合同明确金额与比例计算金额不一致',
+    'MULTIPLE_CONDITIONS_AMBIGUOUS': '存在多个触发条件，关系不明确',
+    'CONDITION_LOGIC_AMBIGUOUS': '多个触发条件之间的逻辑关系不明确',
+    'NODE_BOUNDARY_AMBIGUOUS': '同一节点包含多个比例，节点边界需要核对',
+    'RATIO_SUM_EXCEEDS_100': '同一规则组的付款比例合计超过100%',
+}
+
+PAYMENT_AMOUNT_BASIS_LABELS = {
+    'unknown': '计算基数未明确',
+    'contract_total_tax_inclusive': '合同总价（含税）',
+    'contract_total_tax_exclusive': '合同总价（不含税）',
+    'production_notice_total': '本次投产通知产品总价',
+    'batch_delivery_total': '本批次产品总价',
+    'accepted_product_total': '验收合格产品总价',
+    'settlement_amount': '当期结算金额',
+    'invoice_amount': '发票金额',
+    'remaining_contract_amount': '合同剩余金额',
+}
+
 
 # ── 采购流程标签与阶段配置 ──
 

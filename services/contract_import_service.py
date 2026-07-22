@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,7 @@ class ContractImportPreview:
     summary: dict[str, Any]
     diagnostics: list[dict[str, Any]]
     plans: list[dict[str, Any]]
+    rules: list[dict[str, Any]]
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +70,7 @@ class ContractImportRequest:
     source_sha256: str
     summary: dict[str, Any]
     plans: list[dict[str, Any]]
+    rules: list[dict[str, Any]] = dataclass_field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class ContractImportResult:
     contract_id: int
     output_path: str
     plan_count: int
+    rule_count: int = 0
 
 
 class ContractImportService:
@@ -133,6 +136,7 @@ class ContractImportService:
         candidates = {field: [] for field in _FIELD_LABELS}
         paragraphs = []
         tables = []
+        payment_blocks = []
         warnings = []
         try:
             document_paragraphs = document.paragraphs
@@ -145,6 +149,9 @@ class ContractImportService:
                 if not text:
                     continue
                 paragraphs.append(text)
+                payment_blocks.append({
+                    'kind': 'paragraph', 'index': index + 1, 'text': text,
+                })
                 if index < 25 and '合同' in text and len(text) <= 100:
                     style_name = str(getattr(paragraph.style, 'name', '') or '').lower()
                     centered = paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
@@ -173,6 +180,13 @@ class ContractImportService:
                     if not any(cells):
                         continue
                     table_rows.append(' | '.join(value for value in cells if value))
+                    payment_blocks.append({
+                        'kind': 'table_row',
+                        'table_index': table_index,
+                        'row_index': row_index,
+                        'cells': cells,
+                        'text': ' | '.join(cells),
+                    })
                     for cell_index, cell in enumerate(cells):
                         normalized = cell.strip(' ：:')
                         for field, labels in _FIELD_LABELS.items():
@@ -199,7 +213,7 @@ class ContractImportService:
                     break
         finally:
             del document
-        return paragraphs, tables, candidates, warnings
+        return paragraphs, tables, candidates, warnings, payment_blocks
 
     def _line_candidates(self, candidates, text, score):
         for field, labels in _FIELD_LABELS.items():
@@ -247,7 +261,9 @@ class ContractImportService:
             error.contract_id = duplicate['id']
             raise error
 
-        paragraphs, table_lines, candidates, warnings = self._extract_document(source)
+        (
+            paragraphs, table_lines, candidates, warnings, payment_blocks
+        ) = self._extract_document(source)
         diagnostics = []
         selected = {}
         for field in _FIELD_LABELS:
@@ -286,14 +302,13 @@ class ContractImportService:
             'coverage_start': None,
             'coverage_end': None,
         }
-        document_text = '\n'.join(paragraphs + table_lines)
-        plans = payment_extractor.extract_payment_plans(
-            document_text,
+        extraction = payment_extractor.extract_payment_items(
+            payment_blocks,
             contract_amount=amount,
             sign_date=sign_date,
         )
         normalized_plans = []
-        for plan in plans:
+        for plan in extraction.plans:
             normalized_plans.append({
                 **plan,
                 'confirm_status': 'pending',
@@ -301,6 +316,8 @@ class ContractImportService:
                 'paid_amount': 0,
                 'paid_date': '',
             })
+        warnings.extend(extraction.warnings)
+        document_text = '\n'.join(paragraphs + table_lines)
         if not document_text:
             warnings.append('合同中没有可识别的正文或表格，请人工填写台账信息')
         return ContractImportPreview(
@@ -309,6 +326,7 @@ class ContractImportService:
             summary=summary,
             diagnostics=diagnostics,
             plans=normalized_plans,
+            rules=extraction.rules,
             warnings=warnings,
         )
 
@@ -347,6 +365,8 @@ class ContractImportService:
             raise ValueError('合同状态无效')
         if len(request.plans or []) > 30:
             raise ValueError('导入时付款计划不能超过 30 条')
+        if len(request.rules or []) > 60:
+            raise ValueError('导入时付款规则不能超过 60 条')
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         output_path = self.output_dir / f'imported_{uuid.uuid4().hex}.docx'
@@ -370,6 +390,7 @@ class ContractImportService:
             with self.ledger_store.get_conn() as conn:
                 contract_id, plan_count = self.ledger_store.create_contract_with_plans(
                     summary, {}, str(output_path), request.plans, conn=conn,
+                    rules=request.rules,
                 )
                 self.replace_file(str(staging), str(output_path))
                 file_moved = True
@@ -380,7 +401,9 @@ class ContractImportService:
                     conn=conn,
                 )
             committed = True
-            result = ContractImportResult(contract_id, str(output_path), plan_count)
+            result = ContractImportResult(
+                contract_id, str(output_path), plan_count, len(request.rules or [])
+            )
         except Exception as exc:
             if file_moved and not committed and output_path.exists():
                 try:

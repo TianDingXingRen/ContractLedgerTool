@@ -30,11 +30,8 @@ from services.handover_archive import (
 )
 from utils import helpers
 from utils.labels import (
-    CONTRACT_STATUS_LABELS,
-    CONFIRM_STATUS_LABELS,
-    PAYMENT_STATUS_LABELS,
-    PROCUREMENT_METHOD_LABELS,
-    PROCUREMENT_STATUS_LABELS,
+    CONTRACT_STATUS_LABELS, CONFIRM_STATUS_LABELS, PAYMENT_STATUS_LABELS,
+    PROCUREMENT_METHOD_LABELS, PROCUREMENT_STATUS_LABELS,
 )
 from utils.logger import get_logger
 from utils.security import path_within
@@ -63,8 +60,8 @@ def _package_dir():
     return path
 
 
-def _excel_defaults_dir():
-    return os.path.abspath(os.path.join(ledger_store.DATA_DIR, 'excel_bill_defaults'))
+def _data_subdir(name):
+    return os.path.abspath(os.path.join(ledger_store.DATA_DIR, name))
 
 
 def _restore_targets():
@@ -79,7 +76,11 @@ def _restore_targets():
         },
         'data/excel_bill_defaults': {
             'kind': 'dir',
-            'path': _excel_defaults_dir(),
+            'path': _data_subdir('excel_bill_defaults'),
+        },
+        'data/invoice_files': {
+            'kind': 'dir',
+            'path': _data_subdir('invoice_files'),
         },
         'uploads': {
             'kind': 'dir',
@@ -127,7 +128,8 @@ def create_full_backup_package(label='handover'):
                 'kind': 'file',
                 'present': _add_file(zf, temp_db, 'data/contracts.db', records),
             })
-            roots.append(_add_directory(zf, _excel_defaults_dir(), 'data/excel_bill_defaults', records))
+            roots.append(_add_directory(zf, _data_subdir('excel_bill_defaults'), 'data/excel_bill_defaults', records))
+            roots.append(_add_directory(zf, _data_subdir('invoice_files'), 'data/invoice_files', records))
             roots.append(_add_directory(zf, _dir_or_default(helpers.UPLOAD_FOLDER, 'uploads'), 'uploads', records))
             roots.append(_add_directory(zf, template_def.TEMPLATES_DIR, 'templates', records))
             roots.append(_add_directory(zf, _dir_or_default(helpers.OUTPUT_FOLDER, 'output'), 'output', records))

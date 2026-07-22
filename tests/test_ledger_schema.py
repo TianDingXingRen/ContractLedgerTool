@@ -46,6 +46,8 @@ def test_init_db_uses_extracted_schema(tmp_path):
         assert {
             'contracts',
             'payment_plans',
+            'payment_rules',
+            'payment_trigger_events',
             'contract_history',
             'contract_generation_jobs',
             'schema_version',

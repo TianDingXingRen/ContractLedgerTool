@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}合同产品基线 - {{ contract.contract_no or contract.title }}{% endblock %}
+{% block breadcrumb %}合同产品基线{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <div>
+    <a class="text-sm text-blue-600" href="{{ url_for('contract_detail', contract_id=contract.id) }}">← 返回合同详情</a>
+    <h1 class="text-2xl font-semibold mt-2">合同产品基线</h1>
+    <p class="text-sm text-gray-500 mt-1">{{ contract.contract_no or '未编号' }} · {{ contract.title }}</p>
+  </div>
+  <div class="flex gap-2">
+    <form method="post" action="{{ url_for('contract_items_sync_procurement', contract_id=contract.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="apple-btn apple-btn-ghost" type="submit">从定标结果同步</button>
+    </form>
+    {% if items %}<a class="apple-btn apple-btn-primary" href="{{ url_for('production_notice_new', contract_id=contract.id) }}">新建投产通知</a>{% endif %}
+  </div>
+</div>
+
+{% if error %}<div class="alert-warning mb-4">{{ error }}</div>{% endif %}
+{% if message %}<div class="alert-success mb-4">{{ message }}</div>{% endif %}
+
+<div class="apple-card mb-4 p-4 text-sm text-gray-600">
+  正式投产通知只允许引用这里的产品。累计已发数量仅统计“已发出、已确认、已关闭”，草稿和已取消通知不占用数量。
+</div>
+
+<form method="post" id="contract-items-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="item_count" id="item-count" value="{{ items|length + 3 }}">
+  <div class="apple-card overflow-x-auto">
+    <table class="apple-table min-w-full" id="contract-items-table">
+      <thead><tr>
+        <th>行号</th><th>产品名称 *</th><th>规格型号</th><th>图号</th>
+        <th>合同数量 *</th><th>单位</th><th>合同起始号</th><th>合同结束号</th><th>含税单价</th><th>金额</th>
+        <th>累计已发</th><th>剩余</th><th>操作</th>
+      </tr></thead>
+      <tbody id="item-rows">
+      {% set row_count = items|length + 3 %}
+      {% for index in range(row_count) %}
+        {% set item = items[index] if index < items|length else none %}
+        <tr data-item-row>
+          <td><input type="hidden" name="item_{{ index }}_id" value="{{ item.id if item else '' }}"><input class="input input-bordered input-sm w-16" name="item_{{ index }}_line_no" value="{{ item.line_no if item else index + 1 }}"></td>
+          <td><input class="input input-bordered input-sm min-w-40" name="item_{{ index }}_item_name" value="{{ item.item_name if item else '' }}"></td>
+          <td><input class="input input-bordered input-sm min-w-32" name="item_{{ index }}_spec_model" value="{{ item.spec_model if item else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-28" name="item_{{ index }}_drawing_no" value="{{ item.drawing_no if item else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_contracted_qty" inputmode="numeric" value="{{ item.contracted_qty if item else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-16" name="item_{{ index }}_unit" value="{{ item.unit if item else '个' }}"></td>
+          <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_serial_start" inputmode="numeric" value="{{ item.serial_start if item and item.serial_start is not none else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_serial_end" inputmode="numeric" value="{{ item.serial_end if item and item.serial_end is not none else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-28" name="item_{{ index }}_unit_price" inputmode="decimal" value="{{ '%.2f'|format(item.unit_price) if item and item.unit_price is not none else '' }}"></td>
+          <td class="whitespace-nowrap">{{ '¥%.2f'|format(item.amount) if item and item.amount is not none else '—' }}</td>
+          <td>{{ item.issued_qty if item else 0 }}</td>
+          <td class="font-semibold {{ 'text-red-600' if item and item.remaining_qty < 0 else '' }}">{{ item.remaining_qty if item else '—' }}</td>
+          <td>{% if item %}<label class="text-xs text-red-600"><input type="checkbox" name="item_{{ index }}_delete" value="1"> 删除</label>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="flex items-center justify-between mt-4">
+    <button class="apple-btn apple-btn-ghost" type="button" id="add-item-row">增加一行</button>
+    <div class="flex items-center gap-2"><input class="input input-bordered input-sm" name="operator" placeholder="变更人（建议填写）"><button class="apple-btn apple-btn-primary" type="submit">保存产品基线</button></div>
+  </div>
+</form>
+
+<div class="apple-card p-5 mt-5">
+  <h2 class="font-semibold mb-3">产品基线变更记录</h2>
+  <div class="space-y-2">
+    {% for row in item_history %}<div class="text-sm border-b pb-2"><span class="font-medium">{{ row.action }}</span> · {{ row.created_at }}{% if row.operator %} · {{ row.operator }}{% endif %}{% if row.note %}<div class="text-gray-500">{{ row.note }}</div>{% endif %}</div>{% else %}<div class="text-sm text-gray-400">暂无记录</div>{% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ static_url('js/contract-items.js') }}"></script>
+{% endblock %}

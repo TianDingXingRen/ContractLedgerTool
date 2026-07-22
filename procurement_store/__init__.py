@@ -496,10 +496,14 @@ def mark_data_sheet_in_editor(sheet_id):
 
 
 def complete_contract_link(sheet_id, contract_id, *, conn=None):
-    return award_contracts.complete_contract_link(
+    link_id = award_contracts.complete_contract_link(
         ledger_store.get_conn, _audit, _now, sheet_id, contract_id,
         connection=conn,
     )
+    ledger_store.sync_contract_items_from_procurement(
+        contract_id, conn=conn, strict=False
+    )
+    return link_id
 
 
 def add_contract_ref(

@@ -19,6 +19,9 @@ PUBLIC_MINOR_FIELDS = (
     ('due_amount', 'due_amount_minor'),
     ('paid_amount', 'paid_amount_minor'),
     ('contract_amount', 'contract_amount_minor'),
+    ('calculation_base', 'calculation_base_minor'),
+    ('explicit_amount', 'explicit_amount_minor'),
+    ('calculated_amount', 'calculated_amount_minor'),
 )
 
 

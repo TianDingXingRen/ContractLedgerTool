@@ -43,6 +43,12 @@ class PaymentPlanRepository:
 
     def insert_impl(self, conn, contract_id, plan):
         plan = self.normalize_consistency(plan)
+        explicit_minor, explicit_amount = money_fields.amount_pair(
+            plan.get('explicit_amount')
+        )
+        calculated_minor, calculated_amount = money_fields.amount_pair(
+            plan.get('calculated_amount')
+        )
         now = self.now()
         payment_type = self.validate_choice(
             plan.get('payment_type') or 'conditional',
@@ -69,8 +75,13 @@ class PaymentPlanRepository:
                 expected_trigger_date, due_date, ratio, due_amount, due_amount_minor,
                 paid_amount, paid_amount_minor,
                 paid_date, condition_text, source_text, confidence, confirm_status,
-                payment_status, remark, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payment_status, remark, payment_rule_id, trigger_event_id,
+                instance_key, calculation_base_minor, amount_basis,
+                explicit_amount_minor, calculated_amount_minor, parse_status,
+                reason_codes_json, extractor_version, user_modified,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 contract_id,
@@ -92,6 +103,17 @@ class PaymentPlanRepository:
                 confirm_status,
                 payment_status,
                 plan.get('remark'),
+                plan.get('payment_rule_id'),
+                plan.get('trigger_event_id'),
+                plan.get('instance_key') or '',
+                plan.get('calculation_base_minor'),
+                plan.get('amount_basis') or '',
+                explicit_minor,
+                calculated_minor,
+                plan.get('parse_status') or 'manual',
+                plan.get('reason_codes_json') or '[]',
+                plan.get('extractor_version') or '',
+                1 if plan.get('user_modified') else 0,
                 now,
                 now,
             ),
@@ -138,6 +160,8 @@ class PaymentPlanRepository:
                         raise ValueError('付款计划不存在或不属于当前合同')
                     row = self.row_to_dict(existing)
                     row.update(incoming)
+                    row['user_modified'] = 1
+                    row['parse_status'] = 'manual'
                     row = self.normalize_consistency(row)
                     assignments = []
                     values = []
@@ -153,6 +177,7 @@ class PaymentPlanRepository:
                             )
                         self.append_assignment(assignments, values, key, row)
                     assignments.append('updated_at = ?')
+                    assignments.extend(['user_modified = 1', "parse_status = 'manual'"])
                     values.extend([self.now(), plan_id, contract_id])
                     cur = conn.execute(
                         f"UPDATE payment_plans SET {', '.join(assignments)} "

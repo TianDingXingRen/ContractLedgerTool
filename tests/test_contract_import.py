@@ -78,6 +78,7 @@ def _confirm_form(preview, token, **overrides):
         'coverage_start': summary.get('coverage_start') or '',
         'coverage_end': summary.get('coverage_end') or '',
         'plan_count': len(preview.get('plans') or []),
+        'rule_count': len(preview.get('rules') or []),
     }
     for index, plan in enumerate(preview.get('plans') or []):
         prefix = f'plan_{index}_'
@@ -110,6 +111,21 @@ def _confirm_form(preview, token, **overrides):
             prefix + 'payment_status': 'unpaid',
             prefix + 'remark': plan.get('remark') or '',
         })
+    for index, rule in enumerate(preview.get('rules') or []):
+        prefix = f'rule_{index}_'
+        form[prefix + 'include'] = '1'
+        for key in (
+            'group_key', 'phase_name', 'rule_type', 'scope',
+            'trigger_event_type', 'trigger_event', 'trigger_days', 'due_date',
+            'conditions_json', 'condition_logic', 'amount_basis',
+            'amount_basis_text', 'ratio', 'explicit_amount',
+            'calculated_amount', 'repeat_mode', 'source_text', 'source_block',
+            'rule_fingerprint', 'source_fingerprint', 'extractor_version',
+            'rule_version', 'parse_status', 'reason_codes_json',
+            'confirm_status',
+        ):
+            value = rule.get(key)
+            form[prefix + key] = '' if value is None else value
     form.update(overrides)
     return form
 

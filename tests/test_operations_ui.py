@@ -122,7 +122,9 @@ class OperationsUiTests(unittest.TestCase):
         template_path = os.path.join(template_def.TEMPLATES_DIR, 'handover.contract-template')
         output_path = os.path.join(helpers.OUTPUT_FOLDER, 'generated.docx')
         defaults_dir = os.path.join(ledger_store.DATA_DIR, 'excel_bill_defaults')
+        invoice_files_dir = os.path.join(ledger_store.DATA_DIR, 'invoice_files', '1')
         os.makedirs(defaults_dir, exist_ok=True)
+        os.makedirs(invoice_files_dir, exist_ok=True)
         with open(upload_path, 'wb') as f:
             f.write(b'upload')
         with open(template_path, 'w', encoding='utf-8') as f:
@@ -131,6 +133,9 @@ class OperationsUiTests(unittest.TestCase):
             f.write(b'output')
         with open(os.path.join(defaults_dir, 'preset.json'), 'w', encoding='utf-8') as f:
             json.dump({'name': 'preset'}, f)
+        invoice_attachment = os.path.join(invoice_files_dir, 'invoice.pdf')
+        with open(invoice_attachment, 'wb') as f:
+            f.write(b'invoice-attachment')
 
         ledger_store.create_contract({'title': '第一份合同', 'owner': '张三'}, {}, output_path)
         with self._client_with_csrf() as client:
@@ -156,6 +161,7 @@ class OperationsUiTests(unittest.TestCase):
             self.assertIn('uploads/source.docx', names)
             self.assertIn('templates/handover.contract-template', names)
             self.assertIn('output/generated.docx', names)
+            self.assertIn('data/invoice_files/1/invoice.pdf', names)
             self.assertFalse(any(name.startswith('sessions/') for name in names))
             self.assertFalse(any(name.startswith('logs/') for name in names))
             self.assertFalse(any(name.startswith('data/backups/') for name in names))
@@ -169,6 +175,7 @@ class OperationsUiTests(unittest.TestCase):
 
             ledger_store.create_contract({'title': '第二份合同', 'owner': '张三'}, {}, '')
             os.remove(output_path)
+            os.remove(invoice_attachment)
             self.assertEqual(ledger_store.get_contract_stats()['total'], 2)
 
             restore = client.post(
@@ -184,6 +191,7 @@ class OperationsUiTests(unittest.TestCase):
 
             self.assertEqual(ledger_store.get_contract_stats()['total'], 1)
             self.assertTrue(os.path.exists(output_path))
+            self.assertTrue(os.path.exists(invoice_attachment))
             self.assertTrue(
                 restore_payload['rollback']['filename'].startswith('handover_full_')
             )

@@ -74,6 +74,24 @@ def _public_validation_errors(errors):
     return messages or ['合同字段校验失败，请检查填写内容']
 
 
+def _register_contract_update_route(bp):
+    @bp.route('/contracts/<int:contract_id>/update', methods=['POST'])
+    def contract_update(contract_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+        new_status = request.form.get('status', 'draft').strip() or 'draft'
+        if new_status not in {'draft', 'signed', 'active', 'completed', 'void'}:
+            return '无效的状态值', 400
+        try:
+            update = contract_batch_support.parse_contract_update(
+                request.form, new_status
+            )
+            ledger_store.update_contract(contract_id, update)
+        except ValueError as e:
+            return safe_error(e, '合同更新失败')
+        return redirect(url_for('contract_detail', contract_id=contract_id))
+
+
 def register(app):
     bp = LegacyEndpointBlueprint('contracts', __name__)
     @bp.route('/')
@@ -624,11 +642,21 @@ def register(app):
         import procurement_store
         procurement_linked = procurement_store.contract_has_refs(contract_id)
         plans = ledger_store.list_payment_plans(contract_id=contract_id)
+        payment_rules = ledger_store.list_payment_rules(contract_id)
+        payment_events = ledger_store.list_payment_trigger_events(contract_id)
+        contract_items = ledger_store.list_contract_items(contract_id)
+        production_notices = ledger_store.list_production_notices(contract_id=contract_id)
+        invoices = ledger_store.list_invoices(contract_id=contract_id)
         history = ledger_store.get_contract_history(contract_id)
         return render_template(
             'contract_detail.html',
             contract=contract,
             plans=plans,
+            payment_rules=payment_rules,
+            payment_events=payment_events,
+            contract_items=contract_items,
+            production_notices=production_notices,
+            invoices=invoices,
             history=history,
             project_names=ledger_store.list_project_names(),
             procurement_linked=procurement_linked,
@@ -682,20 +710,5 @@ def register(app):
             mimetype='application/pdf',
         )
 
-    @bp.route('/contracts/<int:contract_id>/update', methods=['POST'])
-    def contract_update(contract_id):
-        if not ledger_store.get_contract(contract_id):
-            return '合同记录不存在', 404
-        new_status = request.form.get('status', 'draft').strip() or 'draft'
-        if new_status not in {'draft', 'signed', 'active', 'completed', 'void'}:
-            return '无效的状态值', 400
-        try:
-            update = contract_batch_support.parse_contract_update(
-                request.form, new_status
-            )
-            ledger_store.update_contract(contract_id, update)
-        except ValueError as e:
-            return safe_error(e, '合同更新失败')
-        return redirect(url_for('contract_detail', contract_id=contract_id))
-
+    _register_contract_update_route(bp)
     app.register_blueprint(bp)

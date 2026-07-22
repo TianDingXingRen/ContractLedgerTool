@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -25,6 +26,7 @@ from utils.security import (
 
 
 MAX_IMPORTED_PLANS = 30
+MAX_IMPORTED_RULES = 60
 
 
 def _session_file_path(sid):
@@ -177,8 +179,111 @@ def _plans_from_form(form):
     return plans
 
 
-def _render_review(sid, data, *, error='', submitted_summary=None, submitted_plans=None,
-                   duplicate_contract=None, status=200):
+def _rules_for_render(form):
+    try:
+        count = min(max(int(form.get('rule_count', 0)), 0), MAX_IMPORTED_RULES)
+    except (TypeError, ValueError):
+        return []
+    keys = (
+        'group_key', 'phase_name', 'rule_type', 'scope', 'trigger_event_type',
+        'trigger_event', 'trigger_days', 'due_date', 'conditions_json',
+        'condition_logic', 'amount_basis', 'amount_basis_text', 'ratio',
+        'explicit_amount', 'calculated_amount', 'repeat_mode', 'source_text',
+        'source_block', 'rule_fingerprint', 'source_fingerprint',
+        'extractor_version', 'rule_version', 'parse_status',
+        'reason_codes_json', 'confirm_status',
+    )
+    rows = []
+    for index in range(count):
+        prefix = f'rule_{index}_'
+        row = {key: str(form.get(prefix + key, '') or '').strip() for key in keys}
+        row['_include'] = str(form.get(prefix + 'include', '') or '') == '1'
+        rows.append(row)
+    return rows
+
+
+def _rules_from_form(form):
+    try:
+        count = int(form.get('rule_count', 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError('付款规则行数无效') from exc
+    if count < 0 or count > MAX_IMPORTED_RULES:
+        raise ValueError(f'导入时付款规则不能超过 {MAX_IMPORTED_RULES} 条')
+    rules = []
+    for index in range(count):
+        prefix = f'rule_{index}_'
+        if str(form.get(prefix + 'include', '') or '') != '1':
+            continue
+
+        def optional_number(name, label):
+            raw = str(form.get(prefix + name, '') or '').strip()
+            if not raw:
+                return None
+            value = helpers.float_or_none(raw)
+            if value is None:
+                raise ValueError(f'{label}必须是有效数字')
+            return value
+
+        ratio = optional_number('ratio', '付款规则比例')
+        if ratio is not None and not 0 <= ratio <= 100:
+            raise ValueError('付款规则比例必须在0到100之间')
+        trigger_days_raw = str(form.get(prefix + 'trigger_days', '') or '').strip()
+        try:
+            trigger_days = int(trigger_days_raw) if trigger_days_raw else None
+        except ValueError as exc:
+            raise ValueError('付款规则后置天数必须是整数') from exc
+        conditions_json = str(form.get(prefix + 'conditions_json', '[]') or '[]')
+        reason_codes_json = str(form.get(prefix + 'reason_codes_json', '[]') or '[]')
+        for value, label in (
+            (conditions_json, '付款条件'), (reason_codes_json, '付款规则原因码')
+        ):
+            try:
+                parsed = json.loads(value)
+                if not isinstance(parsed, list):
+                    raise ValueError
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(f'{label}格式无效') from exc
+        try:
+            rule_version = int(str(form.get(prefix + 'rule_version', '1') or '1'))
+        except ValueError as exc:
+            raise ValueError('付款规则版本无效') from exc
+        rule = {
+            'group_key': limit_text(str(form.get(prefix + 'group_key', '') or ''), 128),
+            'phase_name': limit_text(str(form.get(prefix + 'phase_name', '') or ''), 120),
+            'rule_type': str(form.get(prefix + 'rule_type', 'conditional') or 'conditional'),
+            'scope': str(form.get(prefix + 'scope', 'contract') or 'contract'),
+            'trigger_event_type': limit_text(str(form.get(prefix + 'trigger_event_type', 'other') or 'other'), 80),
+            'trigger_event': limit_text(str(form.get(prefix + 'trigger_event', '') or ''), 200),
+            'trigger_days': trigger_days,
+            'due_date': str(form.get(prefix + 'due_date', '') or '').strip(),
+            'conditions_json': conditions_json,
+            'condition_logic': str(form.get(prefix + 'condition_logic', 'SINGLE') or 'SINGLE'),
+            'amount_basis': limit_text(str(form.get(prefix + 'amount_basis', 'unknown') or 'unknown'), 80),
+            'amount_basis_text': limit_text(str(form.get(prefix + 'amount_basis_text', '') or ''), 300),
+            'ratio': ratio,
+            'explicit_amount': optional_number('explicit_amount', '合同明确金额'),
+            'calculated_amount': optional_number('calculated_amount', '比例计算金额'),
+            'repeat_mode': str(form.get(prefix + 'repeat_mode', 'once') or 'once'),
+            'source_text': limit_text(str(form.get(prefix + 'source_text', '') or ''), 10_000),
+            'source_block': limit_text(str(form.get(prefix + 'source_block', '') or ''), 120),
+            'rule_fingerprint': limit_text(str(form.get(prefix + 'rule_fingerprint', '') or ''), 128),
+            'source_fingerprint': limit_text(str(form.get(prefix + 'source_fingerprint', '') or ''), 128),
+            'extractor_version': limit_text(str(form.get(prefix + 'extractor_version', '') or ''), 80),
+            'rule_version': rule_version,
+            'parse_status': str(form.get(prefix + 'parse_status', 'manual') or 'manual'),
+            'reason_codes_json': reason_codes_json,
+            'confirm_status': 'pending',
+            'user_modified': 0,
+        }
+        if rule['source_text'] or rule['phase_name']:
+            rules.append(rule)
+    return rules
+
+
+def _render_review(
+    sid, data, *, error='', submitted_summary=None, submitted_plans=None,
+    submitted_rules=None, duplicate_contract=None, status=200,
+):
     preview = data['preview']
     diagnostics = {
         item.get('field'): item for item in preview.get('diagnostics', [])
@@ -190,6 +295,7 @@ def _render_review(sid, data, *, error='', submitted_summary=None, submitted_pla
         preview=preview,
         summary=submitted_summary or preview.get('summary', {}),
         plans=submitted_plans if submitted_plans is not None else preview.get('plans', []),
+        rules=submitted_rules if submitted_rules is not None else preview.get('rules', []),
         diagnostics=diagnostics,
         project_names=ledger_store.list_project_names(),
         duplicate_contract=duplicate_contract,
@@ -300,11 +406,14 @@ def _register_confirmation_routes(bp):
 
         summary = None
         plans = None
+        rules = None
         submitted_summary = _summary_for_render(request.form)
         submitted_plans = _plans_for_render(request.form)
+        submitted_rules = _rules_for_render(request.form)
         try:
             summary = _summary_from_form(request.form)
             plans = _plans_from_form(request.form)
+            rules = _rules_from_form(request.form)
             if summary['contract_no']:
                 existing_id = ledger_store.contract_no_exists(summary['contract_no'])
                 if existing_id:
@@ -316,6 +425,7 @@ def _register_confirmation_routes(bp):
                     source_sha256=preview['source_sha256'],
                     summary=summary,
                     plans=plans,
+                    rules=rules,
                 )
             )
             data['confirmed_contract_id'] = result.contract_id
@@ -353,6 +463,7 @@ def _register_confirmation_routes(bp):
                 sid, data, error=str(exc),
                 submitted_summary=summary or submitted_summary,
                 submitted_plans=submitted_plans,
+                submitted_rules=submitted_rules,
                 duplicate_contract=duplicate, status=409,
             )
         except Exception:
@@ -360,7 +471,8 @@ def _register_confirmation_routes(bp):
             return _render_review(
                 sid, data, error='合同导入失败，数据未写入，请重试',
                 submitted_summary=summary or submitted_summary,
-                submitted_plans=submitted_plans, status=500,
+                submitted_plans=submitted_plans,
+                submitted_rules=submitted_rules, status=500,
             )
 
     @bp.route('/contracts/import/<sid>/cancel', methods=['POST'])

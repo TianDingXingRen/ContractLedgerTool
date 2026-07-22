@@ -23,6 +23,8 @@ def payment_row_from_form(idx, form):
     if ratio is not None and (ratio < 0 or ratio > 100):
         raise ValueError('付款比例必须在 0 到 100 之间')
     due_amount = optional_number('due_amount', '应付金额')
+    explicit_amount = optional_number('explicit_amount', '合同明确金额')
+    calculated_amount = optional_number('calculated_amount', '比例计算金额')
     if paid_amount < 0 or (due_amount is not None and due_amount < 0):
         raise ValueError('付款金额不能为负数')
 
@@ -52,6 +54,23 @@ def payment_row_from_form(idx, form):
         'due_date': optional_date('due_date', '应付日期'),
         'ratio': ratio,
         'due_amount': due_amount,
+        'amount_basis': limit_text(
+            str(form.get(prefix + 'amount_basis', '') or '').strip(), 80
+        ),
+        'explicit_amount': explicit_amount,
+        'calculated_amount': calculated_amount,
+        'parse_status': str(
+            form.get(prefix + 'parse_status', 'manual') or 'manual'
+        ).strip(),
+        'reason_codes_json': limit_text(
+            str(form.get(prefix + 'reason_codes_json', '[]') or '[]').strip(), 2000
+        ),
+        'rule_fingerprint': limit_text(
+            str(form.get(prefix + 'rule_fingerprint', '') or '').strip(), 128
+        ),
+        'extractor_version': limit_text(
+            str(form.get(prefix + 'extractor_version', '') or '').strip(), 80
+        ),
         'paid_amount': paid_amount,
         'paid_date': optional_date('paid_date', '实付日期'),
         'condition_text': limit_text(
