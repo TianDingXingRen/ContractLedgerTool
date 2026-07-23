@@ -182,6 +182,7 @@ def write_bootstrap(path):
 from __future__ import annotations
 
 import ctypes
+import os
 import re
 import subprocess
 import sys
@@ -222,6 +223,115 @@ def _argument_value(name: str, default: str) -> str:
     return default
 
 
+def _default_install_dir() -> str:
+    local_app_data = os.environ.get('LOCALAPPDATA')
+    if not local_app_data:
+        local_app_data = str(Path.home() / 'AppData' / 'Local')
+    return str(Path(local_app_data) / 'Programs' / 'ContractLedgerTool')
+
+
+def _desktop_dir() -> Path:
+    buffer = ctypes.create_unicode_buffer(32768)
+    result = ctypes.windll.shell32.SHGetFolderPathW(
+        None, 0x0010, None, 0, buffer
+    )
+    if result == 0 and buffer.value:
+        return Path(buffer.value).resolve()
+    return (Path.home() / 'Desktop').resolve()
+
+
+def _is_desktop_path(path: str) -> bool:
+    candidate = Path(os.path.expandvars(path)).expanduser().resolve()
+    desktop = _desktop_dir()
+    return candidate == desktop or desktop in candidate.parents
+
+
+def _choose_install_dir(default: str) -> str | None:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+
+    root = tk.Tk()
+    root.title('采购业务平台安装程序')
+    root.resizable(False, False)
+    root.attributes('-topmost', True)
+    selected = {'path': None}
+    path_value = tk.StringVar(value=default)
+
+    frame = ttk.Frame(root, padding=(24, 22, 24, 20))
+    frame.grid(row=0, column=0, sticky='nsew')
+    frame.columnconfigure(0, weight=1)
+    ttk.Label(
+        frame, text='选择安装位置', font=('Microsoft YaHei UI', 15, 'bold')
+    ).grid(row=0, column=0, columnspan=2, sticky='w')
+    ttk.Label(
+        frame,
+        text='程序和业务数据将保存在该专用目录；不能安装到桌面。',
+    ).grid(row=1, column=0, columnspan=2, sticky='w', pady=(6, 14))
+    path_entry = ttk.Entry(frame, textvariable=path_value, width=68)
+    path_entry.grid(row=2, column=0, sticky='ew', padx=(0, 8))
+
+    def browse() -> None:
+        initial = Path(os.path.expandvars(path_value.get())).expanduser()
+        while not initial.exists() and initial != initial.parent:
+            initial = initial.parent
+        chosen = filedialog.askdirectory(
+            parent=root,
+            title='选择采购业务平台的安装位置',
+            initialdir=str(initial),
+            mustexist=True,
+        )
+        if chosen:
+            candidate = Path(chosen)
+            if candidate.name.casefold() != 'contractledgertool':
+                candidate /= 'ContractLedgerTool'
+            path_value.set(str(candidate))
+
+    ttk.Button(frame, text='浏览…', command=browse).grid(row=2, column=1)
+    ttk.Label(
+        frame,
+        text='建议保留默认路径；桌面只会创建一个快捷方式。',
+        foreground='#5f6368',
+    ).grid(row=3, column=0, columnspan=2, sticky='w', pady=(8, 20))
+
+    def accept() -> None:
+        raw = path_value.get().strip()
+        if not raw:
+            messagebox.showerror('安装路径无效', '安装路径不能为空。', parent=root)
+            return
+        try:
+            resolved = str(Path(os.path.expandvars(raw)).expanduser().resolve())
+        except OSError as exc:
+            messagebox.showerror('安装路径无效', str(exc), parent=root)
+            return
+        if _is_desktop_path(resolved):
+            messagebox.showerror(
+                '不能安装到桌面',
+                '请选择“本地应用数据”、D 盘应用目录或其他专用文件夹。',
+                parent=root,
+            )
+            return
+        selected['path'] = resolved
+        root.destroy()
+
+    def cancel() -> None:
+        root.destroy()
+
+    buttons = ttk.Frame(frame)
+    buttons.grid(row=4, column=0, columnspan=2, sticky='e')
+    ttk.Button(buttons, text='取消', command=cancel).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons, text='安装', command=accept).grid(row=0, column=1)
+    root.protocol('WM_DELETE_WINDOW', cancel)
+    root.update_idletasks()
+    width, height = root.winfo_reqwidth(), root.winfo_reqheight()
+    left = max(0, (root.winfo_screenwidth() - width) // 2)
+    top = max(0, (root.winfo_screenheight() - height) // 2)
+    root.geometry(f'{width}x{height}+{left}+{top}')
+    path_entry.focus_set()
+    root.after(300, lambda: root.attributes('-topmost', False))
+    root.mainloop()
+    return selected['path']
+
+
 def _installed_url(output: bytes, fallback_port: str) -> str:
     match = re.search(rb'Local URL:\s*(http://127\.0\.0\.1:\d+/)', output)
     if match:
@@ -234,6 +344,14 @@ def main() -> int:
     try:
         payload = _payload_root()
         script = payload / 'install.ps1'
+        arguments = list(sys.argv[1:])
+        install_dir = _argument_value('-InstallDir', '')
+        if not install_dir:
+            install_dir = _choose_install_dir(_default_install_dir())
+            if not install_dir:
+                _message_box('安装已取消。')
+                return 0
+            arguments.extend(['-InstallDir', install_dir])
         cmd = [
             'powershell',
             '-NoProfile',
@@ -241,7 +359,7 @@ def main() -> int:
             'Bypass',
             '-File',
             str(script),
-            *sys.argv[1:],
+            *arguments,
         ]
         completed = subprocess.run(
             cmd,
@@ -263,7 +381,7 @@ def main() -> int:
         url = _installed_url(completed.stdout or b'', port)
         no_start = any(arg.casefold() == '-nostart' for arg in sys.argv[1:])
         no_autostart = any(arg.casefold() == '-noautostart' for arg in sys.argv[1:])
-        lines = ['安装完成。']
+        lines = ['安装完成。', '', f'安装位置：{install_dir}']
         if not no_start:
             lines.extend(['后台服务已静默启动。', '', f'浏览器访问：{url}'])
         if not no_autostart:

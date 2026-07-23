@@ -1,5 +1,5 @@
 param(
-    [string]$InstallDir = "$env:LOCALAPPDATA\ContractLedgerTool",
+    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\ContractLedgerTool",
     [switch]$RemoveData,
     [switch]$NoPrompt,
     [switch]$SkipSystemIntegrationCleanup
@@ -101,6 +101,7 @@ if ($RemoveData) {
 $ManagedFiles = @(
     "ContractLedgerTool.exe",
     "start.ps1",
+    "launch.vbs",
     "stop.ps1",
     "setup_autostart.ps1",
     "setup_autostart_remove.ps1",

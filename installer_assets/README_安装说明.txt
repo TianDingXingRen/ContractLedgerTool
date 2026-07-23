@@ -8,9 +8,10 @@ Windows 10 / Windows 11
 
 安装方法：
 1. 双击“ContractLedgerTool_OfflineInstaller.exe”。
-2. 等待安装完成提示；安装过程不会显示 CMD 黑色窗口。
-3. 后台服务会静默启动，直接在浏览器输入默认地址即可使用。
-4. 服务默认在登录 Windows 后静默自启动，不会弹出 CMD 窗口；如不需要，可使用 PowerShell 运行 install.ps1 -NoAutostart。
+2. 在安装窗口中确认或修改安装路径；安装器不允许把程序安装到桌面。
+3. 等待安装完成提示；安装过程不会显示 CMD 或 PowerShell 黑色窗口。
+4. 后台服务会静默启动，直接在浏览器输入默认地址即可使用。
+5. 服务默认在登录 Windows 后静默自启动，不会弹出黑色窗口；如不需要，可使用 PowerShell 运行 install.ps1 -NoAutostart。
 
 日常使用：
 直接在浏览器输入默认地址即可；桌面也会生成“合同管理工具”快捷方式，用于服务未运行时重新启动。
@@ -19,10 +20,10 @@ Windows 10 / Windows 11
 http://127.0.0.1:5000/
 
 默认安装位置：
-%LOCALAPPDATA%\ContractLedgerTool
+%LOCALAPPDATA%\Programs\ContractLedgerTool
 
 数据位置：
-合同台账数据库、生成的合同文件、上传模板文件都保存在默认安装目录下。
+合同台账数据库、生成的合同文件、上传模板文件都保存在安装时选择的专用目录下，不会在桌面散落文件夹。
 
 注意事项：
 1. 该安装包已内置运行环境和依赖，可在离线电脑上安装。

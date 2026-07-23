@@ -1,5 +1,5 @@
 param(
-    [string]$InstallDir = "$env:LOCALAPPDATA\ContractLedgerTool",
+    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\ContractLedgerTool",
     [switch]$NoDesktopShortcut,
     [switch]$EnableAutostart,
     [switch]$NoAutostart,
@@ -41,6 +41,14 @@ function Assert-SafeInstallDirectory($Path) {
             throw "Refusing to install into unsafe directory: $Resolved"
         }
     }
+    $DesktopRoot = [System.IO.Path]::GetFullPath(
+        [Environment]::GetFolderPath("Desktop")
+    ).TrimEnd('\')
+    $DesktopPrefix = $DesktopRoot + '\'
+    if ($Resolved.Equals($DesktopRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $Resolved.StartsWith($DesktopPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to install on the Desktop. Choose a dedicated application directory."
+    }
     return $Resolved
 }
 
@@ -54,6 +62,25 @@ function Set-WritableIfExists($Path) {
     }
 }
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hash)).Replace('-', '')
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Stage-AppExecutable($Source, $Destination) {
     $staged = "$Destination.new"
     if (Test-Path -LiteralPath $staged) {
@@ -62,8 +89,8 @@ function Stage-AppExecutable($Source, $Destination) {
     }
 
     Copy-Item -LiteralPath $Source -Destination $staged -Force
-    $sourceHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
-    $stagedHash = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash
+    $sourceHash = Get-Sha256Hex -Path $Source
+    $stagedHash = Get-Sha256Hex -Path $staged
     if ($sourceHash -ne $stagedHash) {
         Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
         throw "Staged application verification failed."
@@ -415,8 +442,9 @@ function New-DesktopLauncher($InstallDir, $AppExe, $Port) {
     $Desktop = [Environment]::GetFolderPath("Desktop")
     $ShortcutPath = Join-Path $Desktop "合同管理工具.lnk"
     $EnglishShortcutPath = Join-Path $Desktop "ContractLedgerTool.lnk"
-    $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $WScriptExe = Join-Path $env:SystemRoot "System32\wscript.exe"
     $StartPs1 = Join-Path $InstallDir "start.ps1"
+    $LaunchVbs = Join-Path $InstallDir "launch.vbs"
 
     foreach ($oldShortcut in @($ShortcutPath, $EnglishShortcutPath)) {
         if (Test-Path -LiteralPath $oldShortcut) {
@@ -428,10 +456,17 @@ function New-DesktopLauncher($InstallDir, $AppExe, $Port) {
         }
     }
 
+    $EscapedStartPs1 = $StartPs1.Replace('"', '""')
+    $LauncherScript = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$EscapedStartPs1"" -Port $Port", 0, False
+"@
+    Set-Content -LiteralPath $LaunchVbs -Value $LauncherScript -Encoding Unicode
+
     $Shell = New-Object -ComObject WScript.Shell
     $Shortcut = $Shell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = $PowerShellExe
-    $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartPs1`" -Port $Port"
+    $Shortcut.TargetPath = $WScriptExe
+    $Shortcut.Arguments = "`"$LaunchVbs`""
     $Shortcut.WorkingDirectory = $InstallDir
     $Shortcut.IconLocation = "$AppExe,0"
     $Shortcut.Save()
@@ -473,6 +508,7 @@ $AppExe = Join-Path $InstallDir "ContractLedgerTool.exe"
 $ManagedFiles = @(
     "ContractLedgerTool.exe",
     "start.ps1",
+    "launch.vbs",
     "stop.ps1",
     "setup_autostart.ps1",
     "setup_autostart_remove.ps1",

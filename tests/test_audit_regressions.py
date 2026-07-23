@@ -240,3 +240,28 @@ def test_installers_refuse_home_directory(script, extra_args):
 
     assert completed.returncode != 0
     assert 'unsafe directory' in (completed.stdout + completed.stderr)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='PowerShell installer safety test')
+def test_offline_installer_refuses_desktop_subdirectories():
+    root = Path(__file__).resolve().parents[1]
+    desktop_target = Path.home() / 'Desktop' / 'ContractLedgerTool'
+    completed = subprocess.run(
+        [
+            'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', str(root / 'installer_assets' / 'install.ps1'),
+            '-InstallDir', str(desktop_target),
+            '-NoStart', '-NoAutostart', '-NoDesktopShortcut',
+        ],
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert 'Refusing to install on the Desktop' in (
+        completed.stdout + completed.stderr
+    )

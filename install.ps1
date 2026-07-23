@@ -1,5 +1,5 @@
 param(
-    [string]$InstallDir = "$env:LOCALAPPDATA\ContractLedgerTool",
+    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\ContractLedgerTool",
     [switch]$NoDesktopShortcut,
     [switch]$NoAutostart,
     [switch]$NoStart,
@@ -33,6 +33,14 @@ function Assert-SafeInstallDirectory($Path) {
         if ($Resolved.Equals($Forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Refusing to install into unsafe directory: $Resolved"
         }
+    }
+    $DesktopRoot = [System.IO.Path]::GetFullPath(
+        [Environment]::GetFolderPath("Desktop")
+    ).TrimEnd('\')
+    $DesktopPrefix = $DesktopRoot + '\'
+    if ($Resolved.Equals($DesktopRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $Resolved.StartsWith($DesktopPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to install on the Desktop. Choose a dedicated application directory."
     }
     return $Resolved
 }

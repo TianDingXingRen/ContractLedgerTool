@@ -87,7 +87,16 @@ def test_installer_registers_standard_uninstaller_and_default_autostart():
     assert 'if (-not $NoAutostart)' in install_script
     assert 'if ($EnableAutostart -and -not $NoAutostart)' not in install_script
     assert '--self-check-output' in install_script
+    assert '$env:LOCALAPPDATA\\Programs\\ContractLedgerTool' in install_script
+    assert 'Refusing to install on the Desktop' in install_script
+    assert '$WScriptExe' in install_script
+    assert 'launch.vbs' in install_script
+    assert 'shell.Run' in install_script
+    assert ', 0, False' in install_script
+    assert '[System.Security.Cryptography.SHA256]::Create()' in install_script
+    assert 'Get-FileHash' not in install_script
     assert '[switch]$RemoveData' in uninstall_script
+    assert 'launch.vbs' in uninstall_script
     assert 'Contracts, ledger, templates, settings, and backups were kept' in uninstall_script
 
 
@@ -128,6 +137,26 @@ def test_windowed_installer_reports_the_resolved_local_url(tmp_path):
     assert module._installed_url(b'no url in output', '5050') == (
         'http://127.0.0.1:5050/'
     )
+    assert Path(module._default_install_dir()).parts[-2:] == (
+        'Programs', 'ContractLedgerTool'
+    )
+
+    bootstrap = bootstrap_path.read_text(encoding='utf-8')
+    assert 'def _choose_install_dir' in bootstrap
+    assert 'from tkinter import filedialog, messagebox, ttk' in bootstrap
+    assert "arguments.extend(['-InstallDir', install_dir])" in bootstrap
+    assert "f'安装位置：{install_dir}'" in bootstrap
+
+
+def test_legacy_packaging_commands_delegate_to_graphical_installer():
+    desktop_builder = (ROOT / 'build_desktop_exe.py').read_text(encoding='utf-8')
+    package_builder = (ROOT / 'build_package.py').read_text(encoding='utf-8')
+
+    assert 'build_installer.main()' in desktop_builder
+    assert 'ContractLedgerTool_Setup_v{version}.exe' in desktop_builder
+    assert 'build_pyinstaller_cmd' not in desktop_builder
+    assert 'from build_desktop_exe import main' in package_builder
+    assert 'zipfile' not in package_builder
 
 
 def test_open_source_governance_files_are_present():
