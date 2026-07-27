@@ -93,7 +93,13 @@ def test_every_historical_ledger_version_upgrades_to_current(tmp_path, monkeypat
                 'FROM contracts WHERE contract_no = ?', ('MATRIX-001',)
             ).fetchone()
             payment = connection.execute(
-                'SELECT due_amount_minor, paid_amount_minor FROM payment_plans WHERE id = 1'
+                'SELECT due_amount_minor, paid_amount_minor, contract_serial_id '
+                'FROM payment_plans WHERE id = 1'
+            ).fetchone()
+            serial_table = connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'contract_serials'"
             ).fetchone()
         assert contract == (12_345, 'generated', '', '')
-        assert payment == (1_234, 123)
+        assert payment == (1_234, 123, None)
+        assert serial_table == ('contract_serials',)

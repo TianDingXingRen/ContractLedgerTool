@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
@@ -15,6 +16,9 @@ _HEADER_FONT = Font(name='Microsoft YaHei', bold=True, size=11)
 _TITLE_FONT = Font(name='Microsoft YaHei', bold=True, size=16)
 _NORMAL_FONT = Font(name='Microsoft YaHei', size=11)
 _HEADER_FILL = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+_PAID_FILL = PatternFill(start_color='C6E0B4', end_color='C6E0B4', fill_type='solid')
+_CURRENT_FILL = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+_WARNING_FILL = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
 _THIN_BORDER = Border(
     left=Side(style='thin'), right=Side(style='thin'),
     top=Side(style='thin'), bottom=Side(style='thin'),
@@ -111,6 +115,302 @@ def export_payment_plans(path, rows, title='下月付款计划'):
         ws.column_dimensions[get_column_letter(ci)].width = width
 
     try:
+        wb.save(path)
+    finally:
+        wb.close()
+    return path
+
+
+def _minor_to_wan(value):
+    if value is None:
+        return None
+    return round(int(value) / 1_000_000, 2)
+
+
+def _safe_sheet_name(value, used):
+    name = re.sub(r'[\[\]:*?/\\]', '_', str(value or '未归类项目')).strip() or '未归类项目'
+    name = name[:31]
+    candidate = name
+    suffix = 2
+    while candidate in used:
+        tail = f'-{suffix}'
+        candidate = f'{name[:31-len(tail)]}{tail}'
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _style_monthly_sheet(ws, last_col, data_end_row):
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = 'A4'
+    ws.auto_filter.ref = f'A3:{get_column_letter(last_col)}{max(3, data_end_row)}'
+    ws.row_dimensions[1].height = 34
+    ws.row_dimensions[2].height = 28
+    ws.row_dimensions[3].height = 58
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '1:3'
+
+
+def export_monthly_payment_plan_report(path, report):
+    """Export the reference-style monthly workbook in ten-thousand yuan.
+
+    ``report`` is built by ``ledger_store.build_monthly_payment_report`` and
+    intentionally contains no production-notice data.
+    """
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    wb = Workbook()
+    summary_ws = wb.active
+    summary_ws.title = '汇总'
+    used_sheet_names = {'汇总'}
+    month_text = str(report['report_month'])
+    year, month = month_text.split('-')
+    display_month = f'{int(year)}年{int(month)}月'
+    node_count = max(1, int(report.get('node_count') or 1))
+    project_refs = []
+
+    base_headers = [
+        '项目名称', '合同内编号', '合同编号', '合同名称',
+        '甲方', '乙方（全称）', '本编号金额',
+    ]
+    tail_headers = [
+        '本月计划付款', '以前月份计划未付款', '计划付款合计',
+        '合同约定本次付款需满足条件', '超过合同付款时间',
+        '银行承兑', '上月已做计划未付款说明',
+    ]
+    for project in report.get('projects', []):
+        sheet_name = _safe_sheet_name(project['project_name'], used_sheet_names)
+        ws = wb.create_sheet(sheet_name)
+        headers = list(base_headers)
+        for node_index in range(1, node_count + 1):
+            headers.extend([
+                f'付款节点#{node_index}\n（金额）',
+                f'付款节点#{node_index}\n（预期时间+支付条件）',
+            ])
+        headers.extend(tail_headers)
+        last_col = len(headers)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
+        ws.cell(
+            1, 1,
+            '填表注意事项：1、金额单位为万元；2、金额右对齐并保留2位；'
+            '3、绿色表示已付款；4、黄色表示计划本月付款；'
+            '5、编号和付款计划独立维护，不读取投产通知。',
+        )
+        ws.cell(1, 1).font = Font(name='Microsoft YaHei', size=10, color='666666')
+        ws.cell(1, 1).alignment = Alignment(wrap_text=True, vertical='center')
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
+        ws.cell(2, 1, f'{display_month}付款明细表    单位：万元')
+        ws.cell(2, 1).font = _TITLE_FONT
+        ws.cell(2, 1).alignment = Alignment(horizontal='center', vertical='center')
+        for column, header in enumerate(headers, 1):
+            ws.cell(3, column, safe_spreadsheet_value(header))
+        _apply_header_style(ws, 3, last_col)
+        ws.cell(3, 1).fill = PatternFill(
+            start_color='4472C4', end_color='4472C4', fill_type='solid'
+        )
+        for cell in ws[3]:
+            cell.fill = PatternFill(
+                start_color='4472C4', end_color='4472C4', fill_type='solid'
+            )
+            cell.font = Font(name='Microsoft YaHei', bold=True, size=10, color='FFFFFF')
+            cell.alignment = Alignment(
+                horizontal='center', vertical='center', wrap_text=True
+            )
+
+        current_col = len(base_headers) + node_count * 2 + 1
+        previous_col = current_col + 1
+        planned_col = current_col + 2
+        overdue_col = current_col + 4
+        data_start = 4
+        for row_index, row in enumerate(project['rows'], data_start):
+            values = [
+                row['project_name'], row['serial_no'], row['contract_no'],
+                row['contract_title'], row['party_a'], row['party_b'],
+                _minor_to_wan(row['serial_amount_minor']),
+            ]
+            for node_index in range(node_count):
+                node = row['nodes'][node_index] if node_index < len(row['nodes']) else None
+                values.extend([
+                    _minor_to_wan(node['amount_minor']) if node else None,
+                    node['condition'] if node else '',
+                ])
+            values.extend([
+                _minor_to_wan(row['current_month_minor']),
+                _minor_to_wan(row['previous_unpaid_minor']),
+                None,
+                row['payment_condition'],
+                row['overdue_text'],
+                row['bank_acceptance'],
+                row['prior_unpaid_reason'],
+            ])
+            for column, value in enumerate(values, 1):
+                cell = ws.cell(row_index, column, safe_spreadsheet_value(value))
+                cell.font = _NORMAL_FONT
+                cell.border = _THIN_BORDER
+                cell.alignment = Alignment(
+                    horizontal='right' if (
+                        column == 7 or
+                        8 <= column < current_col and column % 2 == 0 or
+                        column in (current_col, previous_col, planned_col)
+                    ) else 'left',
+                    vertical='center',
+                    wrap_text=True,
+                )
+            ws.cell(
+                row_index, planned_col,
+                f'={get_column_letter(current_col)}{row_index}+'
+                f'{get_column_letter(previous_col)}{row_index}',
+            )
+            for column in [7, current_col, previous_col, planned_col]:
+                ws.cell(row_index, column).number_format = '#,##0.00'
+            for node_index, node in enumerate(row['nodes']):
+                amount_col = 8 + node_index * 2
+                condition_node_col = amount_col + 1
+                ws.cell(row_index, amount_col).number_format = '#,##0.00'
+                if node['is_paid']:
+                    ws.cell(row_index, amount_col).fill = _PAID_FILL
+                    ws.cell(row_index, condition_node_col).fill = _PAID_FILL
+                elif node['is_current']:
+                    ws.cell(row_index, amount_col).fill = _CURRENT_FILL
+                    ws.cell(row_index, condition_node_col).fill = _CURRENT_FILL
+            if row['current_month_minor']:
+                ws.cell(row_index, current_col).fill = _CURRENT_FILL
+            if row['previous_unpaid_minor']:
+                ws.cell(row_index, previous_col).fill = _WARNING_FILL
+                ws.cell(row_index, overdue_col).fill = _WARNING_FILL
+            ws.row_dimensions[row_index].height = 42
+
+        total_row = data_start + len(project['rows'])
+        ws.cell(total_row, 1, '合计')
+        ws.cell(total_row, 1).font = _HEADER_FONT
+        for column in range(1, last_col + 1):
+            cell = ws.cell(total_row, column)
+            cell.border = _THIN_BORDER
+            cell.fill = _HEADER_FILL
+        numeric_cols = [7]
+        numeric_cols.extend(8 + index * 2 for index in range(node_count))
+        numeric_cols.extend([current_col, previous_col, planned_col])
+        for column in numeric_cols:
+            letter = get_column_letter(column)
+            ws.cell(total_row, column, f'=SUM({letter}{data_start}:{letter}{total_row - 1})')
+            ws.cell(total_row, column).number_format = '#,##0.00'
+            ws.cell(total_row, column).font = _HEADER_FONT
+        if not project['rows']:
+            ws.cell(data_start, 1, '（本月无符合条件的数据）')
+
+        widths = [18, 13, 18, 28, 22, 24, 14]
+        for _ in range(node_count):
+            widths.extend([14, 34])
+        widths.extend([15, 18, 16, 38, 24, 16, 34])
+        for column, width in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(column)].width = width
+        _style_monthly_sheet(ws, last_col, total_row)
+        ws.print_area = f'A1:{get_column_letter(last_col)}{total_row}'
+        escaped_name = sheet_name.replace("'", "''")
+        project_refs.append({
+            'name': project['project_name'],
+            'sheet_name': sheet_name,
+            'sheet_formula_name': escaped_name,
+            'current_cell': f'{get_column_letter(current_col)}{total_row}',
+            'previous_cell': f'{get_column_letter(previous_col)}{total_row}',
+            'planned_cell': f'{get_column_letter(planned_col)}{total_row}',
+            'bank_value': _minor_to_wan(project['bank_acceptance_minor']) or 0,
+        })
+
+    summary_headers = [
+        '项目', f'{display_month}计划付款合计', f'{display_month}计划付款',
+        '以前月份计划未付款', '银行承兑支付金额', '说明',
+    ]
+    summary_ws.sheet_view.showGridLines = False
+    summary_ws.merge_cells('A1:F1')
+    summary_ws['A1'] = f'{display_month}合同付款计划汇总    单位：万元'
+    summary_ws['A1'].font = _TITLE_FONT
+    summary_ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    summary_ws.row_dimensions[1].height = 30
+    for column, header in enumerate(summary_headers, 1):
+        summary_ws.cell(3, column, header)
+    _apply_header_style(summary_ws, 3, len(summary_headers))
+    for cell in summary_ws[3]:
+        cell.fill = PatternFill(
+            start_color='4472C4', end_color='4472C4', fill_type='solid'
+        )
+        cell.font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF')
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for row_index, ref in enumerate(project_refs, 4):
+        summary_ws.cell(row_index, 1, ref['name'])
+        summary_ws.cell(
+            row_index, 2,
+            f"='{ref['sheet_formula_name']}'!{ref['planned_cell']}",
+        )
+        summary_ws.cell(
+            row_index, 3,
+            f"='{ref['sheet_formula_name']}'!{ref['current_cell']}",
+        )
+        summary_ws.cell(
+            row_index, 4,
+            f"='{ref['sheet_formula_name']}'!{ref['previous_cell']}",
+        )
+        summary_ws.cell(row_index, 5, ref['bank_value'])
+        summary_ws.cell(row_index, 6, '')
+        for column in range(1, 7):
+            cell = summary_ws.cell(row_index, column)
+            cell.border = _THIN_BORDER
+            cell.font = _NORMAL_FONT
+            if column in (2, 3, 4, 5):
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal='right')
+    total_row = 4 + len(project_refs)
+    summary_ws.cell(total_row, 1, '合计')
+    for column in range(2, 6):
+        if project_refs:
+            letter = get_column_letter(column)
+            summary_ws.cell(
+                total_row, column,
+                f'=SUM({letter}4:{letter}{total_row - 1})',
+            )
+        else:
+            summary_ws.cell(total_row, column, 0)
+        summary_ws.cell(total_row, column).number_format = '#,##0.00'
+    for column in range(1, 7):
+        cell = summary_ws.cell(total_row, column)
+        cell.fill = _HEADER_FILL
+        cell.border = _THIN_BORDER
+        cell.font = _HEADER_FONT
+
+    diagnostics = report.get('diagnostics') or {}
+    messages = []
+    labels = [
+        ('unassigned_serial_count', '未关联合同内编号的付款计划'),
+        ('missing_due_date_count', '缺少应付日期的付款计划'),
+        ('missing_due_amount_count', '缺少应付金额的付款计划'),
+        ('missing_serial_amount_count', '缺少本编号金额的报表行'),
+    ]
+    for key, label in labels:
+        if diagnostics.get(key):
+            messages.append(f"{label}：{diagnostics[key]}项")
+    note_row = total_row + 2
+    summary_ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=6)
+    summary_ws.cell(
+        note_row, 1,
+        '数据检查：' + ('；'.join(messages) if messages else '未发现影响本报表的缺失项。'),
+    )
+    summary_ws.cell(note_row, 1).alignment = Alignment(wrap_text=True, vertical='center')
+    summary_ws.cell(note_row, 1).fill = _WARNING_FILL if messages else _PAID_FILL
+    summary_ws.row_dimensions[note_row].height = 34
+    for column, width in enumerate([24, 20, 18, 22, 20, 34], 1):
+        summary_ws.column_dimensions[get_column_letter(column)].width = width
+    summary_ws.freeze_panes = 'A4'
+    summary_ws.page_setup.orientation = 'landscape'
+    summary_ws.sheet_properties.pageSetUpPr.fitToPage = True
+    summary_ws.page_setup.fitToWidth = 1
+    summary_ws.print_area = f'A1:F{note_row}'
+
+    try:
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
+        wb.calculation.calcMode = 'auto'
         wb.save(path)
     finally:
         wb.close()

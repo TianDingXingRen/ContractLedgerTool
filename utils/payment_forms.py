@@ -44,8 +44,16 @@ def payment_row_from_form(idx, form):
         raise ValueError('后置天数必须是整数') from exc
     if trigger_days is not None and not 0 <= trigger_days <= 36_500:
         raise ValueError('后置天数必须在 0 到 36500 之间')
+    contract_serial_raw = str(
+        form.get(prefix + 'contract_serial_id', '') or ''
+    ).strip()
+    try:
+        contract_serial_id = int(contract_serial_raw) if contract_serial_raw else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError('合同内编号无效') from exc
     return {
         'id': str(form.get(prefix + 'id', '') or '').strip(),
+        'contract_serial_id': contract_serial_id,
         'phase_name': limit_text(str(form.get(prefix + 'phase_name', '') or '').strip(), 120),
         'payment_type': str(form.get(prefix + 'payment_type', 'conditional') or 'conditional').strip(),
         'trigger_event': limit_text(str(form.get(prefix + 'trigger_event', '') or '').strip(), 200),

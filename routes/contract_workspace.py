@@ -96,6 +96,7 @@ def register_contract_workspace(bp):
 
         tab = normalize_contract_tab(request.args.get('tab'))
         plans, payment_rules, payment_events = [], [], []
+        contract_serials, active_contract_serials = [], []
         contract_items, production_notices, invoices, history, activity = [], [], [], [], []
         plan_result = _empty_result()
         notice_result = _empty_result()
@@ -116,6 +117,12 @@ def register_contract_workspace(bp):
                 contract, recent_notices, recent_invoices, recent_plans, recent_history
             )
         elif tab == 'payments':
+            contract_serials = ledger_store.list_contract_serials(
+                contract_id, include_inactive=True
+            )
+            active_contract_serials = [
+                row for row in contract_serials if row.get('status') == 'active'
+            ]
             plan_result = ledger_store.list_payment_plans(
                 contract_id=contract_id, page=_positive_page('plan_page'), per_page=20
             )
@@ -151,6 +158,8 @@ def register_contract_workspace(bp):
             summary=ledger_store.get_contract_workspace_summary(contract_id),
             plans=plans, plan_result=plan_result,
             payment_rules=payment_rules, payment_events=payment_events,
+            contract_serials=contract_serials,
+            active_contract_serials=active_contract_serials,
             contract_items=contract_items,
             production_notices=production_notices, notice_result=notice_result,
             invoices=invoices, invoice_result=invoice_result,

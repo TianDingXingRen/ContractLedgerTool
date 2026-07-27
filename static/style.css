@@ -1151,6 +1151,9 @@ body{
 .ui-page-title{font-size:24px;line-height:1.25;font-weight:680;letter-spacing:-.45px;color:var(--ui-text)}
 .ui-page-subtitle{margin-top:5px;color:var(--ui-text-muted);font-size:13px;line-height:1.5}
 .ui-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.payment-report-actions{align-items:flex-end}
+.payment-report-export{display:flex;align-items:flex-end;gap:8px}
+.payment-report-actions .ui-button{height:36px}
 .ui-button{
   min-height:34px;padding:7px 14px;border:1px solid transparent;border-radius:9px;
   display:inline-flex;align-items:center;justify-content:center;gap:6px;

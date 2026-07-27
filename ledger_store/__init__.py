@@ -17,9 +17,12 @@ from . import document_paths
 from . import generation_jobs
 from . import list_queries
 from . import money_fields
+from . import payment_reports
 from . import project_reports
 from .contract_lifecycle import ContractLifecycleRepository
 from .contract_items import ContractItemRepository
+from .contract_serials import ContractSerialRepository
+from .contract_updates import ContractUpdateRepository
 from .invoices import InvoiceRepository
 from .payment_plans import PaymentPlanRepository
 from .payment_rules import PaymentRuleRepository
@@ -85,6 +88,7 @@ PLAN_UPDATE_FIELDS = [
     'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
     'paid_amount', 'paid_date', 'condition_text', 'source_text',
     'confidence', 'confirm_status', 'payment_status', 'remark',
+    'contract_serial_id',
 ]
 
 # 付款计划字段对应的校验器
@@ -448,6 +452,21 @@ _PAYMENT_RULES = PaymentRuleRepository(
     validate_choice=_validate_choice,
 )
 
+_CONTRACT_SERIALS = ContractSerialRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+)
+_CONTRACT_UPDATES = ContractUpdateRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+    amount_pair=_amount_pair,
+    validate_choice=_validate_choice,
+    contract_statuses=CONTRACT_STATUSES,
+    update_fields=CONTRACT_UPDATE_FIELDS,
+    contract_serials=_CONTRACT_SERIALS,
+)
 _CONTRACT_ITEMS = ContractItemRepository(get_conn=get_conn, now=_now)
 _PRODUCTION_NOTICES = ProductionNoticeRepository(
     get_conn=get_conn,
@@ -511,6 +530,8 @@ def _create_contract_with_plans_impl(
         ),
     )
     contract_id = cur.lastrowid
+    if summary.get('coverage_start') is not None and summary.get('coverage_end') is not None:
+        _CONTRACT_SERIALS.sync_range(contract_id, connection=conn)
     rule_ids = _PAYMENT_RULES.insert_many_impl(conn, contract_id, rules or [])
     for plan in plans or []:
         stored_plan = dict(plan)
@@ -545,55 +566,7 @@ def create_contract_with_plans(
         raise
 
 
-def update_contract(contract_id, data):
-    assignments = []
-    values = []
-    for key in CONTRACT_UPDATE_FIELDS:
-        if key in data:
-            if key == 'status':
-                data[key] = _validate_choice(data[key], CONTRACT_STATUSES, '合同状态')
-            if key == 'amount':
-                amount_minor, amount = _amount_pair(data[key])
-                data[key] = amount
-                assignments.extend(['amount = ?', 'amount_minor = ?'])
-                values.extend([amount, amount_minor])
-                continue
-            assignments.append(f'{key} = ?')
-            values.append(data[key])
-    if not assignments:
-        return
-    now = _now()
-    assignments.append('updated_at = ?')
-    values.append(now)
-    values.append(contract_id)
-    try:
-        with get_conn() as conn:
-            # 在同一事务中读取旧值并执行更新，避免 TOCTOU 竞态
-            old_row = conn.execute(
-                'SELECT * FROM contracts WHERE id = ?', (contract_id,)
-            ).fetchone()
-            old_contract = row_to_dict(old_row)
-            conn.execute(
-                f"UPDATE contracts SET {', '.join(assignments)} WHERE id = ?",
-                values,
-            )
-            if old_contract:
-                for key in CONTRACT_UPDATE_FIELDS:
-                    if key not in data:
-                        continue
-                    old_val = str(old_contract.get(key) or '')
-                    new_val = str(data[key] or '')
-                    if old_val != new_val:
-                        conn.execute(
-                            """INSERT INTO contract_history
-                               (contract_id, field, old_value, new_value, changed_at)
-                               VALUES (?, ?, ?, ?, ?)""",
-                            (contract_id, key, old_val, new_val, now),
-                        )
-    except sqlite3.IntegrityError as e:
-        if 'contract_no' in str(e).lower() or 'idx_contracts_contract_no_unique' in str(e).lower():
-            raise ValueError('合同编号已存在') from e
-        raise
+update_contract = _CONTRACT_UPDATES.update
 
 
 def get_contract(contract_id):
@@ -699,6 +672,11 @@ create_payment_rule_event_instance = _PAYMENT_RULES.create_event_instance
 
 
 list_payment_trigger_events = _PAYMENT_RULES.list_events
+list_contract_serials = _CONTRACT_SERIALS.list
+get_contract_serial = _CONTRACT_SERIALS.get
+sync_contract_serial_range = _CONTRACT_SERIALS.sync_range
+save_contract_serial_amounts = _CONTRACT_SERIALS.save_amounts
+set_contract_serial_bulk_amount = _CONTRACT_SERIALS.set_bulk_amount
 list_contract_items = _CONTRACT_ITEMS.list
 get_contract_item = _CONTRACT_ITEMS.get
 save_contract_items = _CONTRACT_ITEMS.save
@@ -708,6 +686,12 @@ list_contract_item_history = _CONTRACT_ITEMS.history
 def sync_contract_items_from_procurement(contract_id, *, conn=None, strict=True):
     return _CONTRACT_ITEMS.sync_from_procurement(
         contract_id, connection=conn, strict=strict
+    )
+
+
+def build_monthly_payment_report(report_month):
+    return payment_reports.build_monthly_payment_report(
+        get_conn, row_to_dict, report_month
     )
 
 

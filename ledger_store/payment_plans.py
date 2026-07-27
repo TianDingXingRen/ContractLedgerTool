@@ -41,8 +41,31 @@ class PaymentPlanRepository:
     def append_assignment(assignments, values, key, row):
         money_fields.append_plan_assignment(assignments, values, key, row)
 
+    @staticmethod
+    def _validate_contract_serial(conn, contract_id, value):
+        if value in (None, ''):
+            return None
+        try:
+            serial_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('合同内编号无效') from exc
+        row = conn.execute(
+            """
+            SELECT id
+              FROM contract_serials
+             WHERE id = ? AND contract_id = ? AND status = 'active'
+            """,
+            (serial_id, contract_id),
+        ).fetchone()
+        if not row:
+            raise ValueError('合同内编号不存在、已停用或不属于当前合同')
+        return serial_id
+
     def insert_impl(self, conn, contract_id, plan):
         plan = self.normalize_consistency(plan)
+        contract_serial_id = self._validate_contract_serial(
+            conn, contract_id, plan.get('contract_serial_id')
+        )
         explicit_minor, explicit_amount = money_fields.amount_pair(
             plan.get('explicit_amount')
         )
@@ -71,7 +94,8 @@ class PaymentPlanRepository:
         cur = conn.execute(
             """
             INSERT INTO payment_plans (
-                contract_id, phase_name, payment_type, trigger_event, trigger_days,
+                contract_id, contract_serial_id, phase_name, payment_type,
+                trigger_event, trigger_days,
                 expected_trigger_date, due_date, ratio, due_amount, due_amount_minor,
                 paid_amount, paid_amount_minor,
                 paid_date, condition_text, source_text, confidence, confirm_status,
@@ -81,10 +105,11 @@ class PaymentPlanRepository:
                 reason_codes_json, extractor_version, user_modified,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 contract_id,
+                contract_serial_id,
                 plan.get('phase_name'),
                 payment_type,
                 plan.get('trigger_event'),
@@ -160,6 +185,10 @@ class PaymentPlanRepository:
                         raise ValueError('付款计划不存在或不属于当前合同')
                     row = self.row_to_dict(existing)
                     row.update(incoming)
+                    if 'contract_serial_id' in incoming:
+                        row['contract_serial_id'] = self._validate_contract_serial(
+                            conn, contract_id, incoming.get('contract_serial_id')
+                        )
                     row['user_modified'] = 1
                     row['parse_status'] = 'manual'
                     row = self.normalize_consistency(row)
@@ -220,9 +249,12 @@ class PaymentPlanRepository:
             row = conn.execute(
                 """
                 SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty,
-                       c.owner, c.project_name, c.coverage_start, c.coverage_end
+                       c.owner, c.project_name, c.coverage_start, c.coverage_end,
+                       s.serial_no, s.amount_minor AS serial_amount_minor,
+                       s.status AS serial_status
                 FROM payment_plans p
                 JOIN contracts c ON c.id = p.contract_id
+                LEFT JOIN contract_serials s ON s.id = p.contract_serial_id
                 WHERE p.id = ? AND (c.deleted_at = '' OR c.deleted_at IS NULL)
                 """,
                 (plan_id,),
@@ -247,6 +279,10 @@ class PaymentPlanRepository:
             merged.update(
                 {key: data[key] for key in self.update_fields if key in data}
             )
+            if 'contract_serial_id' in data:
+                merged['contract_serial_id'] = self._validate_contract_serial(
+                    conn, existing['contract_id'], data.get('contract_serial_id')
+                )
             merged = self.normalize_consistency(merged)
             assignments = []
             values = []

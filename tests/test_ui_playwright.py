@@ -140,6 +140,34 @@ class BrowserUiSmokeTests(unittest.TestCase):
             if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
                 self.skipTest('Playwright browser binaries are not installed')
             raise
+
+    def test_payment_report_actions_share_bottom_edge(self):
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(viewport={'width': 1280, 'height': 800})
+                page.goto(f'{self.base_url}/payment-plans', wait_until='networkidle')
+                action_boxes = page.locator(
+                    '.payment-report-actions > .ui-button, '
+                    '.payment-report-export > .ui-button, '
+                    '.payment-report-export .ui-input'
+                ).evaluate_all(
+                    """elements => elements.map(element => {
+                        const box = element.getBoundingClientRect();
+                        return {top: box.top, bottom: box.bottom};
+                    })"""
+                )
+                self.assertEqual(len(action_boxes), 3)
+                top_edges = [box['top'] for box in action_boxes]
+                bottom_edges = [box['bottom'] for box in action_boxes]
+                self.assertLessEqual(max(top_edges) - min(top_edges), 1)
+                self.assertLessEqual(max(bottom_edges) - min(bottom_edges), 1)
+                browser.close()
+        except Exception as exc:
+            if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
+                self.skipTest('Playwright browser binaries are not installed')
+            raise
+
     def test_full_contract_generation_flow(self):
         """Select template, fill fields, download DOCX, and verify ledger UI."""
         try:
@@ -207,6 +235,9 @@ class BrowserUiSmokeTests(unittest.TestCase):
                 'title': '桌面工作区浏览器验收合同',
                 'counterparty': '华北工业控制设备有限公司',
                 'amount': 780000,
+                'project_name': '桌面验收项目',
+                'coverage_start': 101,
+                'coverage_end': 102,
             },
             {},
             '',
@@ -253,6 +284,14 @@ class BrowserUiSmokeTests(unittest.TestCase):
                     ).count(),
                     0,
                 )
+                page.locator('[data-drawer-open="contractSerialDrawer"]').click()
+                page.locator('#contractSerialDrawer[open]').wait_for()
+                self.assertIn(
+                    '101号',
+                    page.locator('#contractSerialDrawer').inner_text(),
+                )
+                page.get_by_role('button', name='关闭').click()
+                page.locator('#contractSerialDrawer').wait_for(state='hidden')
                 page.evaluate("document.documentElement.style.zoom='1.25'")
                 zoom_sizes = page.evaluate("""({
                     scroll: document.documentElement.scrollWidth,

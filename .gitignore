@@ -6,6 +6,7 @@ dist/
 sessions/
 uploads/
 output/
+outputs/
 logs/
 *.log
 .secret_key

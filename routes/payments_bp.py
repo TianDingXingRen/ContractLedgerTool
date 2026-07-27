@@ -12,6 +12,7 @@ from routes.workspace_navigation import contract_detail_location
 
 import ledger_store
 import xlsx_exporter
+from ledger_store.contract_serials import MAX_SERIALS_PER_CONTRACT
 from utils import helpers
 from utils.security import MAX_PLAN_ROWS
 from utils.payment_forms import payment_row_from_form
@@ -56,6 +57,65 @@ def _normalized_form_date(form, name, default=''):
     if not normalized:
         raise ValueError('日期格式无效，请使用 YYYY-MM-DD')
     return normalized
+
+
+def _register_contract_serial_routes(bp):
+    @bp.route('/contracts/<int:contract_id>/serials/sync', methods=['POST'])
+    def contract_serials_sync(contract_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+        try:
+            ledger_store.sync_contract_serial_range(contract_id)
+        except ValueError as exc:
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments', error=str(exc)
+            ))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments',
+        ))
+
+    @bp.route('/contracts/<int:contract_id>/serials/save', methods=['POST'])
+    def contract_serials_save(contract_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+        try:
+            count = int(request.form.get('serial_count', 0))
+        except (TypeError, ValueError):
+            return '合同内编号数量无效', 400
+        if count < 0 or count > MAX_SERIALS_PER_CONTRACT:
+            return f'合同内编号数量不能超过 {MAX_SERIALS_PER_CONTRACT}', 400
+        entries = [{
+            'id': request.form.get(f'serial_{idx}_id', ''),
+            'amount': request.form.get(f'serial_{idx}_amount', ''),
+            'remark': request.form.get(f'serial_{idx}_remark', ''),
+        } for idx in range(count)]
+        try:
+            ledger_store.save_contract_serial_amounts(contract_id, entries)
+        except ValueError as exc:
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments', error=str(exc)
+            ))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments',
+        ))
+
+    @bp.route('/contracts/<int:contract_id>/serials/bulk-amount', methods=['POST'])
+    def contract_serials_bulk_amount(contract_id):
+        if not ledger_store.get_contract(contract_id):
+            return '合同记录不存在', 404
+        try:
+            ledger_store.set_contract_serial_bulk_amount(
+                contract_id,
+                request.form.get('bulk_amount', ''),
+                blank_only=request.form.get('replace_existing') != '1',
+            )
+        except ValueError as exc:
+            return redirect(contract_detail_location(
+                contract_id, request.form, default_tab='payments', error=str(exc)
+            ))
+        return redirect(contract_detail_location(
+            contract_id, request.form, default_tab='payments',
+        ))
 
 
 def _register_payment_rule_routes(bp):
@@ -308,6 +368,7 @@ def _register_payment_view_routes(bp):
             due_soon_end=due_soon_end,
             view_mode=view_mode,
             payment_summary=payment_summary,
+            default_report_month=next_start[:7],
         )
 
 def _register_payment_action_routes(bp):
@@ -378,43 +439,35 @@ def _register_payment_action_routes(bp):
         return _payment_redirect(request.form)
 
 def _register_payment_export_routes(bp):
-    @bp.route('/payment-plans/export')
-    def export_payment_plans():
-        filters = _payment_filter_args(request.args)
-        plans = ledger_store.list_payment_plans(
-            confirm_status=filters['confirm_status'],
-            payment_status=filters['payment_status'],
-            start_date=filters['start_date'],
-            end_date=filters['end_date'],
-            project_name=filters['project_name'],
-            page=0,
-        )
-        filename = f'payment_plans_{date.today().strftime("%Y%m%d")}_{uuid.uuid4().hex[:8]}.xlsx'
+    def send_monthly_report(report_month):
+        try:
+            report = ledger_store.build_monthly_payment_report(report_month)
+        except ValueError as exc:
+            return str(exc), 400
+        month_token = report['report_month'].replace('-', '')
+        filename = f'monthly_payment_plan_{month_token}_{uuid.uuid4().hex[:8]}.xlsx'
         output_path = os.path.join(helpers.OUTPUT_FOLDER, filename)
-        xlsx_exporter.export_payment_plans(output_path, plans, title='付款计划')
+        xlsx_exporter.export_monthly_payment_plan_report(output_path, report)
+        year, month = report['report_month'].split('-')
         return send_file(
             output_path,
             as_attachment=True,
-            download_name=f'付款计划_{date.today().strftime("%Y%m%d")}.xlsx',
+            download_name=f'{year}年{int(month)}月合同付款计划.xlsx',
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
+
+    @bp.route('/payment-plans/export')
+    def export_payment_plans():
+        return send_monthly_report(request.args.get('report_month', ''))
 
     @bp.route('/payment-plans/export-next-month')
     def export_next_month_payments():
-        start, end = helpers.next_month_range()
-        plans = ledger_store.next_month_payment_plans(start, end)
-        filename = f'next_month_payments_{start}_{end}_{uuid.uuid4().hex[:8]}.xlsx'
-        output_path = os.path.join(helpers.OUTPUT_FOLDER, filename)
-        xlsx_exporter.export_payment_plans(output_path, plans, title=f'{start} 至 {end} 付款计划')
-        return send_file(
-            output_path,
-            as_attachment=True,
-            download_name=f'下月付款计划_{start}_{end}.xlsx',
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
+        start, _end = helpers.next_month_range()
+        return send_monthly_report(start[:7])
 
 def register(app):
     bp = LegacyEndpointBlueprint('payments', __name__)
+    _register_contract_serial_routes(bp)
     _register_payment_rule_routes(bp)
     _register_contract_payment_routes(bp)
     _register_payment_view_routes(bp)

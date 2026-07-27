@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS contracts (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS contract_serials (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id INTEGER NOT NULL, serial_no INTEGER NOT NULL CHECK(serial_no > 0), amount_minor INTEGER CHECK(amount_minor IS NULL OR amount_minor >= 0), status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')), remark TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(contract_id, serial_no), FOREIGN KEY(contract_id) REFERENCES contracts(id) ON DELETE CASCADE);
+
 CREATE TABLE IF NOT EXISTS payment_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id INTEGER NOT NULL,
@@ -85,6 +87,7 @@ CREATE TABLE IF NOT EXISTS payment_trigger_events (
 CREATE TABLE IF NOT EXISTS payment_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id INTEGER NOT NULL,
+    contract_serial_id INTEGER,
     phase_name TEXT,
     payment_type TEXT NOT NULL DEFAULT 'conditional'
         CHECK(payment_type IN ('conditional','fixed_date')),
@@ -122,6 +125,7 @@ CREATE TABLE IF NOT EXISTS payment_plans (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(contract_id) REFERENCES contracts(id),
+    FOREIGN KEY(contract_serial_id) REFERENCES contract_serials(id),
     FOREIGN KEY(payment_rule_id) REFERENCES payment_rules(id),
     FOREIGN KEY(trigger_event_id) REFERENCES payment_trigger_events(id)
 );
@@ -341,7 +345,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
-CURRENT_SCHEMA_VERSION = 59
+CURRENT_SCHEMA_VERSION = 63
 
 
 # Indexes introduced by historical migrations but required immediately for a
@@ -392,6 +396,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_instance_key
     ON payment_plans(instance_key) WHERE instance_key != '';
 CREATE INDEX IF NOT EXISTS idx_contract_items_contract
     ON contract_items(contract_id, line_no);
+CREATE INDEX IF NOT EXISTS idx_contract_serials_contract ON contract_serials(contract_id, status, serial_no);
+CREATE INDEX IF NOT EXISTS idx_payment_serial ON payment_plans(contract_serial_id, due_date) WHERE contract_serial_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_contract_item_history_contract
     ON contract_item_history(contract_id, created_at DESC, id DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_items_source
@@ -667,6 +673,10 @@ MIGRATIONS = [
         "CREATE TRIGGER IF NOT EXISTS trg_production_notice_single_active_update BEFORE UPDATE OF status, notice_no, contract_id ON production_notices WHEN NEW.status IN ('issued','acknowledged','closed') AND EXISTS (SELECT 1 FROM production_notices existing WHERE existing.contract_id = NEW.contract_id AND existing.notice_no = NEW.notice_no AND existing.id != NEW.id AND existing.status IN ('issued','acknowledged','closed')) BEGIN SELECT RAISE(ABORT, '同一投产通知只能有一个生效版本'); END;",
         "DROP TRIGGER IF EXISTS trg_production_notice_single_active_update;",
     ),
+    (60, "CREATE TABLE IF NOT EXISTS contract_serials (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id INTEGER NOT NULL, serial_no INTEGER NOT NULL CHECK(serial_no > 0), amount_minor INTEGER CHECK(amount_minor IS NULL OR amount_minor >= 0), status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')), remark TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(contract_id, serial_no), FOREIGN KEY(contract_id) REFERENCES contracts(id) ON DELETE CASCADE);", "DROP TABLE IF EXISTS contract_serials;"),
+    (61, "CREATE INDEX IF NOT EXISTS idx_contract_serials_contract ON contract_serials(contract_id, status, serial_no);", "DROP INDEX IF EXISTS idx_contract_serials_contract;"),
+    (62, "ALTER TABLE payment_plans ADD COLUMN contract_serial_id INTEGER REFERENCES contract_serials(id);", "ALTER TABLE payment_plans DROP COLUMN contract_serial_id;"),
+    (63, "CREATE INDEX IF NOT EXISTS idx_payment_serial ON payment_plans(contract_serial_id, due_date) WHERE contract_serial_id IS NOT NULL;", "DROP INDEX IF EXISTS idx_payment_serial;"),
 ]
 
 

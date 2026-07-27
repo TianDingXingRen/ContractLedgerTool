@@ -99,6 +99,7 @@ def list_payment_plans(
     base_sql = """
         FROM payment_plans p
         JOIN contracts c ON c.id = p.contract_id
+        LEFT JOIN contract_serials s ON s.id = p.contract_serial_id
     """
     clauses = ["(c.deleted_at = '' OR c.deleted_at IS NULL)"]
     params = []
@@ -130,7 +131,9 @@ def list_payment_plans(
         sql = f"""
             SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                    c.amount_minor AS contract_amount_minor, c.project_name,
-                   c.coverage_start, c.coverage_end
+                   c.coverage_start, c.coverage_end, s.serial_no,
+                   s.amount_minor AS serial_amount_minor,
+                   s.status AS serial_status
             {base_sql}{where}
             ORDER BY COALESCE(p.due_date, '9999-12-31'), p.id
             LIMIT ? OFFSET ?
@@ -149,7 +152,9 @@ def list_payment_plans(
     sql = f"""
         SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                c.amount_minor AS contract_amount_minor, c.project_name,
-               c.coverage_start, c.coverage_end
+               c.coverage_start, c.coverage_end, s.serial_no,
+               s.amount_minor AS serial_amount_minor,
+               s.status AS serial_status
         {base_sql}{where}
         ORDER BY COALESCE(p.due_date, '9999-12-31'), p.id
     """

@@ -40,7 +40,8 @@ def test_payment_work_view_and_quick_update(app, client):
     html = page.get_data(as_text=True)
     assert '处理视图' in html
     assert '批量确认' in html
-    assert '导出当前筛选' in html
+    assert '报表月份' in html
+    assert '导出月度模板' in html
 
     token = _set_csrf(client)
     response = client.post(
