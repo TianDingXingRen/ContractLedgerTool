@@ -4,7 +4,6 @@
 """
 
 import ast
-import functools
 import operator
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -169,7 +168,6 @@ def _checked_number(value):
     return number
 
 
-@functools.lru_cache(maxsize=128)
 def _parse_formula(expr):
     text = str(expr or '').strip()
     if len(text) > MAX_FORMULA_LENGTH:
@@ -191,7 +189,7 @@ def validate_formula(expr):
     return True
 
 
-def safe_eval(expr, context=None):
+def safe_eval_decimal(expr, context=None):
     """安全求值公式表达式
 
     参数:
@@ -199,32 +197,37 @@ def safe_eval(expr, context=None):
         context: 变量值字典，如 {'unit_price': 100, 'quantity': 5}
 
     返回:
-        计算结果 (float)
+        计算结果 (Decimal)
 
     示例:
         >>> safe_eval('2 + 3 * 4')
-        14.0
+        Decimal('14')
         >>> safe_eval('unit_price * qty', {'unit_price': 100, 'qty': 5})
-        500.0
+        Decimal('500')
         >>> safe_eval('SUM(a, b, c)', {'a': 1, 'b': 2, 'c': 3})
-        6.0
+        Decimal('6')
     """
     if context is None:
         context = {}
 
     # 空公式返回 0
     if not expr or not expr.strip():
-        return 0
+        return Decimal('0')
 
     try:
         tree = _parse_formula(expr)
         visitor = _EvalVisitor(context)
         result = visitor.visit(tree)
-        return float(_checked_number(result))
+        return _checked_number(result)
     except FormulaError:
         raise
     except Exception as e:
         raise FormulaError(f'公式求值失败: {e}')
+
+
+def safe_eval(expr, context=None):
+    """安全求值公式表达式，保留历史 float 返回类型。"""
+    return float(safe_eval_decimal(expr, context))
 
 
 def resolve_table_aggregate(rows_data, column_key, func='SUM'):
@@ -247,16 +250,16 @@ def resolve_table_aggregate(rows_data, column_key, func='SUM'):
             values.append(Decimal('0'))
 
     if func == 'SUM':
-        return float(sum(values, Decimal('0')))
+        return sum(values, Decimal('0'))
     elif func == 'AVG':
-        return float(sum(values, Decimal('0')) / len(values)) if values else 0
+        return sum(values, Decimal('0')) / len(values) if values else Decimal('0')
     elif func == 'MAX':
-        return float(max(values)) if values else 0
+        return max(values) if values else Decimal('0')
     elif func == 'MIN':
-        return float(min(values)) if values else 0
+        return min(values) if values else Decimal('0')
     elif func == 'COUNT':
         return len(values)
-    return 0
+    return Decimal('0')
 
 
 def sort_fields_by_dependency(fields):

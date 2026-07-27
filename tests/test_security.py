@@ -130,6 +130,16 @@ class SecurityHardeningTests(unittest.TestCase):
             finally:
                 response.close()
 
+    def test_csp_does_not_allow_unsafe_eval(self):
+        with app.app.test_client() as client:
+            response = client.get('/')
+            try:
+                csp = response.headers.get('Content-Security-Policy', '')
+                self.assertIn("script-src 'self'", csp)
+                self.assertNotIn("'unsafe-eval'", csp)
+            finally:
+                response.close()
+
     def test_manual_template_rejects_source_docx_path_traversal(self):
         form = {
             'csrf_token': 'token',
@@ -159,6 +169,26 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertIn('New-ScheduledTaskAction', script)
         self.assertIn('Register-ScheduledTask', script)
         self.assertTrue('--no-browser' in script or '-NoBrowser' in script)
+
+    def test_autostart_powershell_runs_without_console_window(self):
+        completed = mock.Mock(returncode=0, stdout='', stderr='')
+        with mock.patch.object(
+                autostart.subprocess, 'run', return_value=completed) as run:
+            result = autostart._run_powershell('Write-Output ready')
+
+        self.assertIs(result, completed)
+        kwargs = run.call_args.kwargs
+        self.assertTrue(
+            kwargs['creationflags'] & autostart.subprocess.CREATE_NO_WINDOW
+        )
+        self.assertTrue(
+            kwargs['startupinfo'].dwFlags
+            & autostart.subprocess.STARTF_USESHOWWINDOW
+        )
+        self.assertEqual(
+            kwargs['startupinfo'].wShowWindow,
+            autostart.subprocess.SW_HIDE,
+        )
 
     def test_enable_autostart_fallback_rewrites_startup_launcher(self):
         autostart._autostart_cache = None

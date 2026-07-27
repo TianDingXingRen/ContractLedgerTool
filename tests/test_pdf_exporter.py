@@ -79,9 +79,11 @@ def test_libreoffice_converter_renames_generated_file(tmp_path, monkeypatch):
     source.write_bytes(b'docx')
     target = tmp_path / 'renamed.pdf'
     expected = tmp_path / 'source.pdf'
+    run_kwargs = {}
     monkeypatch.setattr('shutil.which', lambda name: name if name == 'soffice' else None)
 
-    def fake_run(_args, **_kwargs):
+    def fake_run(_args, **kwargs):
+        run_kwargs.update(kwargs)
         _valid_pdf(expected)
         return SimpleNamespace(returncode=0, stdout='ok', stderr='')
 
@@ -89,6 +91,12 @@ def test_libreoffice_converter_renames_generated_file(tmp_path, monkeypatch):
     assert pdf_exporter._convert_via_libreoffice(str(source), str(target)) == str(target)
     assert target.is_file()
     assert not expected.exists()
+    if pdf_exporter.os.name == 'nt':
+        assert run_kwargs['creationflags'] & subprocess.CREATE_NO_WINDOW
+        assert (
+            run_kwargs['startupinfo'].dwFlags
+            & subprocess.STARTF_USESHOWWINDOW
+        )
 
 
 def test_libreoffice_converter_reports_process_failure_and_timeout(tmp_path, monkeypatch):
@@ -161,6 +169,7 @@ def test_environment_diagnostics_without_converters(monkeypatch):
 
 def test_terminate_word_process_handles_running_process(monkeypatch):
     calls = []
+    run_kwargs = {}
 
     class FakeProcess:
         pid = 4321
@@ -179,11 +188,21 @@ def test_terminate_word_process_handles_running_process(monkeypatch):
 
     monkeypatch.setattr(
         pdf_exporter.subprocess, 'run',
-        lambda args, **_kwargs: calls.append(args) or SimpleNamespace(returncode=0),
+        lambda args, **kwargs: (
+            run_kwargs.update(kwargs)
+            or calls.append(args)
+            or SimpleNamespace(returncode=0)
+        ),
     )
     pdf_exporter._terminate_word_proc(FakeProcess())
     assert calls[0] == 'terminate'
     assert calls[-1][-1] == '4321'
+    if pdf_exporter.os.name == 'nt':
+        assert run_kwargs['creationflags'] & subprocess.CREATE_NO_WINDOW
+        assert (
+            run_kwargs['startupinfo'].dwFlags
+            & subprocess.STARTF_USESHOWWINDOW
+        )
     pdf_exporter._terminate_word_proc(None)
 
 

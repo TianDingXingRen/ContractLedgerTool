@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import unittest
+from decimal import Decimal
 import field_eval
 
 class SafeEvalTests(unittest.TestCase):
@@ -104,11 +105,18 @@ class FormatNumberTests(unittest.TestCase):
     def test_decimal_arithmetic_avoids_binary_float_artifacts(self):
         self.assertEqual(field_eval.safe_eval('a + b', {'a': '0.1', 'b': '0.2'}), 0.3)
         self.assertEqual(
+            field_eval.safe_eval_decimal('a + b', {'a': '0.1', 'b': '0.2'}),
+            Decimal('0.3'),
+        )
+        self.assertEqual(
             field_eval.resolve_table_aggregate(
                 [{'v': '0.1'}, {'v': '0.2'}], 'v', 'SUM',
             ),
-            0.3,
+            Decimal('0.3'),
         )
+
+    def test_formula_parse_is_not_globally_cached(self):
+        self.assertFalse(hasattr(field_eval._parse_formula, 'cache_info'))
 
 class MakeColKeyTests(unittest.TestCase):
     def test_known(self):

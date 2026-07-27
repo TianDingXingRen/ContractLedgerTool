@@ -8,6 +8,7 @@ not need Python, pip, or internet access.
 import hashlib
 import json
 import os
+import stat
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ ASSETS = ROOT / 'installer_assets'
 APP_RES_DIR = ROOT / 'build' / 'offline_app_resources'
 APP_DIST_DIR = ROOT / 'build' / 'offline_app_dist'
 INSTALLER_STAGE_DIR = ROOT / 'build' / 'offline_installer_package'
+INSTALLER_RUNTIME_HOOK = ROOT / 'build' / 'offline_installer_runtime_hook.py'
 SIGN_SCRIPT = ROOT / 'scripts' / 'sign_installer.ps1'
 ICON_PATH = ROOT / 'design' / 'icon-options' / 'app-icon.ico'
 APP_EXE_NAME = 'ContractLedgerTool'
@@ -74,8 +76,17 @@ def _remove_dist_path(path):
     if target.is_dir():
         shutil.rmtree(target)
     else:
-        target.unlink()
+        _unlink_file(target)
     return True
+
+
+def _unlink_file(target):
+    """Delete a file robustly on Windows, including read-only build artifacts."""
+    try:
+        os.remove(target)
+    except PermissionError:
+        os.chmod(target, stat.S_IWRITE)
+        os.remove(target)
 
 
 def clean_legacy_dist_outputs():
@@ -187,6 +198,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -339,10 +351,97 @@ def _installed_url(output: bytes, fallback_port: str) -> str:
     return f'http://127.0.0.1:{fallback_port}/'
 
 
+def _enter_private_working_directory(payload: Path) -> None:
+    # Explorer starts an EXE with a working directory that is not guaranteed to
+    # be private.  In particular, an installer launched from Desktop may inherit
+    # Desktop as its current directory.  Some Windows GUI/runtime components use
+    # relative scratch paths, so move into PyInstaller's temporary payload before
+    # loading the folder picker or starting any child process.
+    os.chdir(str(payload))
+
+
+def _process_image_path(pid: int) -> str | None:
+    if os.name != 'nt':
+        return None
+    process_query_limited_information = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        process_query_limited_information, False, pid
+    )
+    if not handle:
+        return None
+    try:
+        size = ctypes.c_ulong(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if not ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                handle, 0, buffer, ctypes.byref(size)):
+            return None
+        return str(Path(buffer.value).resolve())
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _process_started_at(pid: int) -> float | None:
+    if os.name != 'nt':
+        return None
+    process_query_limited_information = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        process_query_limited_information, False, pid
+    )
+    if not handle:
+        return None
+    try:
+        created = ctypes.c_ulonglong()
+        exited = ctypes.c_ulonglong()
+        kernel = ctypes.c_ulonglong()
+        user = ctypes.c_ulonglong()
+        if not ctypes.windll.kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(created),
+                ctypes.byref(exited),
+                ctypes.byref(kernel),
+                ctypes.byref(user)):
+            return None
+        return (created.value / 10_000_000) - 11_644_473_600
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _installer_started_at() -> float:
+    started = _process_started_at(os.getpid()) or time.time()
+    parent_pid = os.getppid()
+    current_image = _process_image_path(os.getpid())
+    parent_image = _process_image_path(parent_pid)
+    if (
+            current_image and parent_image
+            and os.path.normcase(current_image) == os.path.normcase(parent_image)
+    ):
+        parent_started = _process_started_at(parent_pid)
+        if parent_started:
+            started = min(started, parent_started)
+    return started
+
+
+def _remove_fresh_empty_desktop_log(started_at: float) -> bool:
+    """Remove only an empty Desktop/log created by this installer run."""
+    candidate = _desktop_dir() / 'log'
+    try:
+        if not candidate.is_dir() or next(candidate.iterdir(), None) is not None:
+            return False
+        created_at = candidate.stat().st_ctime
+        if created_at + 1 < started_at or created_at > time.time() + 2:
+            return False
+        candidate.rmdir()
+        return True
+    except OSError:
+        return False
+
+
 def main() -> int:
+    started_at = _installer_started_at()
     log_path = Path(tempfile.gettempdir()) / 'ContractLedgerTool-installer.log'
     try:
         payload = _payload_root()
+        _enter_private_working_directory(payload)
         script = payload / 'install.ps1'
         arguments = list(sys.argv[1:])
         install_dir = _argument_value('-InstallDir', '')
@@ -395,6 +494,8 @@ def main() -> int:
             pass
         _message_box(f'安装器启动失败：{exc}\n\n日志：{log_path}', error=True)
         return 1
+    finally:
+        _remove_fresh_empty_desktop_log(started_at)
 
 
 if __name__ == '__main__':
@@ -404,9 +505,29 @@ if __name__ == '__main__':
     )
 
 
+def write_installer_runtime_hook(path):
+    """Move off Desktop before PyInstaller loads tkinter's runtime hook."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        r'''# -*- coding: utf-8 -*-
+"""Early runtime isolation for the graphical installer."""
+
+import os
+import sys
+
+
+runtime_root = getattr(sys, '_MEIPASS', None)
+if runtime_root:
+    os.chdir(runtime_root)
+''',
+        encoding='utf-8',
+    )
+
+
 def build_installer_exe(stage):
     bootstrap = ROOT / 'build' / 'offline_installer_bootstrap.py'
     write_bootstrap(bootstrap)
+    write_installer_runtime_hook(INSTALLER_RUNTIME_HOOK)
 
     dist_path = RELEASE_DIR
     work_path = ROOT / 'build' / 'installer_pyinstaller'
@@ -421,6 +542,7 @@ def build_installer_exe(stage):
         '--clean',
         '--onefile',
         '--windowed',
+        '--runtime-hook', str(INSTALLER_RUNTIME_HOOK),
         '--name', INSTALLER_EXE_NAME,
         '--distpath', str(dist_path),
         '--workpath', str(work_path),

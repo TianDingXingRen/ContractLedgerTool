@@ -89,7 +89,7 @@ def _apply_to_paragraph(doc, location, value, field_label='', field_key=''):
     for target in [field_label, field_key]:
         if not target or len(target) < 3:
             continue
-        if target and target in full_text:
+        if _contains_standalone_target(full_text, target):
             _replace_in_para(para, target, value)
             return
 
@@ -354,6 +354,16 @@ def _replace_in_text_elements(t_elems, old_text, new_text):
         else:
             t.text = after
     return True
+
+
+def _contains_standalone_target(text, target):
+    """Avoid replacing short substrings embedded in another placeholder/key."""
+    if not target:
+        return False
+    escaped = re.escape(str(target))
+    if re.fullmatch(r'[\w.-]+', str(target), flags=re.ASCII):
+        return re.search(rf'(?<![\w.-]){escaped}(?![\w.-])', text, flags=re.ASCII) is not None
+    return target in text
 
 
 def _replace_first_marker_in_cell(cell, value):

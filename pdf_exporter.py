@@ -11,6 +11,7 @@ import logging
 from importlib.util import find_spec
 
 from services.isolated_process import run_isolated_worker
+from utils.subprocess_utils import hidden_window_kwargs
 
 _log = logging.getLogger('contract_tool')
 
@@ -138,6 +139,7 @@ def _convert_via_libreoffice(docx_path, pdf_path):
             [soffice, '--headless', '--convert-to', 'pdf',
              '--outdir', out_dir, docx_path],
             timeout=60, capture_output=True, text=True,
+            **hidden_window_kwargs(),
         )
         if result.returncode != 0:
             raise RuntimeError(f'LibreOffice 转换失败: {result.stderr.strip() or result.stdout.strip()}')
@@ -241,6 +243,7 @@ def _terminate_word_proc(proc):
             subprocess.run(
                 ['taskkill', '/F', '/T', '/PID', str(pid)],
                 capture_output=True, timeout=10,
+                **hidden_window_kwargs(),
             )
         except Exception:
             _log.debug('taskkill 清理失败', exc_info=True)

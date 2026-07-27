@@ -147,7 +147,7 @@ def register_security_hooks(app, config):
         else:
             response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Content-Security-Policy'] = (
-            "default-src 'self'; script-src 'self' 'unsafe-eval'; "
+            "default-src 'self'; script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
             "font-src 'self'; connect-src 'self'"
         )

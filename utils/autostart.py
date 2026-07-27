@@ -7,6 +7,7 @@ import threading
 import time as _time
 
 from utils.logger import get_logger
+from utils.subprocess_utils import hidden_window_kwargs
 
 # 模块级变量，由调用方在 app.py 初始化时设置
 BASE_DIR = None
@@ -32,6 +33,7 @@ def _run_powershell(script):
         capture_output=True,
         text=True,
         timeout=30,
+        **hidden_window_kwargs(),
     )
 
 

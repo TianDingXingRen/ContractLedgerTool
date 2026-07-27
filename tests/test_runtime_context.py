@@ -1,4 +1,5 @@
 from pathlib import Path
+import importlib
 
 
 def _assert_context_applied(app_module, base_dir, resource_dir):
@@ -70,3 +71,53 @@ def test_configure_runtime_paths_keeps_globals_and_modules_in_sync(tmp_path):
         _assert_context_applied(app_module, tmp_path, original_resource_dir)
     finally:
         _restore_runtime(app_module, original_base_dir, original_resource_dir)
+
+
+def test_importing_app_module_does_not_initialize_runtime():
+    import app as app_module
+
+    original_base_dir = app_module.BASE_DIR
+    original_resource_dir = app_module.RESOURCE_DIR
+
+    try:
+        app_module.reset_runtime()
+        reloaded = importlib.reload(app_module)
+        assert reloaded._runtime_initialized is False
+        assert reloaded._default_app is None
+    finally:
+        _restore_runtime(app_module, original_base_dir, original_resource_dir)
+
+
+def test_runtime_base_dir_redirects_frozen_desktop_executable(
+    tmp_path, monkeypatch
+):
+    import app as app_module
+
+    desktop = tmp_path / 'Desktop'
+    executable = desktop / 'ContractLedgerTool.exe'
+    local_app_data = tmp_path / 'LocalAppData'
+    monkeypatch.delenv('CONTRACT_TOOL_RUNTIME_DIR', raising=False)
+    monkeypatch.setenv('LOCALAPPDATA', str(local_app_data))
+    monkeypatch.setattr(app_module, '_desktop_dir', lambda: str(desktop))
+    monkeypatch.setattr(app_module.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(app_module.sys, 'executable', str(executable))
+
+    assert Path(app_module._runtime_base_dir()) == (
+        local_app_data / 'Programs' / 'ContractLedgerTool'
+    ).resolve()
+
+
+def test_runtime_base_dir_keeps_dedicated_install_directory(
+    tmp_path, monkeypatch
+):
+    import app as app_module
+
+    desktop = tmp_path / 'Desktop'
+    install_dir = tmp_path / 'NCCAssist' / 'ContractLedgerTool'
+    executable = install_dir / 'ContractLedgerTool.exe'
+    monkeypatch.delenv('CONTRACT_TOOL_RUNTIME_DIR', raising=False)
+    monkeypatch.setattr(app_module, '_desktop_dir', lambda: str(desktop))
+    monkeypatch.setattr(app_module.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(app_module.sys, 'executable', str(executable))
+
+    assert Path(app_module._runtime_base_dir()) == install_dir.resolve()

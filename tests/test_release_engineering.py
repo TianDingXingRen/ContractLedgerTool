@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +147,92 @@ def test_windowed_installer_reports_the_resolved_local_url(tmp_path):
     assert 'from tkinter import filedialog, messagebox, ttk' in bootstrap
     assert "arguments.extend(['-InstallDir', install_dir])" in bootstrap
     assert "f'安装位置：{install_dir}'" in bootstrap
+
+
+def test_windowed_installer_leaves_desktop_before_opening_picker(
+        tmp_path, monkeypatch):
+    import build_installer
+
+    bootstrap_path = tmp_path / 'offline_installer_bootstrap.py'
+    build_installer.write_bootstrap(bootstrap_path)
+    spec = importlib.util.spec_from_file_location(
+        'installer_bootstrap_workdir_test',
+        bootstrap_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    launch_dir = tmp_path / 'simulated-desktop'
+    payload_dir = tmp_path / 'private-payload'
+    launch_dir.mkdir()
+    payload_dir.mkdir()
+    observed = {}
+
+    monkeypatch.setattr(module, '_payload_root', lambda: payload_dir)
+    monkeypatch.setattr(module, '_message_box', lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, '_desktop_dir', lambda: launch_dir)
+
+    def cancel_picker(default):
+        observed['cwd'] = Path.cwd()
+        return None
+
+    monkeypatch.setattr(module, '_choose_install_dir', cancel_picker)
+    monkeypatch.setattr(module.sys, 'argv', ['installer.exe'])
+
+    previous = Path.cwd()
+    try:
+        os.chdir(launch_dir)
+        assert module.main() == 0
+    finally:
+        os.chdir(previous)
+
+    assert observed['cwd'] == payload_dir.resolve()
+    assert list(launch_dir.iterdir()) == []
+
+
+def test_windowed_installer_removes_only_fresh_empty_desktop_log(
+        tmp_path, monkeypatch):
+    import build_installer
+
+    bootstrap_path = tmp_path / 'offline_installer_bootstrap.py'
+    build_installer.write_bootstrap(bootstrap_path)
+    spec = importlib.util.spec_from_file_location(
+        'installer_bootstrap_cleanup_test',
+        bootstrap_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, '_desktop_dir', lambda: tmp_path)
+
+    started_at = module.time.time() - 1
+    fresh_empty = tmp_path / 'log'
+    fresh_empty.mkdir()
+    assert module._remove_fresh_empty_desktop_log(started_at) is True
+    assert not fresh_empty.exists()
+
+    existing_empty = tmp_path / 'log'
+    existing_empty.mkdir()
+    assert module._remove_fresh_empty_desktop_log(
+        module.time.time() + 60
+    ) is False
+    assert existing_empty.is_dir()
+
+    (existing_empty / 'keep.txt').write_text('user data', encoding='utf-8')
+    assert module._remove_fresh_empty_desktop_log(started_at) is False
+    assert (existing_empty / 'keep.txt').read_text(encoding='utf-8') == 'user data'
+
+
+def test_installer_uses_early_runtime_working_directory_hook(tmp_path):
+    import build_installer
+
+    hook_path = tmp_path / 'installer_runtime_hook.py'
+    build_installer.write_installer_runtime_hook(hook_path)
+    hook = hook_path.read_text(encoding='utf-8')
+    build_script = (ROOT / 'build_installer.py').read_text(encoding='utf-8')
+
+    assert "getattr(sys, '_MEIPASS', None)" in hook
+    assert 'os.chdir(runtime_root)' in hook
+    assert "'--runtime-hook', str(INSTALLER_RUNTIME_HOOK)" in build_script
 
 
 def test_legacy_packaging_commands_delegate_to_graphical_installer():

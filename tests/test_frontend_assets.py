@@ -153,9 +153,16 @@ class FrontendAssetTests(unittest.TestCase):
             finally:
                 response.close()
 
-        self.assertIn("script-src 'self' 'unsafe-eval'", csp)
+        self.assertIn("script-src 'self'", csp)
+        self.assertNotIn("'unsafe-eval'", csp)
         self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
         self.assertIn("style-src 'self' 'unsafe-inline'", csp)
+
+        alpine_path = os.path.join(app.RESOURCE_DIR, 'static', 'vendor', 'alpine.min.js')
+        with open(alpine_path, 'r', encoding='utf-8') as f:
+            alpine_runtime = f.read()
+        self.assertNotIn('new Function', alpine_runtime)
+        self.assertNotIn('AsyncFunction', alpine_runtime)
 
     def test_contract_detail_uses_read_only_tables_and_accessible_drawers(self):
         detail_path = os.path.join(app.RESOURCE_DIR, 'templates', 'contract_detail.html')

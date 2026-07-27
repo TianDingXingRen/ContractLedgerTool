@@ -32,13 +32,56 @@ from runtime.services import create_runtime_services
 # ── Path resolution ──
 
 
+def _desktop_dir():
+    """Return the Windows shell Desktop, including redirected locations."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+
+            buffer = ctypes.create_unicode_buffer(32768)
+            result = ctypes.windll.shell32.SHGetFolderPathW(
+                None, 0x0010, None, 0, buffer
+            )
+            if result == 0 and buffer.value:
+                return os.path.abspath(buffer.value)
+        except (AttributeError, OSError):
+            return os.path.abspath(
+                os.path.join(os.path.expanduser('~'), 'Desktop')
+            )
+    return os.path.abspath(os.path.join(os.path.expanduser('~'), 'Desktop'))
+
+
+def _is_desktop_path(path):
+    candidate = os.path.normcase(os.path.abspath(path))
+    desktop = os.path.normcase(_desktop_dir())
+    try:
+        return os.path.commonpath((candidate, desktop)) == desktop
+    except ValueError:
+        return False
+
+
+def _safe_runtime_dir():
+    local_app_data = os.environ.get('LOCALAPPDATA')
+    if not local_app_data:
+        local_app_data = os.path.join(
+            os.path.expanduser('~'), 'AppData', 'Local'
+        )
+    return os.path.abspath(
+        os.path.join(local_app_data, 'Programs', 'ContractLedgerTool')
+    )
+
+
 def _runtime_base_dir():
     override = os.environ.get('CONTRACT_TOOL_RUNTIME_DIR')
     if override:
-        return os.path.abspath(override)
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
+        candidate = os.path.abspath(override)
+    elif getattr(sys, 'frozen', False):
+        candidate = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        candidate = os.path.dirname(os.path.abspath(__file__))
+    if _is_desktop_path(candidate):
+        return _safe_runtime_dir()
+    return candidate
 
 
 def _resource_base_dir():
