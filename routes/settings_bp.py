@@ -5,6 +5,7 @@ import platform
 import sys
 
 from flask import (
+    Blueprint,
     abort,
     current_app,
     jsonify,
@@ -18,21 +19,24 @@ from flask import (
 )
 from core.maintenance_gate import maintenance_gate
 
-from routes.legacy_blueprint import LegacyEndpointBlueprint
-
 import ledger_store
 import pdf_exporter
 import template_def
 from config import config as app_config
+from runtime.flask_paths import current_runtime_paths
 from services import data_protection_service, handover_service
-from utils import helpers
+from utils.autostart import (
+    autostart_status,
+    disable_autostart,
+    enable_autostart,
+)
 from utils.errors import wants_json, GENERIC_ERROR
 from utils.logger import get_logger
 
 
 def _autostart_json(enabled=None, error=''):
     if enabled is None:
-        status = dict(helpers.autostart_status())
+        status = dict(autostart_status())
     else:
         # Enabling/disabling already completed the expensive PowerShell
         # operation. Do not immediately launch a second status query.
@@ -55,9 +59,10 @@ def _autostart_json(enabled=None, error=''):
 
 
 def _diagnostics_payload(include_autostart=True):
-    log_path = os.path.join(helpers.BASE_DIR or '', 'logs', 'app.log')
+    paths = current_runtime_paths()
+    log_path = os.path.join(str(paths.logs_dir), 'app.log')
     if include_autostart:
-        autostart = helpers.autostart_status()
+        autostart = autostart_status()
     else:
         autostart = {
             'enabled': False,
@@ -96,11 +101,11 @@ def _diagnostics_payload(include_autostart=True):
             'debug': bool(app_config.DEBUG),
         },
         'paths': {
-            'base': helpers.BASE_DIR,
+            'base': str(paths.base_dir),
             'templates': template_def.TEMPLATES_DIR,
-            'uploads': helpers.UPLOAD_FOLDER,
-            'output': helpers.OUTPUT_FOLDER,
-            'sessions': helpers.SESSION_FOLDER,
+            'uploads': str(paths.uploads_dir),
+            'output': str(paths.output_dir),
+            'sessions': str(paths.sessions_dir),
             'database': ledger_store.DB_PATH,
             'log': log_path,
         },
@@ -119,10 +124,11 @@ def _diagnostics_payload(include_autostart=True):
 
 
 def _known_folder(key):
+    paths = current_runtime_paths()
     folders = {
         'data': ledger_store.DATA_DIR,
-        'logs': os.path.join(helpers.BASE_DIR or '', 'logs'),
-        'output': helpers.OUTPUT_FOLDER,
+        'logs': str(paths.logs_dir),
+        'output': str(paths.output_dir),
         'backups': ledger_store.BACKUP_DIR,
     }
     if key not in folders:
@@ -146,7 +152,7 @@ def _register_data_protection_routes(bp):
             message = '请先确认已了解 EFS 私钥丢失会导致数据无法恢复'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
-            return redirect(url_for('diagnostics', protection_error=message))
+            return redirect(url_for('settings.diagnostics', protection_error=message))
         try:
             with maintenance_gate.exclusive():
                 ledger_store.close_connections()
@@ -164,7 +170,7 @@ def _register_data_protection_routes(bp):
                 get_logger().warning('EFS 部分启用，错误项已写入内部报告')
                 if wants_json():
                     return jsonify({'success': False, 'message': message}), 400
-                return redirect(url_for('diagnostics', protection_error=message))
+                return redirect(url_for('settings.diagnostics', protection_error=message))
             message = f"EFS 已启用，共加密 {report['encrypted']} 个文件/目录"
             if wants_json():
                 return jsonify({
@@ -172,17 +178,17 @@ def _register_data_protection_routes(bp):
                     'message': message,
                     'encrypted': int(report.get('encrypted', 0)),
                 })
-            return redirect(url_for('diagnostics', protection_message=message))
+            return redirect(url_for('settings.diagnostics', protection_message=message))
         except Exception:
             get_logger().error('启用本地数据保护失败', exc_info=True)
             message = '本地数据保护失败，请查看日志'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
-            return redirect(url_for('diagnostics', protection_error=message))
+            return redirect(url_for('settings.diagnostics', protection_error=message))
 
 
 def register(app):
-    bp = LegacyEndpointBlueprint('settings', __name__)
+    bp = Blueprint('settings', __name__)
     _register_data_protection_routes(bp)
     @bp.route('/api/autostart/status')
     def autostart_status_api():
@@ -191,28 +197,28 @@ def register(app):
     @bp.route('/autostart/enable', methods=['POST'])
     def autostart_enable():
         try:
-            helpers.enable_autostart()
+            enable_autostart()
             if wants_json():
                 return _autostart_json(enabled=True)
-            return redirect(url_for('index'))
+            return redirect(url_for('contracts.index'))
         except Exception as e:
             get_logger().error('开启自启动失败: %s', e, exc_info=True)
             if wants_json():
                 return _autostart_json(error='开启自启动失败')
-            return redirect(url_for('index', autostart_error='开启自启动失败'))
+            return redirect(url_for('contracts.index', autostart_error='开启自启动失败'))
 
     @bp.route('/autostart/disable', methods=['POST'])
     def autostart_disable():
         try:
-            helpers.disable_autostart()
+            disable_autostart()
             if wants_json():
                 return _autostart_json(enabled=False)
-            return redirect(url_for('index'))
+            return redirect(url_for('contracts.index'))
         except Exception as e:
             get_logger().error('关闭自启动失败: %s', e, exc_info=True)
             if wants_json():
                 return _autostart_json(error='关闭自启动失败')
-            return redirect(url_for('index', autostart_error='关闭自启动失败'))
+            return redirect(url_for('contracts.index', autostart_error='关闭自启动失败'))
 
     @bp.route('/diagnostics')
     def diagnostics():
@@ -251,12 +257,12 @@ def register(app):
             backup = ledger_store.create_backup()
             if wants_json():
                 return jsonify({'success': True, 'backup': backup})
-            return redirect(url_for('backups'))
+            return redirect(url_for('settings.backups'))
         except Exception as e:
             get_logger().error('备份操作失败: %s', e, exc_info=True)
             if wants_json():
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('backups', error=GENERIC_ERROR))
+            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/backups/<filename>/restore', methods=['POST'])
     def backup_restore(filename):
@@ -264,12 +270,12 @@ def register(app):
             ledger_store.restore_backup(filename)
             if wants_json():
                 return jsonify({'success': True})
-            return redirect(url_for('backups'))
+            return redirect(url_for('settings.backups'))
         except Exception as e:
             get_logger().error('备份操作失败: %s', e, exc_info=True)
             if wants_json():
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('backups', error=GENERIC_ERROR))
+            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/backups/<filename>/download')
     def backup_download(filename):
@@ -288,35 +294,39 @@ def register(app):
     def full_backup_create():
         try:
             package = handover_service.create_full_backup_package(
-                label=request.form.get('label', 'handover')
+                label=request.form.get('label', 'handover'),
+                paths=current_runtime_paths(),
             )
             if wants_json():
                 return jsonify({'success': True, 'package': package})
-            return redirect(url_for('backups', message='完整数据包已生成'))
+            return redirect(url_for('settings.backups', message='完整数据包已生成'))
         except Exception as e:
             get_logger().error('完整数据包生成失败: %s', e, exc_info=True)
             if wants_json():
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('backups', error=GENERIC_ERROR))
+            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/backups/full/upload', methods=['POST'])
     def full_backup_upload():
         try:
-            package = handover_service.upload_full_backup_package(request.files.get('file'))
+            package = handover_service.upload_full_backup_package(
+                request.files.get('file'),
+                paths=current_runtime_paths(),
+            )
             if wants_json():
                 return jsonify({'success': True, 'package': package})
-            return redirect(url_for('backups', message='完整数据包已上传并通过校验'))
+            return redirect(url_for('settings.backups', message='完整数据包已上传并通过校验'))
         except ValueError:
             get_logger().warning('完整数据包上传校验失败', exc_info=True)
             message = '完整数据包校验失败'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
-            return redirect(url_for('backups', error=message))
+            return redirect(url_for('settings.backups', error=message))
         except Exception as e:
             get_logger().error('完整数据包上传失败: %s', e, exc_info=True)
             if wants_json():
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('backups', error=GENERIC_ERROR))
+            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/backups/full/<filename>/download')
     def full_backup_download(filename):
@@ -334,21 +344,24 @@ def register(app):
     @bp.route('/backups/full/<filename>/restore', methods=['POST'])
     def full_backup_restore(filename):
         try:
-            result = handover_service.restore_full_backup_package(filename)
+            result = handover_service.restore_full_backup_package(
+                filename,
+                paths=current_runtime_paths(),
+            )
             if wants_json():
                 return jsonify({'success': True, 'rollback': result['rollback']})
-            return redirect(url_for('backups', message='完整数据包已恢复，恢复前数据已自动留存回滚包'))
+            return redirect(url_for('settings.backups', message='完整数据包已恢复，恢复前数据已自动留存回滚包'))
         except ValueError:
             get_logger().warning('完整数据包恢复校验失败', exc_info=True)
             message = '完整数据包恢复校验失败'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
-            return redirect(url_for('backups', error=message))
+            return redirect(url_for('settings.backups', error=message))
         except Exception as e:
             get_logger().error('完整数据包恢复失败: %s', e, exc_info=True)
             if wants_json():
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('backups', error=GENERIC_ERROR))
+            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/backups/handover/export', methods=['POST'])
     def handover_export():
@@ -356,9 +369,10 @@ def register(app):
         include_closed = request.form.get('include_closed') == '1'
         try:
             result = handover_service.export_handover_checklist(
-                helpers.OUTPUT_FOLDER,
+                str(current_runtime_paths().output_dir),
                 owner,
                 include_closed=include_closed,
+                paths=current_runtime_paths(),
             )
             if wants_json():
                 return jsonify({'success': True, 'export': {
@@ -367,7 +381,7 @@ def register(app):
                     'summary': result['summary'],
                 }})
             return send_from_directory(
-                os.path.abspath(helpers.OUTPUT_FOLDER),
+                os.path.abspath(current_runtime_paths().output_dir),
                 os.path.basename(result['filename']),
                 as_attachment=True,
                 download_name=result['download_name'],
@@ -378,16 +392,16 @@ def register(app):
             message = '交接清单参数无效'
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
-            return redirect(url_for('backups', error=message))
+            return redirect(url_for('settings.backups', error=message))
         except Exception as e:
             get_logger().error('交接清单导出失败: %s', e, exc_info=True)
             if wants_json():
                 return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('backups', error=GENERIC_ERROR))
+            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/reset', methods=['POST'])
     def reset():
         session.pop('sid', None)
-        return redirect(url_for('index'))
+        return redirect(url_for('contracts.index'))
 
     app.register_blueprint(bp)

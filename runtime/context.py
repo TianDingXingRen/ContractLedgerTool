@@ -35,7 +35,6 @@ def apply_runtime_context(context: RuntimeContext) -> RuntimeContext:
     import ledger_store
     import excel_bill_service
     import utils.autostart as autostart
-    from utils import helpers
     from services import procurement_file_service
     from runtime.app_state import app_state
 
@@ -46,11 +45,6 @@ def apply_runtime_context(context: RuntimeContext) -> RuntimeContext:
     ledger_store.DATA_DIR = str(paths.data_dir)
     ledger_store.DB_PATH = str(paths.database_file)
     ledger_store.BACKUP_DIR = str(paths.backups_dir)
-
-    helpers.UPLOAD_FOLDER = str(paths.uploads_dir)
-    helpers.OUTPUT_FOLDER = str(paths.output_dir)
-    helpers.SESSION_FOLDER = str(paths.sessions_dir)
-    helpers.BASE_DIR = str(paths.base_dir)
 
     autostart.BASE_DIR = str(paths.base_dir)
     excel_bill_service.configure_defaults_dir(paths.excel_bill_defaults_dir)

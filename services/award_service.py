@@ -6,9 +6,9 @@ from copy import deepcopy
 
 import procurement_store
 import template_def
-from utils import helpers
 from utils.keyword_maps import find_scalar_semantic, find_column_semantic
 from utils.money import from_minor
+from utils.template_paths import safe_template_path
 
 
 _SCALAR_SEMANTIC_TO_PAYLOAD = {
@@ -143,6 +143,23 @@ def create_split_award(project_id, form):
     return procurement_store.create_split_award_recommendation(project_id, data, selections)
 
 
+def award_view(project_id):
+    split_rows, _ = split_award_options(project_id)
+    return {
+        'quotes': procurement_store.get_latest_quotes(project_id),
+        'split_rows': split_rows,
+        'award': procurement_store.get_latest_award(project_id),
+    }
+
+
+def get_latest_award(project_id):
+    return procurement_store.get_latest_award(project_id)
+
+
+def list_contract_templates():
+    return template_def.list_templates()
+
+
 def build_contract_data_sheet(project_id):
     project = procurement_store.get_project(project_id)
     award = procurement_store.get_latest_award(project_id)
@@ -229,10 +246,10 @@ def prepare_template_fields(template_path, payload):
     return tpl, fields
 
 
-def prepare_editor_session(project_id, template_filename):
+def prepare_editor_session(project_id, template_filename, paths):
     sheet = build_contract_data_sheet(project_id)
     sheet = procurement_store.get_contract_data_sheet(sheet['id'])
-    path = helpers.safe_template_path(template_filename)
+    path = safe_template_path(template_filename, paths)
     tpl, fields = prepare_template_fields(path, sheet['payload'])
     procurement_store.mark_data_sheet_in_editor(sheet['id'])
     return {

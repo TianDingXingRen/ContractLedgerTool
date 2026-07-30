@@ -104,3 +104,68 @@ def test_cleanup_skips_uploads_when_a_template_is_malformed(tmp_path, monkeypatc
     runtime_maintenance.cleanup_old_files(paths, config)
 
     assert old_upload.exists()
+
+
+def test_cleanup_removes_nested_recovery_and_trash_files(tmp_path, monkeypatch):
+    import ledger_store
+    import template_def
+
+    paths = RuntimePaths.create(tmp_path)
+    paths.ensure_writable_dirs()
+    old_staging = paths.generation_staging_dir / 'job' / 'partial.docx'
+    old_recovery = paths.generation_recovery_dir / 'job' / 'recovered.docx'
+    old_trash = paths.data_dir / 'invoice_files' / '.trash' / 'job' / 'invoice.pdf'
+    for path in (old_staging, old_recovery, old_trash):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _touch_old(path)
+
+    monkeypatch.setattr(template_def, 'TEMPLATES_DIR', str(paths.templates_dir))
+    monkeypatch.setattr(ledger_store, 'get_all_docx_paths', lambda: [])
+    monkeypatch.setattr(ledger_store, 'list_unfinished_generation_jobs', lambda: [])
+    monkeypatch.setattr(ledger_store, 'prune_generation_job_history', lambda _cutoff: 0)
+    config = SimpleNamespace(
+        OUTPUT_CLEANUP_DAYS=1,
+        CLEANUP_DAYS=1,
+        SESSION_TTL_HOURS=1,
+        GENERATION_HISTORY_DAYS=30,
+    )
+
+    runtime_maintenance.cleanup_old_files(paths, config)
+
+    assert not old_staging.exists()
+    assert not old_recovery.exists()
+    assert not old_trash.exists()
+
+
+def test_generation_history_pruning_retains_attention_rows(tmp_db):
+    import ledger_store
+
+    old = '2020-01-01 00:00:00'
+    with ledger_store.get_conn() as connection:
+        for state in ('completed', 'failed', 'recovered', 'attention'):
+            connection.execute(
+                """INSERT INTO contract_generation_jobs (
+                       job_id, state, output_path, staging_path,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    f'old-{state}',
+                    state,
+                    f'output/{state}.docx',
+                    f'output/.staging/{state}.docx',
+                    old,
+                    old,
+                ),
+            )
+
+    assert ledger_store.prune_generation_job_history(
+        '2021-01-01 00:00:00'
+    ) == 3
+    with ledger_store.get_conn() as connection:
+        remaining = {
+            row['state']
+            for row in connection.execute(
+                'SELECT state FROM contract_generation_jobs'
+            ).fetchall()
+        }
+    assert remaining == {'attention'}

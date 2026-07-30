@@ -4,16 +4,16 @@
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
   <div>
-    <a class="text-sm text-blue-600" href="{{ url_for('contract_detail', contract_id=contract.id) }}">← 返回合同详情</a>
+    <a class="text-sm text-blue-600" href="{{ url_for('contracts.contract_detail', contract_id=contract.id) }}">← 返回合同详情</a>
     <h1 class="text-2xl font-semibold mt-2">合同产品基线</h1>
     <p class="text-sm text-gray-500 mt-1">{{ contract.contract_no or '未编号' }} · {{ contract.title }}</p>
   </div>
   <div class="flex gap-2">
-    <form method="post" action="{{ url_for('contract_items_sync_procurement', contract_id=contract.id) }}">
+    <form method="post" action="{{ url_for('production.contract_items_sync_procurement', contract_id=contract.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="apple-btn apple-btn-ghost" type="submit">从定标结果同步</button>
     </form>
-    {% if items %}<a class="apple-btn apple-btn-primary" href="{{ url_for('production_notice_new', contract_id=contract.id) }}">新建投产通知</a>{% endif %}
+    {% if items %}<a class="apple-btn apple-btn-primary" href="{{ url_for('production.production_notice_new', contract_id=contract.id) }}">新建投产通知</a>{% endif %}
   </div>
 </div>
 

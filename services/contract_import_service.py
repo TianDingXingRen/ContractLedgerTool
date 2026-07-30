@@ -15,6 +15,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 import payment_extractor
+from services.isolated_process import run_isolated_worker
 from utils.field_utils import normalize_date, parse_number
 from utils.security import validate_office_archive
 
@@ -39,6 +40,8 @@ MAX_IMPORT_PARAGRAPHS = 5_000
 MAX_IMPORT_TABLES = 200
 MAX_IMPORT_TABLE_ROWS = 5_000
 MAX_IMPORT_TABLE_COLUMNS = 100
+CONTRACT_IMPORT_PARSE_TIMEOUT_SECONDS = 60
+CONTRACT_IMPORT_PARSE_MEMORY_MB = 1536
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,7 @@ class ContractImportService:
         max_upload_bytes=50 * 1024 * 1024,
         replace_file=os.replace,
         after_commit=None,
+        isolate_preview=True,
     ):
         self.ledger_store = ledger_store
         self.uploads_dir = Path(uploads_dir).resolve()
@@ -98,6 +102,7 @@ class ContractImportService:
         self.max_upload_bytes = int(max_upload_bytes)
         self.replace_file = replace_file
         self.after_commit = after_commit or (lambda _result: None)
+        self.isolate_preview = bool(isolate_preview)
 
     @staticmethod
     def sha256_file(path) -> str:
@@ -260,6 +265,15 @@ class ContractImportService:
             error = ValueError('该合同文件已导入')
             error.contract_id = duplicate['id']
             raise error
+        if self.isolate_preview:
+            payload = run_isolated_worker(
+                _contract_import_preview_worker,
+                (str(source), original_filename, self.max_upload_bytes),
+                timeout=CONTRACT_IMPORT_PARSE_TIMEOUT_SECONDS,
+                label='外部合同解析',
+                memory_limit_mb=CONTRACT_IMPORT_PARSE_MEMORY_MB,
+            )
+            return ContractImportPreview(**payload)
 
         (
             paragraphs, table_lines, candidates, warnings, payment_blocks
@@ -446,3 +460,27 @@ class ContractImportService:
                 exc_info=True,
             )
         return result
+
+
+class _NoDuplicateLedgerStore:
+    @staticmethod
+    def get_contract_by_source_sha256(_source_sha256):
+        return None
+
+
+def _contract_import_preview_worker(
+    path,
+    original_filename,
+    max_upload_bytes,
+    result_queue,
+):
+    source = Path(path)
+    service = ContractImportService(
+        ledger_store=_NoDuplicateLedgerStore(),
+        uploads_dir=source.parent,
+        output_dir=source.parent,
+        max_upload_bytes=max_upload_bytes,
+        isolate_preview=False,
+    )
+    preview = service.preview_file(source, original_filename)
+    result_queue.put(('ok', preview.to_dict()))

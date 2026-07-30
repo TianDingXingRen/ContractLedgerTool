@@ -140,14 +140,17 @@ $env:CT_TESSERACT_CMD = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
 | `CT_HOST` | 127.0.0.1 | 监听地址 |
 | `CT_PORT` | 5000 | 监听端口 |
 | `CT_DEBUG` | 0 | 调试模式（1/true 开启） |
-| `CT_ALLOW_REMOTE` | 0 | 是否允许非本机访问；启用时必须同时配置访问令牌 |
+| `CT_ALLOW_REMOTE` | 0 | 是否允许非本机访问；启用时必须同时配置访问令牌和 TLS |
 | `CT_REMOTE_ACCESS_TOKEN` | 空 | 局域网访问密码，至少16位；仅从环境变量读取 |
+| `CT_REMOTE_TLS_CERT` | 空 | 局域网 HTTPS 证书文件路径；仅从环境变量读取 |
+| `CT_REMOTE_TLS_KEY` | 空 | 局域网 HTTPS 私钥文件路径；仅从环境变量读取 |
+| `CT_TRUSTED_HOSTS` | 本机地址 | 允许的 HTTP Host，多个值使用逗号分隔 |
 | `CT_MAX_CONTENT_LENGTH_MB` | 50 | 上传文件大小限制 |
 | `CT_CLEANUP_DAYS` | 7 | 文件自动清理天数 |
 | `CT_LOG_LEVEL` | INFO | 日志级别 |
 | `CT_WORD_COM_TIMEOUT` | 60 | Word 转 PDF 隔离进程超时秒数（15–180） |
 
-默认只允许本机访问。如确需局域网访问，请同时设置 `CT_ALLOW_REMOTE=1`、监听地址和至少16位的 `CT_REMOTE_ACCESS_TOKEN`；浏览器弹出登录框时可使用任意用户名，并把令牌作为密码。
+默认只允许本机访问。如确需局域网访问，请同时设置 `CT_ALLOW_REMOTE=1`、监听地址、至少16位的 `CT_REMOTE_ACCESS_TOKEN`、`CT_REMOTE_TLS_CERT`、`CT_REMOTE_TLS_KEY`，并把实际访问域名或 IP 加入 `CT_TRUSTED_HOSTS`。局域网模式禁止调试和明文 HTTP；浏览器弹出登录框时可使用任意用户名，并把令牌作为密码。
 
 ## 目录结构
 

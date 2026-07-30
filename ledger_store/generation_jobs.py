@@ -123,3 +123,16 @@ def state_counts(get_conn):
     counts = {state: 0 for state in ACTIVE_STATES + TERMINAL_STATES}
     counts.update({row['state']: int(row['count']) for row in rows})
     return counts
+
+
+def prune_history(get_conn, updated_before):
+    """Delete old terminal journal rows that no longer require attention."""
+    removable_states = ('completed', 'failed', 'recovered')
+    placeholders = ','.join('?' for _ in removable_states)
+    with get_conn() as conn:
+        cursor = conn.execute(
+            f"""DELETE FROM contract_generation_jobs
+                WHERE state IN ({placeholders}) AND updated_at < ?""",
+            (*removable_states, str(updated_before)),
+        )
+    return max(0, int(cursor.rowcount or 0))

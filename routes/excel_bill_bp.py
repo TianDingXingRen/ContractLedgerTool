@@ -3,19 +3,17 @@
 import json
 import os
 
-from flask import render_template, request, jsonify, send_file
-
-from routes.legacy_blueprint import LegacyEndpointBlueprint
+from flask import Blueprint, render_template, request, jsonify, send_file
 
 import excel_bill_service
-from utils import helpers
+from runtime.flask_paths import current_runtime_paths
 from utils.logger import get_logger
 from utils.errors import GENERIC_ERROR, GENERIC_PARSE_ERROR
 
 
 def register(app):
     """在 Flask app 上注册 Excel 单据相关路由"""
-    bp = LegacyEndpointBlueprint('excel_bill', __name__)
+    bp = Blueprint('excel_bill', __name__)
 
     @bp.route("/excel-bill")
     def excel_bill_page():
@@ -166,7 +164,10 @@ def register(app):
                     return jsonify({"error": GENERIC_PARSE_ERROR}), 400
 
             # 生成 Excel
-            output_dir = os.path.join(helpers.OUTPUT_FOLDER, "excel_bills")
+            output_dir = os.path.join(
+                str(current_runtime_paths().output_dir),
+                "excel_bills",
+            )
             path = excel_bill_service.generate_bill_excel(
                 preset_key, header_data, detail_rows, output_dir
             )

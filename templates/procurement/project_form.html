@@ -18,7 +18,7 @@
       <label class="form-control md:col-span-2"><span class="label-text">交付周期要求</span><input class="input input-bordered" name="delivery_requirement" value="{{ project.delivery_requirement if project else '' }}"></label>
       <label class="form-control md:col-span-2"><span class="label-text">付款条件要求</span><textarea class="textarea textarea-bordered" name="payment_requirement">{{ project.payment_requirement if project else '' }}</textarea></label>
       <label class="form-control md:col-span-2"><span class="label-text">备注</span><textarea class="textarea textarea-bordered" name="remark">{{ project.remark if project else '' }}</textarea></label>
-      <div class="md:col-span-2 flex justify-end gap-2 mt-2"><a class="btn btn-ghost" href="{{ url_for('procurement_projects') }}">取消</a><button class="btn btn-primary">保存项目</button></div>
+      <div class="md:col-span-2 flex justify-end gap-2 mt-2"><a class="btn btn-ghost" href="{{ url_for('procurement.procurement_projects') }}">取消</a><button class="btn btn-primary">保存项目</button></div>
     </div>
   </form>
 </div>

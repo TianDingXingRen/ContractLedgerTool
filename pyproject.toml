@@ -28,6 +28,9 @@ markers = [
 source = ["."]
 omit = [
     "tests/*",
+    ".pytest_basetemp_*/*",
+    "build/*",
+    "*/build/*",
     "build_*.py",
     "_pyinstaller_common.py",
     "conftest.py",
@@ -40,6 +43,10 @@ omit = [
 fail_under = 72
 show_missing = true
 skip_covered = true
+omit = [
+    "build/*",
+    "*/build/*",
+]
 exclude_also = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",

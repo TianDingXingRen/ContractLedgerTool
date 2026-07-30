@@ -40,11 +40,34 @@ def test_local_bind_hosts_are_allowed(host):
     assert validate_bind_host(host) == host
 
 
-def test_remote_bind_requires_explicit_opt_in():
+def test_remote_bind_requires_explicit_opt_in(tmp_path):
+    certificate = tmp_path / 'server.crt'
+    private_key = tmp_path / 'server.key'
+    certificate.write_text('test certificate', encoding='utf-8')
+    private_key.write_text('test key', encoding='utf-8')
+
     with pytest.raises(ValueError, match='CT_ALLOW_REMOTE'):
         validate_bind_host('0.0.0.0')
     with pytest.raises(ValueError, match='CT_REMOTE_ACCESS_TOKEN'):
         validate_bind_host('0.0.0.0', allow_remote=True)
+    with pytest.raises(ValueError, match='CT_REMOTE_TLS_CERT'):
+        validate_bind_host(
+            '0.0.0.0', allow_remote=True,
+            remote_token='0123456789abcdef',
+        )
     assert validate_bind_host(
-        '0.0.0.0', allow_remote=True, remote_token='0123456789abcdef'
+        '0.0.0.0',
+        allow_remote=True,
+        remote_token='0123456789abcdef',
+        tls_cert=str(certificate),
+        tls_key=str(private_key),
     ) == '0.0.0.0'
+    with pytest.raises(ValueError, match='CT_DEBUG'):
+        validate_bind_host(
+            '0.0.0.0',
+            allow_remote=True,
+            remote_token='0123456789abcdef',
+            tls_cert=str(certificate),
+            tls_key=str(private_key),
+            debug=True,
+        )

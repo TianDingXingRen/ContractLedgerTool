@@ -1,5 +1,7 @@
 """Schema SQL and migrations for the contract ledger database."""
 
+from . import invoice_constraints
+
 LEDGER_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS contracts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -345,14 +347,13 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
-CURRENT_SCHEMA_VERSION = 63
+CURRENT_SCHEMA_VERSION = 67
 
 
 # Indexes introduced by historical migrations but required immediately for a
 # brand-new database that is stamped directly at CURRENT_SCHEMA_VERSION.
 FRESH_DATABASE_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_contracts_project
-    ON contracts(project_name, coverage_end);
+CREATE INDEX IF NOT EXISTS idx_contracts_project ON contracts(project_name, coverage_end);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contracts_contract_no_unique
     ON contracts(contract_no)
     WHERE contract_no IS NOT NULL AND TRIM(contract_no) != '';
@@ -422,8 +423,8 @@ CREATE INDEX IF NOT EXISTS idx_invoice_allocations_payment
     ON invoice_allocations(payment_plan_id) WHERE payment_plan_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_files_hash
     ON invoice_files(invoice_id, sha256) WHERE sha256 != '';
-CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice
-    ON invoice_history(invoice_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_history(invoice_id, created_at DESC, id DESC);
+""" + invoice_constraints.INVOICE_RED_CONSISTENCY_SQL + """
 CREATE TRIGGER IF NOT EXISTS trg_production_notice_single_active_insert
 BEFORE INSERT ON production_notices
 WHEN NEW.status IN ('issued','acknowledged','closed')
@@ -677,7 +678,7 @@ MIGRATIONS = [
     (61, "CREATE INDEX IF NOT EXISTS idx_contract_serials_contract ON contract_serials(contract_id, status, serial_no);", "DROP INDEX IF EXISTS idx_contract_serials_contract;"),
     (62, "ALTER TABLE payment_plans ADD COLUMN contract_serial_id INTEGER REFERENCES contract_serials(id);", "ALTER TABLE payment_plans DROP COLUMN contract_serial_id;"),
     (63, "CREATE INDEX IF NOT EXISTS idx_payment_serial ON payment_plans(contract_serial_id, due_date) WHERE contract_serial_id IS NOT NULL;", "DROP INDEX IF EXISTS idx_payment_serial;"),
-]
+] + invoice_constraints.INVOICE_CONSTRAINT_MIGRATIONS
 
 
 # Data backfills are named separately from DDL so migration execution remains

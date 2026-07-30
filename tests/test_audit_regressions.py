@@ -2,6 +2,7 @@ import os
 import sqlite3
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from openpyxl import load_workbook
@@ -10,8 +11,8 @@ import ledger_store
 import procurement_store
 import xlsx_exporter
 from ledger_store import backups
-from routes import contracts_bp
 from services import (
+    contract_batch_generation_service,
     negotiation_service,
     procurement_file_service,
     procurement_project_service,
@@ -117,11 +118,13 @@ def test_database_backup_failure_leaves_no_partial_target(tmp_path, monkeypatch)
 def test_batch_archive_reports_open_and_close_failures(tmp_path, monkeypatch):
     failures = []
     monkeypatch.setattr(
-        contracts_bp.zipfile,
+        contract_batch_generation_service.zipfile,
         'ZipFile',
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('open failed')),
     )
-    with contracts_bp._batch_archive(tmp_path / 'open.zip', failures) as archive:
+    with contract_batch_generation_service._batch_archive(
+        tmp_path / 'open.zip', failures
+    ) as archive:
         assert archive is None
     assert len(failures) == 1 and 'open failed' in str(failures[0])
 
@@ -131,13 +134,55 @@ def test_batch_archive_reports_open_and_close_failures(tmp_path, monkeypatch):
 
     failures = []
     monkeypatch.setattr(
-        contracts_bp.zipfile,
+        contract_batch_generation_service.zipfile,
         'ZipFile',
         lambda *_args, **_kwargs: CloseFailureArchive(),
     )
-    with contracts_bp._batch_archive(tmp_path / 'close.zip', failures) as archive:
+    with contract_batch_generation_service._batch_archive(
+        tmp_path / 'close.zip', failures
+    ) as archive:
         assert archive is not None
     assert len(failures) == 1 and 'close failed' in str(failures[0])
+
+
+def test_repeated_batch_runs_never_reuse_or_overwrite_contract_outputs(tmp_path):
+    class GenerationService:
+        def __init__(self):
+            self.paths = []
+
+        def generate(self, request):
+            self.paths.append(Path(request.output_path))
+            Path(request.output_path).write_bytes(
+                f'generated-{len(self.paths)}'.encode()
+            )
+            return SimpleNamespace(
+                contract_id=None,
+                output_path=request.output_path,
+                previous_project_status=None,
+            )
+
+    generation_service = GenerationService()
+    command = contract_batch_generation_service.BatchGenerationCommand(
+        sid='stable-session',
+        template=SimpleNamespace(data={}),
+        fields=[],
+        field_values={},
+        classification={},
+        counterparties=['同一供应商'],
+        batch_field_keys=[],
+        source_docx='',
+        output_dir=str(tmp_path),
+        generation_service=generation_service,
+    )
+
+    contract_batch_generation_service.generate_batch_archive(command)
+    first_path = generation_service.paths[0]
+    first_bytes = first_path.read_bytes()
+    contract_batch_generation_service.generate_batch_archive(command)
+
+    assert generation_service.paths[1] != first_path
+    assert first_path.read_bytes() == first_bytes == b'generated-1'
+    assert generation_service.paths[1].read_bytes() == b'generated-2'
 
 
 def test_standard_quote_parser_closes_workbook_on_validation_error(monkeypatch):

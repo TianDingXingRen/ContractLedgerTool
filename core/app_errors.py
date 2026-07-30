@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 
 from flask import render_template
-from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import HTTPException, SecurityError
 
 from core.domain_errors import DomainError
 from utils.errors import api_error, wants_json
@@ -17,6 +17,11 @@ def register_error_handlers(app):
 
     @app.errorhandler(400)
     def handle_400(e):
+        if isinstance(e, SecurityError):
+            # Host validation can fail before Flask creates a URL adapter.
+            # Rendering the normal template would call url_for() and mask the
+            # intended 400 response with a secondary exception.
+            return '请求主机不受信任', 400
         msg = getattr(e, 'description', None) or '请求参数无效'
         if wants_json():
             return api_error(str(msg), 400)

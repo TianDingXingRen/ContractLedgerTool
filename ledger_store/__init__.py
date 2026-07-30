@@ -5,9 +5,16 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
 from functools import partial
 
+from database.connection_factory import checkpoint_wal, query_snapshot, transaction
+from database.migration_runner import (
+    MigrationStep,
+    ensure_column,
+    local_now as _now,
+    read_schema_version,
+    run_versioned_migrations,
+)
 from utils.logger import get_logger
 from core.maintenance_gate import maintenance_gate
 from utils.constants import ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel
@@ -100,10 +107,6 @@ PLAN_FIELD_VALIDATORS = {
 }
 
 
-def _now():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-
 def _validate_choice(value, allowed, label):
     if value is None or value == '':
         return value
@@ -148,6 +151,10 @@ def get_generation_job_state_counts():
     return generation_jobs.state_counts(get_conn)
 
 
+def prune_generation_job_history(updated_before):
+    return generation_jobs.prune_history(get_conn, updated_before)
+
+
 _amount_pair = money_fields.amount_pair
 
 
@@ -158,22 +165,8 @@ def _normalize_docx_paths_in_db(conn):
 @contextmanager
 def get_conn():
     active = _ACTIVE_CONNECTION.get()
-    if active is not None:
-        yield active
-        return
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.execute('PRAGMA foreign_keys = ON')
-    conn.execute('PRAGMA busy_timeout = 30000')
-    conn.row_factory = sqlite3.Row
-    try:
+    with transaction(DB_PATH, directory=DATA_DIR, existing=active) as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def init_db():
@@ -212,11 +205,8 @@ LEGACY_CONTRACT_COLUMNS = {
 
 def _ensure_legacy_contract_columns(conn):
     """Repair pre-migration contract tables before indexes are created."""
-    rows = conn.execute('PRAGMA table_info(contracts)').fetchall()
-    existing = {row['name'] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
     for column, definition in LEGACY_CONTRACT_COLUMNS.items():
-        if column not in existing:
-            conn.execute(f'ALTER TABLE contracts ADD COLUMN {column} {definition}')
+        ensure_column(conn, 'contracts', column, definition)
 
 def _deduplicate_contract_numbers(conn):
     """迁移唯一索引前，为历史重复编号生成可追溯的新编号。"""
@@ -260,42 +250,22 @@ def _deduplicate_contract_numbers(conn):
 
 def get_schema_version():
     """Return the installed ledger schema version without changing the database."""
-    if not os.path.isfile(DB_PATH) or os.path.getsize(DB_PATH) == 0:
-        return 0
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
-        ).fetchone()
-        if not table:
-            return 0
-        row = conn.execute('SELECT MAX(version) FROM schema_version').fetchone()
-        return int(row[0] or 0) if row else 0
-    finally:
-        conn.close()
+    return read_schema_version(DB_PATH, 'schema_version')
 
 
 @contextmanager
 def read_snapshot():
     """Reuse one query-only SQLite snapshot across nested store calls."""
     active = _ACTIVE_CONNECTION.get()
-    if active is not None:
-        yield active
-        return
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.execute('PRAGMA foreign_keys = ON')
-    conn.execute('PRAGMA busy_timeout = 30000')
-    conn.execute('PRAGMA query_only = ON')
-    conn.row_factory = sqlite3.Row
-    conn.execute('BEGIN')
-    token = _ACTIVE_CONNECTION.set(conn)
-    try:
-        yield conn
-    finally:
-        conn.rollback()
-        _ACTIVE_CONNECTION.reset(token)
-        conn.close()
+    with query_snapshot(DB_PATH, directory=DATA_DIR, existing=active) as conn:
+        if active is not None:
+            yield conn
+            return
+        token = _ACTIVE_CONNECTION.set(conn)
+        try:
+            yield conn
+        finally:
+            _ACTIVE_CONNECTION.reset(token)
 
 
 def needs_migration():
@@ -303,71 +273,69 @@ def needs_migration():
 
 
 def run_migrations():
-    # 先读取当前版本（只读，不需要事务保护）
-    with get_conn() as conn:
-        cur = conn.execute('SELECT MAX(version) FROM schema_version')
-        row = cur.fetchone()
-        current = row[0] if row and row[0] is not None else 0
+    steps = [
+        MigrationStep(
+            version,
+            partial(
+                _apply_ledger_migration,
+                version=version,
+                forward_sql=forward_sql,
+            ),
+        )
+        for version, forward_sql, _rollback_sql in MIGRATIONS
+    ]
+    run_versioned_migrations(
+        get_conn,
+        current_version=get_schema_version(),
+        steps=steps,
+        namespace='ledger',
+        record_version=_record_ledger_version,
+        on_error=lambda version, exc: get_logger().error(
+            '数据库迁移 v%d 失败: %s', version, exc
+        ),
+    )
 
-    # 每个迁移版本使用独立事务，避免后续版本失败时回滚已成功的迁移
-    for version, forward_sql, _rollback_sql in MIGRATIONS:
-        if version <= current:
-            continue
-        with get_conn() as conn:
-            savepoint = f'ledger_migration_v{version}'
-            conn.execute(f'SAVEPOINT {savepoint}')
-            try:
-                if version == 8:
-                    _deduplicate_contract_numbers(conn)
-                if version == 17:
-                    existing_columns = {
-                        row[1] for row in conn.execute('PRAGMA table_info(contracts)').fetchall()
-                    }
-                    import_columns = {
-                        'record_origin': (
-                            "TEXT NOT NULL DEFAULT 'generated' "
-                            "CHECK(record_origin IN ('generated','imported'))"
-                        ),
-                        'original_filename': "TEXT DEFAULT ''",
-                        'source_sha256': "TEXT DEFAULT ''",
-                    }
-                    for column, definition in import_columns.items():
-                        if column not in existing_columns:
-                            conn.execute(
-                                f'ALTER TABLE contracts ADD COLUMN {column} {definition}'
-                            )
-                conn.execute(forward_sql)
-            except sqlite3.OperationalError as e:
-                # 新 init_db 已在 CREATE TABLE 中包含该列，跳过重复添加
-                if 'duplicate column name' in str(e).lower() or 'already exists' in str(e).lower():
-                    get_logger().info('迁移 v%d 列已存在（来自 init_db），跳过', version)
-                else:
-                    raise
-            except Exception as e:
-                conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
-                conn.execute(f'RELEASE SAVEPOINT {savepoint}')
-                get_logger().error('数据库迁移 v%d 失败: %s', version, e)
-                raise
-            backfill_sql = MIGRATION_BACKFILLS.get(version)
-            if backfill_sql:
-                conn.execute(backfill_sql)
-            if version == DOCUMENT_PATH_MIGRATION_VERSION:
-                _normalize_docx_paths_in_db(conn)
-            conn.execute(
-                'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
-                (version, _now()),
-            )
-            conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+
+def _apply_ledger_migration(conn, *, version, forward_sql):
+    if version == 8:
+        _deduplicate_contract_numbers(conn)
+    if version == 17:
+        import_columns = {
+            'record_origin': (
+                "TEXT NOT NULL DEFAULT 'generated' "
+                "CHECK(record_origin IN ('generated','imported'))"
+            ),
+            'original_filename': "TEXT DEFAULT ''",
+            'source_sha256': "TEXT DEFAULT ''",
+        }
+        for column, definition in import_columns.items():
+            ensure_column(conn, 'contracts', column, definition)
+    try:
+        conn.execute(forward_sql)
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        if 'duplicate column name' in message or 'already exists' in message:
+            get_logger().info('迁移 v%d 列已存在（来自 init_db），跳过', version)
+        else:
+            raise
+    backfill_sql = MIGRATION_BACKFILLS.get(version)
+    if backfill_sql:
+        conn.execute(backfill_sql)
+    if version == DOCUMENT_PATH_MIGRATION_VERSION:
+        _normalize_docx_paths_in_db(conn)
+
+
+def _record_ledger_version(conn, version):
+    conn.execute(
+        'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
+        (version, _now()),
+    )
 
 
 def close_connections():
     """Checkpoint WAL to prevent data loss on unclean shutdown."""
-    if not os.path.isfile(DB_PATH):
-        return
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        conn.close()
+        checkpoint_wal(DB_PATH)
     except Exception:
         get_logger().warning('WAL checkpoint 失败', exc_info=True)
 
@@ -587,6 +555,19 @@ def contract_no_exists(contract_no, exclude_id=None):
         params.append(int(exclude_id))
     with get_conn() as conn:
         return conn.execute(sql, params).fetchone() is not None
+
+
+def get_contract_by_contract_no(contract_no):
+    """Return the contract using an exact non-empty business number."""
+    contract_no = str(contract_no or '').strip()
+    if not contract_no:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM contracts WHERE contract_no = ? LIMIT 1',
+            (contract_no,),
+        ).fetchone()
+    return row_to_dict(row)
 
 
 def get_contract_by_source_sha256(source_sha256):

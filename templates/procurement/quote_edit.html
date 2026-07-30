@@ -9,7 +9,7 @@
       <h1 class="text-2xl font-bold">编辑供应商报价</h1>
       <p class="text-sm text-base-content/50 mt-1">{{ quote.supplier_name }} / 第 {{ quote.quote_round }} 轮 / {{ quote.currency }}</p>
     </div>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('procurement_project_detail', project_id=project_id) }}#quotes">返回项目</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('procurement.procurement_project_detail', project_id=project_id) }}#quotes">返回项目</a>
   </div>
 
   {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
@@ -62,7 +62,7 @@
       </section>
     </fieldset>
     <div class="flex justify-end gap-2 mt-5">
-      <a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project_id) }}#quotes">取消</a>
+      <a class="btn btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=project_id) }}#quotes">取消</a>
       {% if not quote.is_locked %}<button class="btn btn-primary">保存报价</button>{% endif %}
     </div>
   </form>

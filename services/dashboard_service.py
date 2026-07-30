@@ -7,13 +7,14 @@ from datetime import date
 import ledger_store
 import template_def
 from services import workbench_service
-from utils import helpers
+from utils.generation_utils import next_month_ym
+from utils.labels import CONTRACT_STATUS_LABELS
 
 
 def build_dashboard_snapshot(today=None):
     today = today or date.today()
     with ledger_store.read_snapshot():
-        next_year, next_month_number = helpers.next_month_ym(today)
+        next_year, next_month_number = next_month_ym(today)
         return {
             'contract_stats': ledger_store.get_contract_stats(),
             'payment_stats': ledger_store.get_payment_stats(),
@@ -25,6 +26,6 @@ def build_dashboard_snapshot(today=None):
             'project_progress': ledger_store.get_project_progress_stats(),
             'recent_templates': template_def.list_templates()[:5],
             'workbench': workbench_service.build_workbench(today=today),
-            'status_labels': helpers.CONTRACT_STATUS_LABELS,
+            'status_labels': CONTRACT_STATUS_LABELS,
             'today': today,
         }

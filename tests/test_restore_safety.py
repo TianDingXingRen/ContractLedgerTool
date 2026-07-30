@@ -88,6 +88,72 @@ def test_restore_initialization_failure_rolls_back_previous_database(tmp_db, mon
     assert ledger_store.get_contract_stats()['total'] == 2
 
 
+def test_full_backup_waits_for_active_write_request(app, monkeypatch):
+    contract_id = ledger_store.create_contract({'title': 'before write'}, {}, '')
+    writer_ready = threading.Event()
+    release_writer = threading.Event()
+    backup_entered = threading.Event()
+    backup_done = threading.Event()
+    failures = []
+    packages = []
+    original_copy = handover_service._copy_database
+
+    def observed_copy(*args, **kwargs):
+        backup_entered.set()
+        return original_copy(*args, **kwargs)
+
+    monkeypatch.setattr(handover_service, '_copy_database', observed_copy)
+
+    def writer():
+        token, context_token = maintenance_gate.enter_request()
+        try:
+            with ledger_store.get_conn() as connection:
+                connection.execute(
+                    "UPDATE contracts SET title = 'committed write' WHERE id = ?",
+                    (contract_id,),
+                )
+                writer_ready.set()
+                assert release_writer.wait(5)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            maintenance_gate.leave_request(token, context_token)
+
+    def creator():
+        try:
+            packages.append(
+                handover_service.create_full_backup_package(
+                    'consistent_snapshot',
+                    paths=app.extensions['runtime_paths'],
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            backup_done.set()
+
+    writer_thread = threading.Thread(target=writer)
+    backup_thread = threading.Thread(target=creator)
+    writer_thread.start()
+    assert writer_ready.wait(5)
+    backup_thread.start()
+    time.sleep(0.2)
+    assert not backup_entered.is_set()
+    assert not backup_done.is_set()
+
+    release_writer.set()
+    writer_thread.join(5)
+    backup_thread.join(5)
+
+    assert not failures
+    assert backup_entered.is_set()
+    assert packages
+    assert handover_service.validate_full_backup_package(
+        packages[0]['path'],
+        paths=app.extensions['runtime_paths'],
+    )['package_type'] == handover_service.PACKAGE_TYPE
+
+
 def test_full_restore_procurement_init_failure_rolls_back_everything(app, monkeypatch):
     ledger_store.create_contract({'title': 'package value'}, {}, '')
     package = handover_service.create_full_backup_package('failure_test')

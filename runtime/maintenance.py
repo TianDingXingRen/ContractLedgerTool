@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 import time
+from datetime import datetime
 
 import ledger_store
 import template_def
@@ -16,10 +17,16 @@ from utils.logger import get_logger
 def cleanup_old_files(paths, config, max_age_days=None):
     """Remove expired upload/output/session files for the active runtime."""
     now = time.time()
-    file_max_age_days = (
+    output_max_age_days = (
         max_age_days if max_age_days is not None else config.OUTPUT_CLEANUP_DAYS
     )
-    cutoff = now - file_max_age_days * 86400
+    upload_max_age_days = (
+        max_age_days
+        if max_age_days is not None
+        else getattr(config, 'CLEANUP_DAYS', output_max_age_days)
+    )
+    output_cutoff = now - output_max_age_days * 86400
+    upload_cutoff = now - upload_max_age_days * 86400
 
     preserved = set()
     try:
@@ -27,8 +34,31 @@ def cleanup_old_files(paths, config, max_age_days=None):
             if path:
                 preserved.add(os.path.normpath(os.path.abspath(path)))
     except (OSError, sqlite3.Error, ValueError) as e:
-        get_logger().error('无法读取合同台账，跳过文件清理以避免数据丢失：%s', e)
+        get_logger().error(
+            '无法读取合同台账，跳过文件清理以避免数据丢失：%s', e
+        )
         return
+
+    try:
+        for job in ledger_store.list_unfinished_generation_jobs():
+            for key in ('output_path', 'staging_path'):
+                raw_path = job.get(key)
+                if raw_path:
+                    resolved = ledger_store.resolve_docx_path(raw_path)
+                    preserved.add(os.path.normpath(os.path.abspath(resolved)))
+    except (OSError, sqlite3.Error, ValueError) as e:
+        if (
+            isinstance(e, sqlite3.Error)
+            and 'no such table: contract_generation_jobs' in str(e)
+        ):
+            get_logger().warning(
+                '旧版数据库尚无生成任务表；继续按合同台账保护路径执行清理'
+            )
+        else:
+            get_logger().error(
+                '无法读取未完成生成任务，跳过文件清理以避免数据丢失：%s', e
+            )
+            return
 
     uploads_safe_to_clean = True
     try:
@@ -50,9 +80,9 @@ def cleanup_old_files(paths, config, max_age_days=None):
         uploads_safe_to_clean = False
         get_logger().warning('读取模板列表失败，upload 保护可能不完整：%s', e)
 
-    for folder, label in (
-        (paths.uploads_dir, 'uploads'),
-        (paths.output_dir, 'output'),
+    for folder, label, cutoff in (
+        (paths.uploads_dir, 'uploads', upload_cutoff),
+        (paths.output_dir, 'output', output_cutoff),
     ):
         if label == 'uploads' and not uploads_safe_to_clean:
             get_logger().warning('存在无法读取的模板，跳过 upload 清理以避免误删源文件')
@@ -67,6 +97,25 @@ def cleanup_old_files(paths, config, max_age_days=None):
                     item.unlink()
                     get_logger().info('Cleaned old %s file: %s', label, item.name)
         except Exception as e:
+            get_logger().warning('清理 %s 目录时出错：%s', label, e)
+
+    for folder, label, cutoff in (
+        (paths.generation_staging_dir, 'generation staging', output_cutoff),
+        (paths.generation_recovery_dir, 'generation recovery', output_cutoff),
+        (paths.data_dir / 'invoice_files' / '.trash', 'invoice trash', upload_cutoff),
+    ):
+        try:
+            if not folder.is_dir() or folder.is_symlink():
+                continue
+            for item in folder.rglob('*'):
+                if not item.is_file() or item.is_symlink():
+                    continue
+                if os.path.normpath(os.path.abspath(item)) in preserved:
+                    continue
+                if item.stat().st_mtime < cutoff:
+                    item.unlink()
+                    get_logger().info('Cleaned old %s file: %s', label, item.name)
+        except (OSError, ValueError) as e:
             get_logger().warning('清理 %s 目录时出错：%s', label, e)
 
     session_cutoff = now - config.SESSION_TTL_HOURS * 3600
@@ -99,6 +148,17 @@ def cleanup_old_files(paths, config, max_age_days=None):
                 get_logger().info('Cleaned old session file: %s', item.name)
     except Exception as e:
         get_logger().warning('清理 sessions 目录时出错：%s', e)
+
+    history_days = getattr(config, 'GENERATION_HISTORY_DAYS', 30)
+    history_cutoff = datetime.fromtimestamp(
+        now - int(history_days) * 86400
+    ).strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        deleted = ledger_store.prune_generation_job_history(history_cutoff)
+        if deleted:
+            get_logger().info('Pruned %d old generation job row(s)', deleted)
+    except (OSError, sqlite3.Error, ValueError) as e:
+        get_logger().warning('清理历史生成任务记录时出错：%s', e)
 
 
 def seed_packaged_assets(paths):

@@ -10,7 +10,7 @@
     </div>
 </div>
 
-<form id="billForm" method="post" action="{{ url_for('excel_bill_generate') }}" enctype="multipart/form-data">
+<form id="billForm" method="post" action="{{ url_for('excel_bill.excel_bill_generate') }}" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="preset_key" id="presetKey" value="standard_pr">
     <input type="hidden" name="header_data" id="headerData" value="{}">

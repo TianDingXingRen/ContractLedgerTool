@@ -8,7 +8,7 @@
       <h1 class="text-2xl font-bold mb-1">导入标准报价</h1>
       <p class="text-sm text-base-content/50 mb-5">{{ project.project_no }} / {{ project.project_name }}</p>
     </div>
-    <a class="btn btn-sm" href="{{ url_for('procurement_quote_mapping_upload', project_id=project.id) }}">非标准文件映射</a>
+    <a class="btn btn-sm" href="{{ url_for('procurement.procurement_quote_mapping_upload', project_id=project.id) }}">非标准文件映射</a>
   </div>
 
   {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
@@ -38,17 +38,17 @@
         <button
           class="btn btn-outline"
           type="submit"
-          formaction="{{ url_for('procurement_quote_template_selected', project_id=project.id) }}"
-          formmethod="get"
+          formaction="{{ url_for('procurement.procurement_quote_template_selected', project_id=project.id) }}"
+          formmethod="post"
           formnovalidate
         >下载标准报价模板</button>
-        <a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回</a>
+        <a class="btn btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">返回</a>
         <button class="btn btn-primary" type="submit">解析文件</button>
       </div>
     </div>
   </form>
 
-  <form method="post" enctype="multipart/form-data" action="{{ url_for('procurement_quote_pdf_upload', project_id=project.id) }}" class="card bg-base-100 border border-base-300 mt-4">
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('procurement.procurement_quote_pdf_upload', project_id=project.id) }}" class="card bg-base-100 border border-base-300 mt-4">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card-body gap-4">
       <div>
@@ -73,7 +73,7 @@
         <input class="file-input file-input-bordered" required type="file" accept=".pdf" name="file">
       </label>
       <div class="flex flex-wrap justify-end gap-2">
-        <a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回项目</a>
+        <a class="btn btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">返回项目</a>
         <button class="btn btn-primary" type="submit">上传 PDF 原件</button>
       </div>
     </div>

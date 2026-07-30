@@ -11,9 +11,12 @@ import zipfile
 from datetime import date, datetime
 
 import ledger_store
-import template_def
 import xlsx_exporter
 from core.maintenance_gate import maintenance_gate
+from ledger_store.schema import CURRENT_SCHEMA_VERSION as LEDGER_SCHEMA_VERSION
+from procurement_store.schema import CURRENT_SCHEMA_VERSION as PROCUREMENT_SCHEMA_VERSION
+from runtime.app_state import app_state
+from runtime.paths import RuntimePaths
 from services.handover_archive import (
     add_directory as _add_directory,
     add_file as _add_file,
@@ -22,13 +25,12 @@ from services.handover_archive import (
     normalize_archive_name as _normalize_archive_name,
     safe_label as _safe_label,
     sha256_zip_member as _sha256_zip_member,
-    validate_sqlite_file as _validate_sqlite_file,
+    validate_application_database as _validate_application_database,
     validate_package_archive as _validate_package_archive,
     read_optional_text as _read_optional_text,
     remove_file_if_exists as _remove_file_if_exists,
     MAX_MANIFEST_BYTES,
 )
-from utils import helpers
 from utils.labels import (
     CONTRACT_STATUS_LABELS, CONFIRM_STATUS_LABELS, PAYMENT_STATUS_LABELS,
     PROCUREMENT_METHOD_LABELS, PROCUREMENT_STATUS_LABELS,
@@ -46,12 +48,16 @@ def _now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
-def _base_dir():
-    return os.path.abspath(helpers.BASE_DIR or os.path.dirname(ledger_store.DATA_DIR))
+def _runtime_paths(paths=None):
+    if paths is not None:
+        return paths
+    if app_state.is_configured():
+        return app_state.paths
+    return RuntimePaths.create(os.path.dirname(ledger_store.DATA_DIR))
 
 
-def _dir_or_default(value, name):
-    return os.path.abspath(value or os.path.join(_base_dir(), name))
+def _base_dir(paths=None):
+    return str(_runtime_paths(paths).base_dir)
 
 
 def _package_dir():
@@ -64,11 +70,12 @@ def _data_subdir(name):
     return os.path.abspath(os.path.join(ledger_store.DATA_DIR, name))
 
 
-def _restore_targets():
+def _restore_targets(paths=None):
+    paths = _runtime_paths(paths)
     return {
         'config.json': {
             'kind': 'file',
-            'path': os.path.abspath(os.path.join(_base_dir(), 'config.json')),
+            'path': str(paths.config_file),
         },
         'data/contracts.db': {
             'kind': 'file',
@@ -84,25 +91,30 @@ def _restore_targets():
         },
         'uploads': {
             'kind': 'dir',
-            'path': _dir_or_default(helpers.UPLOAD_FOLDER, 'uploads'),
+            'path': str(paths.uploads_dir),
         },
         'templates': {
             'kind': 'dir',
-            'path': os.path.abspath(template_def.TEMPLATES_DIR),
+            'path': str(paths.templates_dir),
         },
         'output': {
             'kind': 'dir',
-            'path': _dir_or_default(helpers.OUTPUT_FOLDER, 'output'),
+            'path': str(paths.output_dir),
         },
     }
 
 
-def _member_allowed(name):
-    return member_allowed(name, _restore_targets(), MANIFEST_NAME)
+def _member_allowed(name, paths=None):
+    return member_allowed(name, _restore_targets(paths), MANIFEST_NAME)
 
 
-def create_full_backup_package(label='handover'):
-    """Create a complete handover ZIP package and return file metadata."""
+def create_full_backup_package(label='handover', paths=None):
+    with maintenance_gate.exclusive():
+        return _create_full_backup_package_unlocked(label=label, paths=paths)
+
+
+def _create_full_backup_package_unlocked(label='handover', paths=None):
+    paths = _runtime_paths(paths)
     packages_dir = _package_dir()
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     target_name = f'handover_full_{stamp}_{uuid.uuid4().hex[:8]}.zip'
@@ -115,9 +127,13 @@ def create_full_backup_package(label='handover'):
     roots = []
     try:
         _copy_database(ledger_store.DB_PATH, temp_db)
-        _validate_sqlite_file(temp_db)
+        database_info = _validate_application_database(
+            temp_db,
+            max_ledger_version=LEDGER_SCHEMA_VERSION,
+            max_procurement_version=PROCUREMENT_SCHEMA_VERSION,
+        )
         with zipfile.ZipFile(target_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            config_path = os.path.join(_base_dir(), 'config.json')
+            config_path = str(paths.config_file)
             roots.append({
                 'path': 'config.json',
                 'kind': 'file',
@@ -130,17 +146,20 @@ def create_full_backup_package(label='handover'):
             })
             roots.append(_add_directory(zf, _data_subdir('excel_bill_defaults'), 'data/excel_bill_defaults', records))
             roots.append(_add_directory(zf, _data_subdir('invoice_files'), 'data/invoice_files', records))
-            roots.append(_add_directory(zf, _dir_or_default(helpers.UPLOAD_FOLDER, 'uploads'), 'uploads', records))
-            roots.append(_add_directory(zf, template_def.TEMPLATES_DIR, 'templates', records))
-            roots.append(_add_directory(zf, _dir_or_default(helpers.OUTPUT_FOLDER, 'output'), 'output', records))
+            roots.append(_add_directory(zf, str(paths.uploads_dir), 'uploads', records))
+            roots.append(_add_directory(zf, str(paths.templates_dir), 'templates', records))
+            roots.append(_add_directory(zf, str(paths.output_dir), 'output', records))
             manifest = {
                 'package_type': PACKAGE_TYPE,
                 'manifest_version': 1,
                 'created_at': _now(),
-                'app': {'version': _read_optional_text(os.path.join(_base_dir(), 'version.txt'))},
+                'app': {'version': _read_optional_text(
+                    os.path.join(str(paths.base_dir), 'version.txt')
+                )},
                 'database': {
                     'archive_path': 'data/contracts.db',
                     'integrity_ok': True,
+                    **database_info,
                 },
                 'roots': roots,
                 'files': records,
@@ -220,10 +239,13 @@ def read_package_manifest(path):
             manifest = json.loads(f.read(MAX_MANIFEST_BYTES + 1).decode('utf-8'))
     if manifest.get('package_type') != PACKAGE_TYPE:
         raise ValueError('不是本工具生成的完整数据包')
+    if manifest.get('manifest_version') != 1:
+        raise ValueError('完整数据包清单版本不受支持')
     return manifest
 
 
-def validate_full_backup_package(path):
+def validate_full_backup_package(path, paths=None):
+    paths = _runtime_paths(paths)
     if not zipfile.is_zipfile(path):
         raise ValueError('完整数据包不是有效 ZIP 文件')
     with zipfile.ZipFile(path, 'r') as zf:
@@ -233,7 +255,7 @@ def validate_full_backup_package(path):
             raise ValueError('完整数据包缺少 manifest.json')
         for info in archive_infos:
             normalized = _normalize_archive_name(info.filename)
-            if not _member_allowed(normalized):
+            if not _member_allowed(normalized, paths):
                 raise ValueError('完整数据包包含不允许恢复的路径')
         manifest = read_package_manifest(path)
         manifest_files = {}
@@ -267,13 +289,23 @@ def validate_full_backup_package(path):
         try:
             with zf.open('data/contracts.db') as src, open(temp_db, 'wb') as dst:
                 shutil.copyfileobj(src, dst)
-            _validate_sqlite_file(temp_db)
+            database_info = _validate_application_database(
+                temp_db,
+                max_ledger_version=LEDGER_SCHEMA_VERSION,
+                max_procurement_version=PROCUREMENT_SCHEMA_VERSION,
+            )
+            manifest_database = manifest.get('database') or {}
+            for key, actual in database_info.items():
+                declared = manifest_database.get(key)
+                if declared is not None and int(declared) != actual:
+                    raise ValueError('完整数据包声明的数据库版本与实际内容不一致')
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
     return manifest
 
 
-def upload_full_backup_package(file_storage):
+def upload_full_backup_package(file_storage, paths=None):
+    paths = _runtime_paths(paths)
     filename = os.path.basename(getattr(file_storage, 'filename', '') or '')
     if not filename:
         raise ValueError('请选择要上传的完整数据包')
@@ -284,7 +316,7 @@ def upload_full_backup_package(file_storage):
     temp_path = os.path.abspath(os.path.join(packages_dir, f'.upload_{uuid.uuid4().hex}.zip'))
     file_storage.save(temp_path)
     try:
-        validate_full_backup_package(temp_path)
+        validate_full_backup_package(temp_path, paths)
         target_name = (
             f'uploaded_{datetime.now().strftime("%Y%m%d_%H%M%S")}_'
             f'{uuid.uuid4().hex[:12]}.zip'
@@ -325,10 +357,10 @@ def _extract_zip_safe(path, target_dir):
                 shutil.copyfileobj(src, dst)
 
 
-def _replace_from_staging(staging_dir, originals_dir):
+def _replace_from_staging(staging_dir, originals_dir, paths=None):
     moved_originals = []
     copied_targets = []
-    targets = _restore_targets()
+    targets = _restore_targets(paths)
     try:
         for archive_root, spec in targets.items():
             stage_path = os.path.join(staging_dir, archive_root.replace('/', os.sep))
@@ -385,13 +417,17 @@ def _rollback_replacements(moved_originals, copied_targets):
             shutil.move(backup_path, target_path)
 
 
-def restore_full_backup_package(filename):
+def restore_full_backup_package(filename, paths=None):
     import procurement_store
 
+    paths = _runtime_paths(paths)
     with maintenance_gate.exclusive():
         path = full_package_path(filename)
-        manifest = validate_full_backup_package(path)
-        rollback = create_full_backup_package(label='before_full_restore')
+        manifest = validate_full_backup_package(path, paths)
+        rollback = _create_full_backup_package_unlocked(
+            label='before_full_restore',
+            paths=paths,
+        )
 
         staging_dir = tempfile.mkdtemp(prefix='restore_stage_', dir=_package_dir())
         originals_dir = tempfile.mkdtemp(prefix='restore_original_', dir=_package_dir())
@@ -399,7 +435,11 @@ def restore_full_backup_package(filename):
         try:
             ledger_store.close_connections()
             _extract_zip_safe(path, staging_dir)
-            replacement_state = _replace_from_staging(staging_dir, originals_dir)
+            replacement_state = _replace_from_staging(
+                staging_dir,
+                originals_dir,
+                paths,
+            )
             ledger_store.init_db()
             procurement_store.init_db()
             return {'rollback': rollback, 'manifest': manifest}
@@ -470,13 +510,13 @@ def _minor_to_amount(value):
         return 0
 
 
-def _rel_path(path):
+def _rel_path(path, paths=None):
     if not path:
         return ''
     raw = str(path)
     if not os.path.isabs(raw):
         return raw.replace('\\', '/')
-    base = _base_dir()
+    base = _base_dir(paths)
     if path_within(base, raw):
         return os.path.relpath(raw, base).replace(os.sep, '/')
     return raw
@@ -507,7 +547,7 @@ def _project_filters(include_closed):
     return clauses
 
 
-def build_handover_data(owner, include_closed=False, today=None):
+def build_handover_data(owner, include_closed=False, today=None, paths=None):
     owner = str(owner or '').strip()
     if not owner:
         raise ValueError('请输入离职员工姓名')
@@ -584,7 +624,7 @@ def build_handover_data(owner, include_closed=False, today=None):
             - _minor_to_amount(row.get('paid_total_minor')),
             2,
         )
-        row['docx_path'] = _rel_path(row.get('docx_path'))
+        row['docx_path'] = _rel_path(row.get('docx_path'), paths)
 
     for row in payments:
         row['confirm_status_label'] = CONFIRM_STATUS_LABELS.get(
@@ -711,8 +751,10 @@ def build_handover_data(owner, include_closed=False, today=None):
     }
 
 
-def export_handover_checklist(output_dir, owner, include_closed=False):
-    data = build_handover_data(owner, include_closed=include_closed)
+def export_handover_checklist(
+    output_dir, owner, include_closed=False, paths=None,
+):
+    data = build_handover_data(owner, include_closed=include_closed, paths=paths)
     os.makedirs(output_dir, exist_ok=True)
     safe_owner = _safe_label(data['owner'], 'employee')
     filename = f'handover_{safe_owner}_{date.today().strftime("%Y%m%d")}_{uuid.uuid4().hex[:8]}.xlsx'

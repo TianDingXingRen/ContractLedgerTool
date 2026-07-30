@@ -32,6 +32,46 @@ def _latest_quote_data(project_id):
     return quotes
 
 
+def run_configured_comparison(project_id, form):
+    try:
+        threshold = Decimal(
+            str(form.get('threshold_percent') or 20)
+        )
+        min_valid = int(form.get('min_valid_suppliers') or 2)
+    except (ValueError, ArithmeticError) as exc:
+        raise ValueError(
+            '比价阈值或最小供应商数量超出范围'
+        ) from exc
+    if (
+        not threshold.is_finite()
+        or threshold < 0
+        or threshold > 100
+        or min_valid < 2
+        or min_valid > 20
+    ):
+        raise ValueError(
+            '比价阈值或最小供应商数量超出范围'
+        )
+    procurement_store.save_rule_config(
+        project_id,
+        {
+            'price_threshold_percent': threshold,
+            'min_valid_suppliers': min_valid,
+            'require_same_price_basis': (
+                form.get('require_same_price_basis') == '1'
+            ),
+        },
+    )
+    return run_comparison(project_id, threshold)
+
+
+def update_clarification(question_id, form):
+    return procurement_store.update_clarification(
+        question_id,
+        form,
+    )
+
+
 def run_comparison(project_id, threshold_percent=None):
     project = procurement_store.get_project(project_id)
     items = procurement_store.list_project_items(project_id)

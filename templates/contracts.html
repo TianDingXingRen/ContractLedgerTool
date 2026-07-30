@@ -14,15 +14,20 @@
         </p>
     </div>
     <div class="flex flex-wrap gap-2 lg:justify-end">
-        <a href="{{ url_for('index') }}" class="apple-btn apple-btn-ghost">首页</a>
+        <a href="{{ url_for('contracts.index') }}" class="apple-btn apple-btn-ghost">首页</a>
         {% if not trash_mode %}
-        <a href="{{ url_for('contract_export', q=q, status=status) }}" class="apple-btn apple-btn-ghost">
-            <i data-lucide="download" style="width:15px;height:15px"></i> 导出
-        </a>
-        <a href="{{ url_for('contract_import') }}" class="apple-btn apple-btn-ghost">
+        <form method="post" action="{{ url_for('contracts.contract_export') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="q" value="{{ q }}">
+            <input type="hidden" name="status" value="{{ status }}">
+            <button type="submit" class="apple-btn apple-btn-ghost">
+                <i data-lucide="download" style="width:15px;height:15px"></i> 导出
+            </button>
+        </form>
+        <a href="{{ url_for('contract_import.contract_import') }}" class="apple-btn apple-btn-ghost">
             <i data-lucide="file-input" style="width:15px;height:15px"></i> 导入合同
         </a>
-        <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-primary">
+        <a href="{{ url_for('templates.list_templates') }}" class="apple-btn apple-btn-primary">
             <i data-lucide="plus" style="width:15px;height:15px"></i> 生成合同
         </a>
         {% endif %}
@@ -34,25 +39,25 @@
     {% if total > 0 %}
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--apple-text3);font-weight:500;margin-right:4px">状态筛选:</span>
-        <a href="{{ url_for('contract_ledger', view=current_view, q=q) }}" class="apple-badge {{ 'blue' if not status else 'gray' }}" style="text-decoration:none;padding:4px 12px;font-size:12px">全部 {{ total }}</a>
+        <a href="{{ url_for('contracts.contract_ledger', view=current_view, q=q) }}" class="apple-badge {{ 'blue' if not status else 'gray' }}" style="text-decoration:none;padding:4px 12px;font-size:12px">全部 {{ total }}</a>
         {% for sk in ['draft','signed','active','completed','void'] %}
         {% set sc = 'orange' if sk == 'draft' else 'blue' if sk in ('signed','active') else 'green' if sk == 'completed' else 'gray' %}
-        <a href="{{ url_for('contract_ledger', view=current_view, status=sk, q=q) }}" class="apple-badge {{ sc }}" style="text-decoration:none;padding:4px 12px;font-size:12px;{% if status == sk %}font-weight:700;box-shadow:inset 0 0 0 1px currentColor{% endif %}">
+        <a href="{{ url_for('contracts.contract_ledger', view=current_view, status=sk, q=q) }}" class="apple-badge {{ sc }}" style="text-decoration:none;padding:4px 12px;font-size:12px;{% if status == sk %}font-weight:700;box-shadow:inset 0 0 0 1px currentColor{% endif %}">
             {{ contract_status_labels.get(sk, sk) }}
         </a>
         {% endfor %}
         {% if status %}
-        <a href="{{ url_for('contract_ledger', view=current_view, q=q) }}" style="font-size:11px;color:var(--apple-red);text-decoration:none;margin-left:4px">清除</a>
+        <a href="{{ url_for('contracts.contract_ledger', view=current_view, q=q) }}" style="font-size:11px;color:var(--apple-red);text-decoration:none;margin-left:4px">清除</a>
         {% endif %}
     </div>
     {% else %}
     <span style="font-size:12px;color:var(--apple-text3)">暂无可筛选记录</span>
     {% endif %}
     <nav class="ledger-view-switch" aria-label="合同台账视图">
-        <a href="{{ url_for('contract_ledger', view='list', q=q, status=status) }}" class="{{ 'active' if current_view == 'list' }}">
+        <a href="{{ url_for('contracts.contract_ledger', view='list', q=q, status=status) }}" class="{{ 'active' if current_view == 'list' }}">
             <i data-lucide="list"></i> 合同列表
         </a>
-        <a href="{{ url_for('contract_ledger', view='project', q=q, status=status) }}" class="{{ 'active' if current_view == 'project' }}">
+        <a href="{{ url_for('contracts.contract_ledger', view='project', q=q, status=status) }}" class="{{ 'active' if current_view == 'project' }}">
             <i data-lucide="folder-tree"></i> 项目进度
         </a>
     </nav>
@@ -62,14 +67,14 @@
 <div class="apple-section" x-data="{ selected: [], allIds: {{ contract_ids|default([])|tojson }}, toggleAll(el) { this.selected = el.checked ? this.allIds : []; } }">
     <div class="apple-section-header" style="gap:10px;flex-wrap:wrap">
         {% if not trash_mode %}
-        <form method="get" action="{{ url_for('contract_ledger') }}" class="ledger-search-form">
+        <form method="get" action="{{ url_for('contracts.contract_ledger') }}" class="ledger-search-form">
             <input type="hidden" name="view" value="{{ current_view }}">
             {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
             <i data-lucide="search" style="width:16px;height:16px;color:var(--apple-text3);flex-shrink:0"></i>
             <input type="text" name="q" value="{{ q }}" placeholder="搜索合同编号、名称、项目、对方单位..."
                    style="flex:1;border:none;background:transparent;font-size:14px;color:var(--apple-text);outline:none;padding:4px 0">
             {% if q %}
-            <a href="{{ url_for('contract_ledger', view=current_view, status=status) }}" class="apple-btn apple-btn-ghost" style="padding:3px 10px;font-size:11px">清除</a>
+            <a href="{{ url_for('contracts.contract_ledger', view=current_view, status=status) }}" class="apple-btn apple-btn-ghost" style="padding:3px 10px;font-size:11px">清除</a>
             {% endif %}
             <button type="submit" class="apple-btn apple-btn-primary" style="padding:5px 16px;font-size:12px">搜索</button>
         </form>
@@ -83,7 +88,7 @@
     <div x-show="selected.length > 0" x-cloak
          style="display:flex;align-items:center;gap:8px;padding:8px 20px;background:rgba(40,112,200,0.04);border-bottom:0.5px solid var(--apple-sep);font-size:12px;flex-wrap:wrap">
         <span style="color:var(--apple-blue);font-weight:600" x-text="'已选 ' + selected.length + ' 项'"></span>
-        <form method="post" action="{{ url_for('contract_batch_status') }}" style="display:flex;align-items:center;gap:4px">
+        <form method="post" action="{{ url_for('contracts.contract_batch_status') }}" style="display:flex;align-items:center;gap:4px">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="ids" :value="JSON.stringify(selected)">
             <select name="status" style="border:0.5px solid var(--apple-sep);border-radius:6px;padding:3px 6px;font-size:11px;background:var(--apple-card);color:var(--apple-text);outline:none">
@@ -96,7 +101,7 @@
             </select>
             <button type="submit" class="apple-btn" style="padding:3px 10px;font-size:11px;background:var(--apple-blue);color:#fff;border-radius:12px">应用</button>
         </form>
-        <form method="post" action="{{ url_for('contract_batch_delete') }}" style="display:contents"
+        <form method="post" action="{{ url_for('contracts.contract_batch_delete') }}" style="display:contents"
               data-confirm="确认将选中的合同移入回收站？"
               data-confirm-title="批量删除合同"
               data-confirm-ok="删除"
@@ -130,7 +135,7 @@
                 <tr style="{% if st == 'draft' %}background:rgba(224,136,48,0.02){% elif st == 'completed' %}background:rgba(56,160,76,0.02){% elif st == 'void' %}background:rgba(0,0,0,0.01){% endif %}">
                     {% if not trash_mode %}<td><input type="checkbox" value="{{ c.id }}" x-model="selected"></td>{% endif %}
                     <td>
-                        <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                        <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}"
                            style="font-weight:550;color:var(--apple-blue);text-decoration:none;font-size:13px">{{ c.title }}</a>
                         <div style="font-size:11px;color:var(--apple-text3);margin-top:1px">
                             {{ c.contract_no or '未编号' }}
@@ -165,7 +170,7 @@
                         </div>
                     </td>
                     <td>
-                        <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                        <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}"
                            class="apple-btn" style="padding:4px 12px;font-size:11px;background:var(--apple-blue);color:#fff;border-radius:14px;white-space:nowrap">详情</a>
                     </td>
                 </tr>
@@ -192,7 +197,7 @@
         </span>
         {% if pages > 1 %}
         <div style="display:flex;gap:4px;flex-wrap:wrap">
-            {% set list_url = url_for('contract_trash') if trash_mode else url_for('contract_ledger') %}
+            {% set list_url = url_for('contracts.contract_trash') if trash_mode else url_for('contracts.contract_ledger') %}
             {% if page > 1 %}
             <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ page-1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">上一页</a>
             {% endif %}
@@ -255,7 +260,7 @@
             <div style="display:flex;flex-direction:column;gap:3px">
                 {% for c in group[1] %}
                 {% set st = c.status %}
-                <a href="{{ url_for('contract_detail', contract_id=c.id) }}" class="ledger-contract-line">
+                <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}" class="ledger-contract-line">
                     <span class="ledger-coverage-chip {{ 'done' if st in ('signed','active','completed') else 'draft' if st == 'draft' else '' }}">
                         {% if c.coverage_start and c.coverage_end %}{{ c.coverage_start }}-{{ c.coverage_end }}号{% else %}未编号{% endif %}
                     </span>

@@ -1,5 +1,8 @@
 from pathlib import Path
+from dataclasses import FrozenInstanceError
 import importlib
+
+import pytest
 
 
 def _assert_context_applied(app_module, base_dir, resource_dir):
@@ -8,6 +11,7 @@ def _assert_context_applied(app_module, base_dir, resource_dir):
     import template_def
     import utils.autostart as autostart
     from services import procurement_file_service
+    from runtime.app_state import app_state
     from utils import helpers
 
     base = Path(base_dir).resolve()
@@ -29,6 +33,9 @@ def _assert_context_applied(app_module, base_dir, resource_dir):
     assert Path(helpers.OUTPUT_FOLDER) == base / 'output'
     assert Path(helpers.SESSION_FOLDER) == base / 'sessions'
     assert Path(helpers.BASE_DIR) == base
+    assert app_state.paths is app_module.RUNTIME_PATHS
+    for name in ('UPLOAD_FOLDER', 'OUTPUT_FOLDER', 'SESSION_FOLDER', 'BASE_DIR'):
+        assert name not in vars(helpers)
     assert Path(autostart.BASE_DIR) == base
     assert Path(excel_bill_service._get_defaults_dir()) == base / 'data' / 'excel_bill_defaults'
     assert procurement_file_service.BASE_DIR == base / 'output' / 'procurement'
@@ -121,3 +128,21 @@ def test_runtime_base_dir_keeps_dedicated_install_directory(
     monkeypatch.setattr(app_module.sys, 'executable', str(executable))
 
     assert Path(app_module._runtime_base_dir()) == install_dir.resolve()
+
+
+def test_runtime_paths_are_frozen_and_session_stores_are_isolated(tmp_path):
+    from runtime.paths import RuntimePaths
+    from utils.session_store import load_session_data, save_session_data
+
+    first = RuntimePaths.create(tmp_path / 'first')
+    second = RuntimePaths.create(tmp_path / 'second')
+    first.ensure_writable_dirs()
+    second.ensure_writable_dirs()
+
+    save_session_data('same-id', {'runtime': 'first'}, first)
+    save_session_data('same-id', {'runtime': 'second'}, second)
+
+    assert load_session_data('same-id', first) == {'runtime': 'first'}
+    assert load_session_data('same-id', second) == {'runtime': 'second'}
+    with pytest.raises(FrozenInstanceError):
+        first.base_dir = second.base_dir

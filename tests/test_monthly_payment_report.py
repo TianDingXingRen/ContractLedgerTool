@@ -143,19 +143,74 @@ def test_monthly_report_export_matches_template_semantics(tmp_db, tmp_path):
         assert workbook.sheetnames == ['汇总', '火箭项目']
         summary = workbook['汇总']
         detail = workbook['火箭项目']
-        assert summary['A1'].value.startswith('2026年5月合同付款计划汇总')
-        assert summary['B3'].value == '2026年5月计划付款合计'
-        assert detail['A3'].value == '项目名称'
-        assert detail['B3'].value == '合同内编号'
-        assert detail['G3'].value == '本编号金额'
+        assert summary['A1'].value is None
+        assert summary['B2'].value == '项目'
+        assert summary['C2'].value == '5月计划付款合计'
+        assert summary['D2'].value == '本月计划付款'
+        assert summary['E2'].value == '上月已做计划未付款'
+        assert summary['F2'].value == '可用银行承兑支付金额'
+        assert summary['B3'].value == '火箭项目'
+        assert summary['C3'].value == '=SUM(D3:E3)'
+        assert summary['B8'].value == '合计：'
+        assert summary['B12'].value.startswith('说明：本月计划付款合计包括')
+        assert summary.freeze_panes is None
+        assert summary.column_dimensions['B'].width == pytest.approx(21.75)
+        assert summary['B2'].fill.fgColor.rgb in {'000070C0', '0070C0'}
+        assert summary['B2'].font.sz == 14
+        assert detail['A3'].value == '火箭发次\n（项目名称）'
+        assert detail['B3'].value == '合同编号'
+        assert detail['F3'].value == '合同额'
+        assert detail['G3'].value == '付款节点#1\n（金额）'
         assert detail['A4'].value == '火箭项目'
-        assert detail['B4'].value == 101
-        assert detail['G4'].value == 120
-        assert detail['H4'].value == 50
-        assert detail['H4'].fill.fgColor.rgb in {'00FFF2CC', 'FFF2CC'}
-        assert detail['J4'].value == 50
-        assert detail['L4'].value == '=J4+K4'
-        assert summary['B4'].value.startswith("='火箭项目'!")
+        assert detail['B4'].value == 'HT-月报合同'
+        assert detail['F4'].value == 120
+        assert detail['G4'].value == 50
+        assert detail['G4'].fill.fgColor.rgb in {'00FFFF00', 'FFFF00'}
+        assert detail['I4'].value == '=N4+O4'
+        assert detail['I11'].value == '=SUM(O4:O10)'
+        assert detail['I12'].value == '=SUM(N4:N10)'
+        assert detail['I13'].value == '=SUM(I11:I12)'
+        assert detail['N3'].value is None
+        assert detail['O3'].value is None
+        assert detail.column_dimensions['N'].hidden is True
+        assert detail.column_dimensions['O'].hidden is True
+        assert detail['K13'].value == '可用银承支付金额'
+        assert detail['A15'].value == '绿色的表示已付款'
+        assert detail['A16'].value == '黄色表示计划本月付款'
+        assert detail.freeze_panes == 'F4'
+        assert detail.row_dimensions[1].height == 67
+        assert detail.row_dimensions[3].height == 60
+        assert summary['D3'].value == "='火箭项目'!I12"
+        assert summary['E3'].value == "='火箭项目'!I11"
+    finally:
+        workbook.close()
+
+
+def test_monthly_report_expands_rows_for_long_text(tmp_db, tmp_path):
+    project_name = '液体运载火箭贮箱焊接生产线研发与制造'
+    contract_id, serials = _contract_with_serials(
+        title='超长合同名称用于验证导出工作表自动增加行高',
+        project=project_name,
+    )
+    ledger_store.insert_payment_plan(contract_id, {
+        'contract_serial_id': serials[0]['id'],
+        'phase_name': '本月长条件付款',
+        'due_date': '2026-05-20',
+        'due_amount': 500_000,
+        'confirm_status': 'confirmed',
+        'condition_text': '完成全部阶段验收并提交完整签字盖章资料',
+    })
+    report = ledger_store.build_monthly_payment_report('2026-05')
+    output = tmp_path / 'monthly-long-text.xlsx'
+    xlsx_exporter.export_monthly_payment_plan_report(output, report)
+
+    workbook = load_workbook(output, data_only=False)
+    try:
+        summary = workbook['汇总']
+        detail = workbook[project_name]
+        assert summary['B3'].alignment.wrap_text is True
+        assert summary.row_dimensions[3].height > 20
+        assert detail.row_dimensions[4].height > 33
     finally:
         workbook.close()
 
@@ -180,14 +235,28 @@ def test_monthly_report_route_and_payment_page(client):
     assert 'name="plan_0_contract_serial_id"' in detail_html
     assert '不依赖投产通知' in detail_html
 
-    response = client.get('/payment-plans/export?report_month=2026-05')
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'monthly-report-token'
+    response = client.post(
+        '/payment-plans/export',
+        data={
+            'csrf_token': 'monthly-report-token',
+            'report_month': '2026-05',
+        },
+    )
     assert response.status_code == 200
     workbook = load_workbook(io.BytesIO(response.data), data_only=False)
     try:
         assert workbook.sheetnames == ['汇总', '火箭项目']
     finally:
         workbook.close()
-    assert client.get('/payment-plans/export?report_month=2026-13').status_code == 400
+    assert client.post(
+        '/payment-plans/export',
+        data={
+            'csrf_token': 'monthly-report-token',
+            'report_month': '2026-13',
+        },
+    ).status_code == 400
 
 
 def test_empty_monthly_report_has_no_circular_total(tmp_db, tmp_path):
@@ -197,7 +266,13 @@ def test_empty_monthly_report_has_no_circular_total(tmp_db, tmp_path):
     workbook = load_workbook(output, data_only=False)
     try:
         assert workbook.sheetnames == ['汇总']
-        assert workbook['汇总']['B4'].value == 0
-        assert '未发现影响本报表的缺失项' in workbook['汇总']['A6'].value
+        assert workbook['汇总']['B8'].value == '合计：'
+        assert workbook['汇总']['C8'].value == '=SUM(D8:E8)'
+        assert workbook['汇总']['D8'].value == 0
+        assert workbook['汇总']['E8'].value == 0
+        assert workbook['汇总']['F8'].value == 0
+        assert workbook['汇总']['B12'].value.startswith(
+            '说明：本月计划付款合计包括'
+        )
     finally:
         workbook.close()

@@ -44,9 +44,9 @@
             </div>
         </div>
         <div class="flex flex-wrap gap-2">
-            <a href="{{ url_for('payment_plan_list', view='work', payment_status='unpaid') }}" class="apple-btn apple-btn-ghost">处理付款</a>
-            <a href="{{ url_for('procurement_projects') }}" class="apple-btn apple-btn-ghost">采购项目</a>
-            <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-primary">生成合同</a>
+            <a href="{{ url_for('payments.payment_plan_list', view='work', payment_status='unpaid') }}" class="apple-btn apple-btn-ghost">处理付款</a>
+            <a href="{{ url_for('procurement.procurement_projects') }}" class="apple-btn apple-btn-ghost">采购项目</a>
+            <a href="{{ url_for('templates.list_templates') }}" class="apple-btn apple-btn-primary">生成合同</a>
         </div>
     </div>
     {% if workbench['items'] %}
@@ -93,21 +93,21 @@
     </div>
     <div class="workbench-side-body">
         <div class="workbench-action-list">
-            <a href="{{ url_for('payment_plan_list', view='work', payment_status='unpaid') }}" class="workbench-action">
+            <a href="{{ url_for('payments.payment_plan_list', view='work', payment_status='unpaid') }}" class="workbench-action">
                 <i data-lucide="calendar-check"></i>
                 <span>
                     <span class="workbench-action-title">处理待付款</span>
                     <span class="workbench-action-sub">确认、到账、部分付款</span>
                 </span>
             </a>
-            <a href="{{ url_for('list_templates') }}" class="workbench-action">
+            <a href="{{ url_for('templates.list_templates') }}" class="workbench-action">
                 <i data-lucide="file-plus-2"></i>
                 <span>
                     <span class="workbench-action-title">生成合同</span>
                     <span class="workbench-action-sub">选择模板并填写</span>
                 </span>
             </a>
-            <a href="{{ url_for('procurement_projects') }}" class="workbench-action">
+            <a href="{{ url_for('procurement.procurement_projects') }}" class="workbench-action">
                 <i data-lucide="briefcase-business"></i>
                 <span>
                     <span class="workbench-action-title">采购前置</span>
@@ -264,7 +264,7 @@
             </div>
             <div class="apple-section-subtitle">按合同归类号段汇总；草稿和作废合同不计入签署进度</div>
         </div>
-        <a href="{{ url_for('contract_ledger') }}" class="apple-btn apple-btn-ghost">查看合同台账</a>
+        <a href="{{ url_for('contracts.contract_ledger') }}" class="apple-btn apple-btn-ghost">查看合同台账</a>
     </div>
     {% if project_progress %}
     <div class="overflow-x-auto">
@@ -339,7 +339,7 @@
                     </td>
                     <td>{{ c.contract_no or '-' }}</td>
                     <td>
-                        <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                        <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}"
                            style="color:var(--apple-blue);text-decoration:none;font-weight:500"
                            onmouseover="this.style.textDecoration='underline'"
                            onmouseout="this.style.textDecoration='none'">{{ c.title }}</a>
@@ -374,7 +374,7 @@
                         {{ p.due_date }}
                     </td>
                     <td>
-                        <a href="{{ url_for('contract_detail', contract_id=p.contract_id) }}"
+                        <a href="{{ url_for('contracts.contract_detail', contract_id=p.contract_id) }}"
                            style="color:var(--apple-blue);text-decoration:none;font-weight:500"
                            onmouseover="this.style.textDecoration='underline'"
                            onmouseout="this.style.textDecoration='none'">{{ p.contract_title }}</a>
@@ -397,13 +397,13 @@
             <span class="apple-section-title">
                 <i data-lucide="book-open" style="color:var(--apple-blue);width:18px;height:18px"></i> 最近合同
             </span>
-            <a href="{{ url_for('contract_ledger') }}" class="apple-btn apple-btn-ghost">全部</a>
+            <a href="{{ url_for('contracts.contract_ledger') }}" class="apple-btn apple-btn-ghost">全部</a>
         </div>
         <div class="apple-section-body">
             {% if recent_contracts %}
             <div style="display:flex;flex-direction:column;gap:2px">
                 {% for c in recent_contracts %}
-                <a href="{{ url_for('contract_detail', contract_id=c.id) }}"
+                <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}"
                    style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;transition:background 0.15s"
                    onmouseover="this.style.background='rgba(0,0,0,0.02)'"
                    onmouseout="this.style.background='transparent'">
@@ -430,13 +430,13 @@
             <span class="apple-section-title">
                 <i data-lucide="pen-line" style="color:var(--apple-purple);width:18px;height:18px"></i> 最近模板
             </span>
-            <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-ghost">全部</a>
+            <a href="{{ url_for('templates.list_templates') }}" class="apple-btn apple-btn-ghost">全部</a>
         </div>
         <div class="apple-section-body">
             {% if recent_templates %}
             <div style="display:flex;flex-direction:column;gap:2px">
                 {% for tpl in recent_templates %}
-                <a href="{{ url_for('template_editor', name=tpl.filename) }}"
+                <a href="{{ url_for('templates.template_editor', name=tpl.filename) }}"
                    style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;transition:background 0.15s"
                    onmouseover="this.style.background='rgba(0,0,0,0.02)'"
                    onmouseout="this.style.background='transparent'">
@@ -465,9 +465,9 @@
 
 {% block scripts %}
 <script id="autostartConfig" type="application/json">{{ {
-    'status': url_for('autostart_status_api'),
-    'enable': url_for('autostart_enable'),
-    'disable': url_for('autostart_disable')
+    'status': url_for('settings.autostart_status_api'),
+    'enable': url_for('settings.autostart_enable'),
+    'disable': url_for('settings.autostart_disable')
 }|tojson }}</script>
 <script src="{{ static_url('js/index-dashboard.js') }}"></script>
 {% endblock %}

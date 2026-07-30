@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from flask import session, url_for
 from werkzeug.utils import safe_join
 
-from utils import helpers
+from utils import labels
 
 
 def csrf_token():
@@ -63,20 +63,20 @@ def register_template_context(app, csrf_token_func=csrf_token):
     @app.context_processor
     def inject_label_maps():
         return {
-            'contract_status_labels': helpers.CONTRACT_STATUS_LABELS,
-            'confirm_status_labels': helpers.CONFIRM_STATUS_LABELS,
-            'payment_status_labels': helpers.PAYMENT_STATUS_LABELS,
-            'confidence_labels': helpers.CONFIDENCE_LABELS,
-            'payment_parse_status_labels': helpers.PAYMENT_PARSE_STATUS_LABELS,
-            'payment_reason_labels': helpers.PAYMENT_REASON_LABELS,
-            'payment_amount_basis_labels': helpers.PAYMENT_AMOUNT_BASIS_LABELS,
-            'procurement_status_labels': helpers.PROCUREMENT_STATUS_LABELS,
-            'procurement_method_labels': helpers.PROCUREMENT_METHOD_LABELS,
-            'procurement_stage_labels': helpers.PROCUREMENT_STAGE_LABELS,
-            'procurement_stage_status_labels': helpers.PROCUREMENT_STAGE_STATUS_LABELS,
-            'clarification_status_labels': helpers.CLARIFICATION_STATUS_LABELS,
-            'quote_status_labels': helpers.QUOTE_STATUS_LABELS,
-            'quote_import_status_labels': helpers.QUOTE_IMPORT_STATUS_LABELS,
+            'contract_status_labels': labels.CONTRACT_STATUS_LABELS,
+            'confirm_status_labels': labels.CONFIRM_STATUS_LABELS,
+            'payment_status_labels': labels.PAYMENT_STATUS_LABELS,
+            'confidence_labels': labels.CONFIDENCE_LABELS,
+            'payment_parse_status_labels': labels.PAYMENT_PARSE_STATUS_LABELS,
+            'payment_reason_labels': labels.PAYMENT_REASON_LABELS,
+            'payment_amount_basis_labels': labels.PAYMENT_AMOUNT_BASIS_LABELS,
+            'procurement_status_labels': labels.PROCUREMENT_STATUS_LABELS,
+            'procurement_method_labels': labels.PROCUREMENT_METHOD_LABELS,
+            'procurement_stage_labels': labels.PROCUREMENT_STAGE_LABELS,
+            'procurement_stage_status_labels': labels.PROCUREMENT_STAGE_STATUS_LABELS,
+            'clarification_status_labels': labels.CLARIFICATION_STATUS_LABELS,
+            'quote_status_labels': labels.QUOTE_STATUS_LABELS,
+            'quote_import_status_labels': labels.QUOTE_IMPORT_STATUS_LABELS,
             'csrf_token': csrf_token_func,
             'static_url': static_url,
             'format_money': format_money,

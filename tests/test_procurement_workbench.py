@@ -1,4 +1,5 @@
 import io
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import uuid
@@ -155,6 +156,19 @@ def test_procurement_schema_crud_and_constraints(app, client):
     assert len(procurement_store.list_project_suppliers(project_id)) == 2
 
 
+def test_automatic_project_numbers_are_unique_under_concurrency(app):
+    def create(index):
+        project_id = procurement_project_service.create_project({
+            'project_name': f'并发采购项目 {index}',
+        })
+        return procurement_store.get_project(project_id)['project_no']
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        numbers = list(executor.map(create, range(12)))
+
+    assert len(numbers) == len(set(numbers))
+
+
 def test_inline_item_and_supplier_add_return_to_entry_sections(app, client):
     project_id = procurement_project_service.create_project({
         'project_no': 'CG-TEST-ANCHOR',
@@ -196,8 +210,14 @@ def test_standard_quote_import_page_downloads_supplier_template(app, client):
     assert '下载标准报价模板' in html
     assert f'/procurement/projects/{project_id}/quote-template' in html
 
-    response = client.get(
-        f'/procurement/projects/{project_id}/quote-template?supplier_id={suppliers[0]}'
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'quote-template-token'
+    response = client.post(
+        f'/procurement/projects/{project_id}/quote-template',
+        data={
+            'csrf_token': 'quote-template-token',
+            'supplier_id': str(suppliers[0]),
+        },
     )
     assert response.status_code == 200
     assert response.headers['Content-Type'].startswith(
@@ -492,7 +512,11 @@ def test_procurement_to_contract_prefills_editor_and_links_ledger(app, client):
     ]
     tpl = template_def.TemplateDef.create('采购转合同测试模板', '', fields)
     template_path = tpl.save()
-    data = award_service.prepare_editor_session(project_id, os.path.basename(template_path))
+    data = award_service.prepare_editor_session(
+        project_id,
+        os.path.basename(template_path),
+        app.extensions['runtime_paths'],
+    )
     assert data['fields'][0]['default_value'] == '结构件加工竞争性谈判'
     assert data['fields'][1]['default_value'] == '供应商A'
     assert data['project_name'] == '结构件加工竞争性谈判'
@@ -665,7 +689,9 @@ def test_direct_procurement_batch_links_every_contract(app, client):
     tpl = template_def.TemplateDef.create('直接采购批量合同模板', '', fields)
     template_path = tpl.save()
     data = procurement_project_service.prepare_direct_contract_session(
-        project_id, os.path.basename(template_path)
+        project_id,
+        os.path.basename(template_path),
+        app.extensions['runtime_paths'],
     )
     sid = uuid.uuid4().hex
     helpers.save_session_data(sid, data)
@@ -707,7 +733,9 @@ def test_direct_procurement_link_failure_discards_generated_records(app, client,
     tpl = template_def.TemplateDef.create('采购关联失败回滚模板', '', fields)
     template_path = tpl.save()
     data = procurement_project_service.prepare_direct_contract_session(
-        project_id, os.path.basename(template_path)
+        project_id,
+        os.path.basename(template_path),
+        app.extensions['runtime_paths'],
     )
     sid = uuid.uuid4().hex
     helpers.save_session_data(sid, data)

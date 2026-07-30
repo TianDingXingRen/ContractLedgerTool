@@ -8,10 +8,10 @@
         <h1 class="text-2xl font-bold">填写合同</h1>
         <p class="text-base-content/50 text-sm mt-1">{{ template_name }}</p>
     </div>
-    <a href="{{ url_for('list_templates') }}" class="btn btn-ghost btn-sm">返回列表</a>
+    <a href="{{ url_for('templates.list_templates') }}" class="btn btn-ghost btn-sm">返回列表</a>
 </div>
 
-<form id="editorForm" action="{{ url_for('generate') }}" method="post">
+<form id="editorForm" action="{{ url_for('contracts.generate') }}" method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <!-- Toolbar -->
     <div class="card bg-base-100 shadow-sm mb-4">
@@ -469,10 +469,10 @@
     'fieldCount': field_count,
     'templateFilename': template_filename or '',
     'urls': {
-        'saveDefaults': url_for('save_template_defaults'),
-        'generateBatch': url_for('generate_batch'),
-        'generatePreflight': url_for('generate_preflight'),
-        'preview': url_for('template_preview', name=template_filename or '')
+        'saveDefaults': url_for('templates.save_template_defaults'),
+        'generateBatch': url_for('contracts.generate_batch'),
+        'generatePreflight': url_for('contracts.generate_preflight'),
+        'preview': url_for('templates.template_preview', name=template_filename or '')
     }
 }|tojson }}</script>
 <script src="{{ static_url('js/editor-state.js') }}"></script>

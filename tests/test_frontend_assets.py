@@ -3,7 +3,7 @@ import re
 import unittest
 
 import app
-import build_installer
+import build_package
 
 
 class FrontendAssetTests(unittest.TestCase):
@@ -204,9 +204,9 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('Still waiting for the local service', script)
 
     def test_offline_build_includes_nested_procurement_templates(self):
-        manifest = build_installer.prepare_app_resources()
+        manifest = build_package.prepare_app_resources()
         nested_template = os.path.join(
-            build_installer.APP_RES_DIR,
+            build_package.APP_RES_DIR,
             'templates',
             'procurement',
             'history_prices.html',
@@ -220,10 +220,10 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('version', manifest)
         self.assertIn('source_commit', manifest)
         self.assertIn('source_dirty', manifest)
-        version_path = os.path.join(build_installer.APP_RES_DIR, 'version.txt')
+        version_path = os.path.join(build_package.APP_RES_DIR, 'version.txt')
         self.assertTrue(os.path.isfile(version_path))
         self.assertTrue(os.path.isfile(os.path.join(
-            build_installer.APP_RES_DIR, 'build-info.json',
+            build_package.APP_RES_DIR, 'build-info.json',
         )))
 
     def test_offline_installer_uses_default_silent_autostart_and_cleans_previous_versions(self):
@@ -267,7 +267,7 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('Installation failed; restoring previous version', script)
 
     def test_offline_installer_build_outputs_single_release_exe_only(self):
-        build_script_path = os.path.join(app.RESOURCE_DIR, 'build_installer.py')
+        build_script_path = os.path.join(app.RESOURCE_DIR, 'build_package.py')
         with open(build_script_path, 'r', encoding='utf-8') as f:
             script = f.read()
 

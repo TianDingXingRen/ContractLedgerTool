@@ -36,7 +36,7 @@ def contract_detail_location(
             params[page_name] = page
     if error:
         params['error'] = str(error)[:500]
-    location = url_for('contract_detail', contract_id=contract_id, **params)
+    location = url_for('contracts.contract_detail', contract_id=contract_id, **params)
     anchor = str(source.get('return_anchor', '') or '').strip()
     if anchor and _ANCHOR_RE.fullmatch(anchor):
         location += f'#{anchor}'

@@ -12,6 +12,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 import procurement_store
 from services import procurement_file_service
+from services.isolated_process import run_isolated_worker
 from utils.logger import get_logger
 from utils.money import SQLITE_MAX_INTEGER, to_minor
 from utils.security import safe_spreadsheet_value, validate_office_archive
@@ -21,6 +22,10 @@ FORMAT_VERSION = '1.0'
 PARSER_VERSION = '1.0'
 MAX_QUOTE_PDF_BYTES = 25 * 1024 * 1024
 PDF_HEADER = b'%PDF-'
+MAX_STANDARD_QUOTE_ROWS = 10_000
+MAX_STANDARD_QUOTE_COLUMNS = 20
+QUOTE_PARSE_TIMEOUT_SECONDS = 45
+QUOTE_PARSE_MEMORY_MB = 1536
 
 _HEADER_FILL = PatternFill('solid', fgColor='1D4ED8')
 _HEADER_FONT = Font(color='FFFFFF', bold=True)
@@ -167,26 +172,34 @@ def generate_quote_template(project_id, supplier_id):
 
 def _sheet_pairs(sheet):
     values = {}
-    for row in sheet.iter_rows(min_row=2, values_only=True):
+    for row in sheet.iter_rows(
+        min_row=2,
+        max_row=min(sheet.max_row, 100),
+        max_col=2,
+        values_only=True,
+    ):
         key = str(row[0] or '').strip()
         if key:
             values[key] = row[1]
     return values
 
 
-def parse_standard_quote(path, project_id, supplier_id, expected_round):
-    errors = []
-    warnings = []
-    project = procurement_store.get_project(project_id)
-    supplier = procurement_store.get_project_supplier(supplier_id)
-    expected_items = {item['id']: item for item in procurement_store.list_project_items(project_id)}
-    if not project or not supplier or supplier['project_id'] != project_id:
-        return {}, ['采购项目或候选供应商不存在'], []
+def _parse_standard_quote_file(
+    path,
+    project_id,
+    supplier_id,
+    expected_round,
+    project,
+    supplier,
+    expected_items,
+):
     try:
-        workbook = load_workbook(path, data_only=False, read_only=False)
+        workbook = load_workbook(path, data_only=False, read_only=True)
     except Exception as exc:
         return {}, [f'Excel 文件无法读取：{exc}'], []
     try:
+        errors = []
+        warnings = []
         return _parse_standard_quote_workbook(
             workbook,
             path,
@@ -201,6 +214,47 @@ def parse_standard_quote(path, project_id, supplier_id, expected_round):
         )
     finally:
         workbook.close()
+
+
+def parse_standard_quote(path, project_id, supplier_id, expected_round):
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    expected_items = {
+        item['id']: item
+        for item in procurement_store.list_project_items(project_id)
+    }
+    if not project or not supplier or supplier['project_id'] != project_id:
+        return {}, ['采购项目或候选供应商不存在'], []
+    return _parse_standard_quote_file(
+        path,
+        project_id,
+        supplier_id,
+        expected_round,
+        project,
+        supplier,
+        expected_items,
+    )
+
+
+def _standard_quote_worker(
+    path,
+    project_id,
+    supplier_id,
+    expected_round,
+    project,
+    supplier,
+    expected_items,
+    result_queue,
+):
+    result_queue.put(('ok', _parse_standard_quote_file(
+        path,
+        project_id,
+        supplier_id,
+        expected_round,
+        project,
+        supplier,
+        expected_items,
+    )))
 
 
 def _parse_standard_quote_workbook(
@@ -219,8 +273,25 @@ def _parse_standard_quote_workbook(
     missing = required_sheets - set(workbook.sheetnames)
     if missing:
         return {}, [f'缺少工作表：{"、".join(sorted(missing))}'], []
+    sheet_limits = {
+        '_meta': (20, 2),
+        '报价信息': (100, MAX_STANDARD_QUOTE_COLUMNS),
+        '报价明细': (MAX_STANDARD_QUOTE_ROWS, MAX_STANDARD_QUOTE_COLUMNS),
+    }
+    for sheet_name, (max_rows, max_columns) in sheet_limits.items():
+        sheet = workbook[sheet_name]
+        if sheet.max_row > max_rows:
+            return {}, [f'工作表“{sheet_name}”行数超过 {max_rows}'], []
+        if sheet.max_column > max_columns:
+            return {}, [f'工作表“{sheet_name}”列数超过 {max_columns}'], []
 
-    meta = {str(row[0].value): row[1].value for row in workbook['_meta'].iter_rows(min_row=1, max_col=2) if row[0].value}
+    meta = {
+        str(row[0].value): row[1].value
+        for row in workbook['_meta'].iter_rows(
+            min_row=1, max_row=20, max_col=2
+        )
+        if row[0].value
+    }
     if str(meta.get('format_version') or '') != FORMAT_VERSION:
         errors.append(f'模板版本不匹配，要求 {FORMAT_VERSION}')
     if str(meta.get('project_id')) != str(project_id) or str(meta.get('project_no')) != project['project_no']:
@@ -253,7 +324,15 @@ def _parse_standard_quote_workbook(
     parsed_items = []
     seen = set()
     detail = workbook['报价明细']
-    for excel_row, row in enumerate(detail.iter_rows(min_row=2, values_only=False), start=2):
+    for excel_row, row in enumerate(
+        detail.iter_rows(
+            min_row=2,
+            max_row=detail.max_row,
+            max_col=13,
+            values_only=False,
+        ),
+        start=2,
+    ):
         if all(cell.value in (None, '') for cell in row):
             continue
         try:
@@ -343,8 +422,24 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
     saved = procurement_file_service.save_upload(project, 'supplier_quote', file_storage)
     try:
         validate_office_archive(saved['absolute_path'])
-        payload, errors, warnings = parse_standard_quote(
-            saved['absolute_path'], project_id, supplier_id, int(quote_round)
+        expected_items = {
+            item['id']: item
+            for item in procurement_store.list_project_items(project_id)
+        }
+        payload, errors, warnings = run_isolated_worker(
+            _standard_quote_worker,
+            (
+                saved['absolute_path'],
+                project_id,
+                supplier_id,
+                int(quote_round),
+                project,
+                supplier,
+                expected_items,
+            ),
+            timeout=QUOTE_PARSE_TIMEOUT_SECONDS,
+            label='标准报价解析',
+            memory_limit_mb=QUOTE_PARSE_MEMORY_MB,
         )
         payload['size_bytes'] = saved['size_bytes']
         return procurement_store.create_import_job({
@@ -421,6 +516,20 @@ def save_quote_pdf_attachment(project_id, supplier_id, quote_round, file_storage
 
 def confirm_import(job_id):
     return procurement_store.confirm_import_job(job_id)
+
+
+def get_import_job(job_id):
+    return procurement_store.get_import_job(job_id)
+
+
+def confirmed_quote_editor_data(project_id, quote_id):
+    quote = procurement_store.get_quote(quote_id)
+    if not quote or quote['project_id'] != project_id:
+        return None
+    return {
+        'quote': quote,
+        'items': procurement_store.get_quote_items(quote_id),
+    }
 
 
 def _validated_date(value, label):

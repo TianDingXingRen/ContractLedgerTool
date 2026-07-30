@@ -15,10 +15,10 @@
         <button type="button" class="btn btn-ghost btn-sm" id="refreshDiagnosticsBtn" data-testid="refresh-diagnostics">
             <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重新检测
         </button>
-        <a href="{{ url_for('backups') }}" class="btn btn-ghost btn-sm">
+        <a href="{{ url_for('settings.backups') }}" class="btn btn-ghost btn-sm">
             <i data-lucide="database-backup" class="w-4 h-4"></i> 数据备份
         </a>
-        <form method="post" action="{{ url_for('reset') }}"
+        <form method="post" action="{{ url_for('settings.reset') }}"
               data-confirm="确定重置当前填写会话？已生成的合同和台账不会删除。"
               data-confirm-title="重置当前会话"
               data-confirm-ok="重置"
@@ -28,7 +28,7 @@
                 <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重置当前会话
             </button>
         </form>
-        <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">返回首页</a>
+        <a href="{{ url_for('contracts.index') }}" class="btn btn-ghost btn-sm">返回首页</a>
     </div>
 </div>
 
@@ -67,7 +67,7 @@
             保护范围：数据库和备份、合同模板、上传源文件、生成文件及填写会话。EFS 防护磁盘脱机读取和其他 Windows 用户，不能防护当前已登录账户中的恶意程序。
         </p>
         {% if diagnostics.data_protection.supported and not diagnostics.data_protection.enabled %}
-        <form method="post" action="{{ url_for('data_protection_enable') }}"
+        <form method="post" action="{{ url_for('settings.data_protection_enable') }}"
               data-confirm="启用后，数据与当前 Windows 用户的 EFS 证书绑定。确认继续？"
               data-confirm-title="启用 Windows EFS"
               data-confirm-ok="启用加密">
@@ -84,7 +84,7 @@
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">
         <div class="flex items-center justify-between gap-2 mb-3">
             <h3 class="font-semibold text-sm">自启动</h3>
-            <form method="post" action="{{ url_for('diagnostics_open_folder') }}" class="diagnostics-folder-form">
+            <form method="post" action="{{ url_for('settings.diagnostics_open_folder') }}" class="diagnostics-folder-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="folder" value="logs">
                 <button type="submit" class="btn btn-ghost btn-xs">打开日志目录</button>
@@ -112,7 +112,7 @@
             <h3 class="font-semibold text-sm">数据路径</h3>
             <div class="flex items-center gap-1">
                 {% for folder_key, label in [('data','数据'), ('output','输出'), ('backups','备份')] %}
-                <form method="post" action="{{ url_for('diagnostics_open_folder') }}" class="diagnostics-folder-form">
+                <form method="post" action="{{ url_for('settings.diagnostics_open_folder') }}" class="diagnostics-folder-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="folder" value="{{ folder_key }}">
                     <button type="submit" class="btn btn-ghost btn-xs">{{ label }}</button>
@@ -157,7 +157,7 @@
     </section>
 </div>
 
-<script id="diagnosticsPayload" type="application/json" data-api-url="{{ url_for('api_diagnostics') }}">{{ diagnostics|tojson }}</script>
+<script id="diagnosticsPayload" type="application/json" data-api-url="{{ url_for('settings.api_diagnostics') }}">{{ diagnostics|tojson }}</script>
 <script src="{{ static_url('js/diagnostics.js') }}"></script>
 
 {% endblock %}

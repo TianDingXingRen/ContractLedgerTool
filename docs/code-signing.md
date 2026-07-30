@@ -20,7 +20,7 @@
 ```powershell
 $env:CODESIGN_CERT_THUMBPRINT = "证书的 SHA-1 指纹"
 $env:CODESIGN_TIMESTAMP_URL = "证书服务商提供的 RFC 3161 时间戳地址"
-python build_installer.py
+python build_package.py installer
 ```
 
 构建脚本优先从 PATH 查找 SignTool，其次查找 Windows SDK。需要显式指定时：
@@ -37,7 +37,7 @@ $env:SIGNTOOL_PATH = "C:\Program Files (x86)\Windows Kits\10\bin\<版本>\x64\si
 $env:CODESIGN_PFX = "D:\secure\publisher.pfx"
 $env:CODESIGN_PFX_PASSWORD = "从安全凭据系统临时注入的密码"
 $env:CODESIGN_TIMESTAMP_URL = "证书服务商提供的 RFC 3161 时间戳地址"
-python build_installer.py
+python build_package.py installer
 ```
 
 不要把密码写入脚本、配置文件、GitHub Actions YAML 或构建日志。自动化发布应从
@@ -72,4 +72,4 @@ Get-FileHash $exe -Algorithm SHA256
 - 发布的 SHA-256 与构建结束时输出的 `exe_sha256` 完全一致；
 - 在一台未安装开发环境的目标 Windows 电脑上安装并运行自检。
 
-签名或时间戳验证失败时，`build_installer.py` 会中止，不会把失败结果当作有效发布包。
+签名或时间戳验证失败时，`build_package.py installer` 会中止，不会把失败结果当作有效发布包。

@@ -7,7 +7,7 @@
         <h2 class="text-2xl font-bold">版本历史</h2>
         <p class="text-base-content/50 text-sm mt-1">{{ template_name }}</p>
     </div>
-    <a href="{{ url_for('list_templates') }}" class="btn btn-ghost btn-sm">返回模板列表</a>
+    <a href="{{ url_for('templates.list_templates') }}" class="btn btn-ghost btn-sm">返回模板列表</a>
 </div>
 
 <div class="card bg-base-100 shadow-sm">
@@ -51,7 +51,7 @@
                     </td>
                     <td>
                         <form method="post"
-                              action="{{ url_for('template_version_restore', name=template_name, version_filename=v.filename) }}"
+                              action="{{ url_for('templates.template_version_restore', name=template_name, version_filename=v.filename) }}"
                               data-confirm="确定恢复到此版本？当前版本会被备份。"
                               data-confirm-title="恢复版本"
                               data-confirm-ok="恢复">

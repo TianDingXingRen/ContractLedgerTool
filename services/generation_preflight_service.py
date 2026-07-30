@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pdf_exporter
 import ledger_store
-from utils import helpers
+from utils.generation_utils import contract_number_keys, infer_contract_summary
 
 
 def _pdf_warning_enabled():
@@ -28,7 +28,7 @@ def _summary_warnings(summary):
 
 
 def build_single_preflight(tpl, fields, field_values, classification, generate_pdf=False):
-    summary = helpers.infer_contract_summary(tpl, fields, field_values)
+    summary = infer_contract_summary(tpl, fields, field_values)
     summary.update(classification or {})
     blocking = []
     warnings = _summary_warnings(summary)
@@ -75,7 +75,7 @@ def build_batch_preflight(
     if not batch_field_keys:
         blocking.append('未能识别对方单位字段，请手动指定字段变量名')
 
-    number_keys = helpers.contract_number_keys(fields)
+    number_keys = contract_number_keys(fields)
     duplicate_numbers = []
     if number_keys:
         for index, _counterparty in enumerate(counterparties, start=1):

@@ -8,7 +8,7 @@
         <h1 class="text-2xl font-bold">复核合同信息</h1>
         <p class="text-sm text-base-content/50 mt-1">原文件：{{ preview.original_filename }} · 保存后付款计划仍为待确认</p>
     </div>
-    <form method="post" action="{{ url_for('contract_import_cancel', sid=sid) }}">
+    <form method="post" action="{{ url_for('contract_import.contract_import_cancel', sid=sid) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-ghost btn-sm">取消导入</button>
     </form>
@@ -18,7 +18,7 @@
 <div class="alert alert-error mb-4">
     <span>{{ error }}</span>
     {% if duplicate_contract %}
-    <a class="link" href="{{ url_for('contract_detail', contract_id=duplicate_contract.id) }}">查看已有合同</a>
+    <a class="link" href="{{ url_for('contracts.contract_detail', contract_id=duplicate_contract.id) }}">查看已有合同</a>
     {% endif %}
 </div>
 {% endif %}
@@ -26,7 +26,7 @@
 <div class="alert alert-warning py-2 mb-2"><span class="text-sm">{{ warning }}</span></div>
 {% endfor %}
 
-<form method="post" action="{{ url_for('contract_import_confirm', sid=sid) }}">
+<form method="post" action="{{ url_for('contract_import.contract_import_confirm', sid=sid) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card bg-base-100 shadow-sm mb-5">
         <div class="card-body">

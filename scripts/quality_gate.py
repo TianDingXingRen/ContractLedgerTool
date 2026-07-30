@@ -24,14 +24,58 @@ SEMVER_PATTERN = re.compile(
     r'(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
 )
 MODULE_COVERAGE_FLOORS = {
-    'routes/contracts_bp.py': 55,
+    'routes/contract_import_confirmation_routes.py': 85,
+    'routes/contract_import_upload_routes.py': 80,
+    'routes/contract_batch_generation_routes.py': 75,
+    'routes/contract_editor_routes.py': 80,
+    'routes/contract_generation_routes.py': 80,
+    'routes/contract_ledger_routes.py': 85,
+    'routes/contracts_bp.py': 90,
+    'routes/contract_item_routes.py': 55,
     'routes/excel_bill_bp.py': 45,
-    'routes/payments_bp.py': 35,
-    'routes/procurement_bp.py': 50,
-    'routes/templates_bp.py': 38,
+    'routes/payment_contract_routes.py': 60,
+    'routes/payment_export_routes.py': 80,
+    'routes/payment_plan_routes.py': 65,
+    'routes/procurement_bp.py': 90,
+    'routes/procurement_contract_routes.py': 80,
+    'routes/procurement_decision_routes.py': 80,
+    'routes/procurement_document_routes.py': 80,
+    'routes/procurement_import_routes.py': 80,
+    'routes/procurement_item_supplier_routes.py': 85,
+    'routes/procurement_project_routes.py': 90,
+    'routes/procurement_quote_routes.py': 80,
+    'routes/procurement_route_support.py': 75,
+    'routes/production_notice_action_routes.py': 70,
+    'routes/production_notice_routes.py': 60,
+    'routes/template_authoring_routes.py': 85,
+    'routes/template_catalog_routes.py': 85,
+    'routes/template_default_routes.py': 90,
+    'routes/template_version_routes.py': 85,
+    'routes/templates_bp.py': 90,
     'pdf_exporter.py': 60,
+    'services/contract_import_service.py': 50,
+    'services/contract_import_workflow.py': 75,
+    'services/contract_batch_generation_service.py': 80,
+    'services/contract_editor_service.py': 75,
+    'services/contract_ledger_service.py': 80,
     'services/handover_service.py': 75,
+    'services/payment_commands.py': 80,
+    'services/payment_queries.py': 75,
+    'services/production_commands.py': 70,
+    'services/production_queries.py': 80,
+    'services/procurement_contract_handoff_service.py': 80,
+    'services/procurement_project_service.py': 70,
+    'services/quote_mapping_service.py': 72,
+    'services/template_authoring_service.py': 70,
+    'services/template_catalog_service.py': 90,
+    'services/template_defaults_service.py': 70,
+    'services/template_version_service.py': 75,
+    'services/contract_output_service.py': 90,
     'field_eval.py': 75,
+    'utils/contract_import_forms.py': 75,
+    'utils/payment_forms.py': 80,
+    'utils/production_forms.py': 85,
+    'utils/template_forms.py': 70,
 }
 
 
@@ -91,23 +135,45 @@ def check_css():
 
 
 def run_full_tests_with_coverage():
-    (ROOT / 'build').mkdir(exist_ok=True)
-    run(
-        [
-            sys.executable,
-            '-m',
-            'pytest',
-            '-q',
-            '-m',
-            'not performance',
-            '--cov=.',
-            '--cov-report=term',
-            '--cov-report=xml:build/coverage.xml',
-            '--cov-report=json:build/coverage.json',
-        ]
-    )
-    check_module_coverage(ROOT / 'build' / 'coverage.json')
-    run([sys.executable, '-m', 'pytest', '-m', 'performance', '-q'])
+    build_dir = ROOT / 'build'
+    build_dir.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix='quality-gate-',
+        dir=build_dir,
+    ) as temporary_root:
+        temporary_root = Path(temporary_root)
+        cache_dir = temporary_root / 'cache'
+        run(
+            [
+                sys.executable,
+                '-m',
+                'pytest',
+                '-q',
+                '-m',
+                'not performance',
+                f'--basetemp={temporary_root / "nonperformance"}',
+                '-o',
+                f'cache_dir={cache_dir}',
+                '--cov=.',
+                '--cov-report=term',
+                '--cov-report=xml:build/coverage.xml',
+                '--cov-report=json:build/coverage.json',
+            ]
+        )
+        check_module_coverage(build_dir / 'coverage.json')
+        run(
+            [
+                sys.executable,
+                '-m',
+                'pytest',
+                '-m',
+                'performance',
+                '-q',
+                f'--basetemp={temporary_root / "performance"}',
+                '-o',
+                f'cache_dir={cache_dir}',
+            ]
+        )
 
 
 def check_module_coverage(report_path):
@@ -216,7 +282,7 @@ def main():
 
     if args.profile == 'release' and args.build_installer:
         require_signing_configuration()
-        run([sys.executable, 'build_installer.py'])
+        run([sys.executable, 'build_package.py', 'installer'])
     if args.profile == 'release':
         if not args.skip_exe:
             check_executable(args.exe)

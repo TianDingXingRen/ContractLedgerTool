@@ -18,11 +18,11 @@
     </div>
     <div class="flex gap-2">
         {% if request.args.get('category') %}
-        <a href="{{ url_for('list_templates') }}" class="apple-btn apple-btn-ghost">清除筛选</a>
+        <a href="{{ url_for('templates.list_templates') }}" class="apple-btn apple-btn-ghost">清除筛选</a>
         {% endif %}
-        <a href="{{ url_for('contract_ledger') }}" class="apple-btn apple-btn-ghost">合同台账</a>
-        <a href="{{ url_for('payment_plan_list') }}" class="apple-btn apple-btn-ghost">付款计划</a>
-        <a href="{{ url_for('create_template') }}" class="apple-btn apple-btn-primary">
+        <a href="{{ url_for('contracts.contract_ledger') }}" class="apple-btn apple-btn-ghost">合同台账</a>
+        <a href="{{ url_for('payments.payment_plan_list') }}" class="apple-btn apple-btn-ghost">付款计划</a>
+        <a href="{{ url_for('templates.create_template') }}" class="apple-btn apple-btn-primary">
             <i data-lucide="plus" style="width:15px;height:15px"></i> 新建模板
         </a>
     </div>
@@ -51,14 +51,14 @@
             </div>
             <p style="font-size:11px;color:var(--apple-text3);margin-bottom:14px">修改于 {{ tpl.modified }}</p>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                <a href="{{ url_for('template_editor', name=tpl.filename) }}"
+                <a href="{{ url_for('templates.template_editor', name=tpl.filename) }}"
                    class="apple-btn apple-btn-primary" style="flex:1;justify-content:center;font-size:12px"
                    data-testid="template-open" data-template-filename="{{ tpl.filename }}">填写合同</a>
-                <form method="post" action="{{ url_for('template_copy', filename=tpl.filename) }}" style="display:contents">
+                <form method="post" action="{{ url_for('templates.template_copy', filename=tpl.filename) }}" style="display:contents">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="apple-btn apple-btn-ghost" style="font-size:12px;padding:6px 12px">复制</button>
                 </form>
-                <form method="post" action="{{ url_for('template_delete', filename=tpl.filename) }}"
+                <form method="post" action="{{ url_for('templates.template_delete', filename=tpl.filename) }}"
                       data-confirm="确定删除模板「{{ tpl.name }}」？"
                       data-confirm-title="删除模板"
                       data-confirm-ok="删除"
@@ -67,7 +67,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="apple-btn apple-btn-ghost" style="font-size:12px;padding:6px 12px;color:var(--apple-red)">删除</button>
                 </form>
-                <a href="{{ url_for('template_versions', name=tpl.filename) }}" class="apple-btn apple-btn-ghost" style="margin-left:auto;font-size:11px;padding:4px 8px">
+                <a href="{{ url_for('templates.template_versions', name=tpl.filename) }}" class="apple-btn apple-btn-ghost" style="margin-left:auto;font-size:11px;padding:4px 8px">
                     <i data-lucide="history" style="width:12px;height:12px"></i> 版本
                 </a>
             </div>
@@ -80,7 +80,7 @@
     <i data-lucide="file-text" style="width:48px;height:48px;margin:0 auto 16px;color:var(--apple-text3)"></i>
     <h2 style="font-size:18px;font-weight:600;color:var(--apple-text);margin-bottom:6px">还没有模板</h2>
     <p style="color:var(--apple-text2);font-size:13px;margin-bottom:20px">编制合同模板，定义字段名称、类型和规则，快速生成合同文档。</p>
-    <a href="{{ url_for('create_template') }}" class="apple-btn apple-btn-primary">编制模板</a>
+    <a href="{{ url_for('templates.create_template') }}" class="apple-btn apple-btn-primary">编制模板</a>
 </div>
 {% endif %}
 

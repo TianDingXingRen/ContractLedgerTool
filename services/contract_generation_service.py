@@ -14,8 +14,8 @@ from core.domain_errors import (
     ProcurementLinkError,
     ValidationError,
 )
-from utils import helpers
-from utils.generation_utils import generate_docx_document
+from services.office_parse_service import generate_docx_isolated
+from utils.generation_utils import create_ledger_record
 from utils.logger import get_logger
 
 
@@ -94,7 +94,7 @@ class ContractGenerationService:
 
         try:
             try:
-                errors, staged_path = generate_docx_document(
+                errors, staged_path = generate_docx_isolated(
                     request.template.data,
                     request.fields,
                     request.field_values,
@@ -110,7 +110,7 @@ class ContractGenerationService:
 
             with self.ledger_store.get_conn() as conn:
                 try:
-                    contract_id = helpers.create_ledger_record(
+                    contract_id = create_ledger_record(
                         request.template,
                         request.fields,
                         request.field_values,

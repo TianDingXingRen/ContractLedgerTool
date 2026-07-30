@@ -9,19 +9,19 @@
             <h1 class="text-2xl font-bold">导入外部合同</h1>
             <p class="text-sm text-base-content/50 mt-1">上传别人编写完成的 DOCX，识别结果经人工复核后才会写入台账。</p>
         </div>
-        <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-sm">返回台账</a>
+        <a href="{{ url_for('contracts.contract_ledger') }}" class="btn btn-ghost btn-sm">返回台账</a>
     </div>
 
     {% if error %}
     <div class="alert alert-error mb-4">
         <span>{{ error }}</span>
         {% if duplicate_contract %}
-        <a class="link" href="{{ url_for('contract_detail', contract_id=duplicate_contract.id) }}">查看已有合同</a>
+        <a class="link" href="{{ url_for('contracts.contract_detail', contract_id=duplicate_contract.id) }}">查看已有合同</a>
         {% endif %}
     </div>
     {% endif %}
 
-    <form method="post" action="{{ url_for('contract_import_preview') }}"
+    <form method="post" action="{{ url_for('contract_import.contract_import_preview') }}"
           enctype="multipart/form-data" class="card bg-base-100 shadow-sm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">

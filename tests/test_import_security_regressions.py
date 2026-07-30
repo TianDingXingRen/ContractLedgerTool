@@ -10,7 +10,12 @@ from openpyxl import Workbook
 from werkzeug.datastructures import FileStorage
 
 from config import config as app_config
-from services import handover_service, procurement_project_service
+from config import Config
+from ledger_store.schema import CURRENT_SCHEMA_VERSION as LEDGER_SCHEMA_VERSION
+from procurement_store.schema import (
+    CURRENT_SCHEMA_VERSION as PROCUREMENT_SCHEMA_VERSION,
+)
+from services import handover_archive, handover_service, procurement_project_service
 
 
 def _csrf(client):
@@ -74,6 +79,39 @@ def test_full_backup_rejects_extreme_compression_ratio(tmp_path, monkeypatch):
         handover_service.validate_full_backup_package(package)
 
 
+def test_empty_sqlite_file_is_not_accepted_as_application_backup(tmp_path):
+    database = tmp_path / 'empty.db'
+    with sqlite3.connect(database):
+        pass
+
+    with pytest.raises(ValueError, match='缺少应用表'):
+        handover_archive.validate_application_database(
+            database,
+            max_ledger_version=LEDGER_SCHEMA_VERSION,
+            max_procurement_version=PROCUREMENT_SCHEMA_VERSION,
+        )
+
+
+def test_config_clamps_zero_rate_limits_and_rejects_wildcard_hosts(tmp_path):
+    (tmp_path / 'config.json').write_text(
+        json.dumps({
+            'TRUSTED_HOSTS': ['*', 'contracts.internal'],
+            'RATE_LIMIT_DEFAULT': [0, 0],
+            'RATE_LIMIT_GLOBAL': [-1, 0],
+            'RATE_LIMITS': {'/generate': [0, 0]},
+        }),
+        encoding='utf-8',
+    )
+
+    loaded = Config(tmp_path)
+
+    assert loaded.RATE_LIMIT_DEFAULT == (1, 1)
+    assert loaded.RATE_LIMIT_GLOBAL == (1, 1)
+    assert loaded.RATE_LIMITS['/generate'] == (1, 1)
+    assert '*' not in loaded.TRUSTED_HOSTS
+    assert 'contracts.internal' in loaded.TRUSTED_HOSTS
+
+
 def test_procurement_excel_import_enforces_row_limit():
     workbook = Workbook()
     sheet = workbook.active
@@ -101,3 +139,8 @@ def test_non_loopback_requests_require_remote_token(app, client, monkeypatch):
         headers={'Authorization': f'Basic {credentials}'},
     )
     assert allowed.status_code == 200
+
+
+def test_untrusted_host_header_is_rejected_before_routing(client):
+    response = client.get('/', headers={'Host': 'attacker.example'})
+    assert response.status_code == 400

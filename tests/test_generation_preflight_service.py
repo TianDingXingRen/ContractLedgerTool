@@ -8,7 +8,7 @@ def _template(name='测试模板'):
 
 
 def test_single_preflight_reports_duplicate_and_missing_summary(monkeypatch):
-    monkeypatch.setattr(preflight.helpers, 'infer_contract_summary', lambda *_: {
+    monkeypatch.setattr(preflight, 'infer_contract_summary', lambda *_: {
         'contract_no': 'DUP-001',
         'counterparty': '',
         'amount': None,
@@ -29,7 +29,7 @@ def test_single_preflight_reports_duplicate_and_missing_summary(monkeypatch):
 
 
 def test_single_preflight_pdf_environment_warning(monkeypatch):
-    monkeypatch.setattr(preflight.helpers, 'infer_contract_summary', lambda *_: {
+    monkeypatch.setattr(preflight, 'infer_contract_summary', lambda *_: {
         'contract_no': 'NEW-001',
         'counterparty': '供应商',
         'amount': 100.0,
@@ -48,7 +48,7 @@ def test_single_preflight_pdf_environment_warning(monkeypatch):
 
 
 def test_single_preflight_has_no_pdf_warning_when_converter_exists(monkeypatch):
-    monkeypatch.setattr(preflight.helpers, 'infer_contract_summary', lambda *_: {
+    monkeypatch.setattr(preflight, 'infer_contract_summary', lambda *_: {
         'contract_no': '',
         'counterparty': '供应商',
         'amount': 1,
@@ -65,7 +65,11 @@ def test_single_preflight_has_no_pdf_warning_when_converter_exists(monkeypatch):
 
 
 def test_batch_preflight_validates_counterparties_fields_and_duplicates(monkeypatch):
-    monkeypatch.setattr(preflight.helpers, 'contract_number_keys', lambda _fields: ['contract_no'])
+    monkeypatch.setattr(
+        preflight,
+        'contract_number_keys',
+        lambda _fields: ['contract_no'],
+    )
     monkeypatch.setattr(
         preflight.ledger_store,
         'contract_no_exists',
@@ -94,7 +98,11 @@ def test_batch_preflight_validates_counterparties_fields_and_duplicates(monkeypa
 
 
 def test_batch_preflight_without_contract_number_field(monkeypatch):
-    monkeypatch.setattr(preflight.helpers, 'contract_number_keys', lambda _fields: [])
+    monkeypatch.setattr(
+        preflight,
+        'contract_number_keys',
+        lambda _fields: [],
+    )
     result = preflight.build_batch_preflight(
         _template(), [], {}, {}, ['供应商'], ['counterparty'], generate_pdf=False,
     )

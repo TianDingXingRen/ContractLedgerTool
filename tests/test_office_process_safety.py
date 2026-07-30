@@ -1,4 +1,5 @@
 import inspect
+import queue
 
 import pytest
 
@@ -10,6 +11,10 @@ def test_isolated_worker_timeout_terminates_process(monkeypatch):
     calls = []
 
     class FakeQueue:
+        def get(self, timeout):
+            assert timeout > 0
+            raise queue.Empty
+
         def close(self):
             calls.append('queue-close')
 

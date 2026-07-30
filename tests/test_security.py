@@ -10,9 +10,11 @@ from docx import Document
 import app
 import field_eval
 import ledger_store
-from routes import contracts_bp
-from utils import helpers
+from routes import contract_download_routes, settings_bp
+from runtime.paths import RuntimePaths
 from utils import autostart
+from utils.generation_utils import validate_template_source_bindings
+from utils.security import path_within
 
 
 class SecurityHardeningTests(unittest.TestCase):
@@ -82,7 +84,7 @@ class SecurityHardeningTests(unittest.TestCase):
             doc = Document()
             doc.add_paragraph('甲方：{甲方}')
             doc.save(docx_path)
-            errors = helpers.validate_template_source_bindings([
+            errors = validate_template_source_bindings([
                 {
                     'key': 'party_b',
                     'label': '乙方',
@@ -94,11 +96,10 @@ class SecurityHardeningTests(unittest.TestCase):
             self.assertIn('乙方', errors[0])
 
     def test_pdf_download_sanitizes_contract_number_path(self):
-        old_output = helpers.OUTPUT_FOLDER
-        self.addCleanup(setattr, helpers, 'OUTPUT_FOLDER', old_output)
         with tempfile.TemporaryDirectory() as tmp:
-            helpers.OUTPUT_FOLDER = tmp
-            docx_path = os.path.join(tmp, 'source.docx')
+            paths = RuntimePaths.create(tmp)
+            paths.output_dir.mkdir()
+            docx_path = os.path.join(paths.output_dir, 'source.docx')
             with open(docx_path, 'wb') as f:
                 f.write(b'docx')
             written_paths = []
@@ -110,8 +111,27 @@ class SecurityHardeningTests(unittest.TestCase):
 
             contract = {'docx_path': docx_path, 'contract_no': '..\\outside/name'}
             with mock.patch.object(ledger_store, 'get_contract', return_value=contract), \
-                    mock.patch.object(contracts_bp.pdf_exporter, 'convert_docx_to_pdf', side_effect=fake_convert):
+                    mock.patch.object(
+                        contract_download_routes,
+                        'current_runtime_paths',
+                        return_value=paths,
+                    ), \
+                    mock.patch.object(
+                        contract_download_routes.pdf_exporter,
+                        'convert_docx_to_pdf',
+                        side_effect=fake_convert,
+                    ):
                 with app.app.test_client() as client:
+                    with client.session_transaction() as sess:
+                        sess['_csrf_token'] = 'pdf-token'
+                    response = client.post(
+                        '/contracts/1/download-pdf',
+                        data={'csrf_token': 'pdf-token'},
+                    )
+                    try:
+                        self.assertEqual(response.status_code, 200)
+                    finally:
+                        response.close()
                     response = client.get('/contracts/1/download-pdf')
                     try:
                         self.assertEqual(response.status_code, 200)
@@ -119,7 +139,7 @@ class SecurityHardeningTests(unittest.TestCase):
                         response.close()
 
             self.assertEqual(len(written_paths), 1)
-            self.assertTrue(helpers.path_within(tmp, written_paths[0]))
+            self.assertTrue(path_within(paths.output_dir, written_paths[0]))
             self.assertNotIn('..', os.path.basename(written_paths[0]))
 
     def test_post_without_csrf_is_rejected(self):
@@ -163,12 +183,30 @@ class SecurityHardeningTests(unittest.TestCase):
         with mock.patch.object(os, 'name', 'nt'), \
                 mock.patch.object(autostart, '_run_powershell', return_value=completed) as run, \
                 mock.patch.object(autostart, '_remove_legacy_startup_launchers'):
-            helpers.enable_autostart()
+            autostart.enable_autostart()
 
         script = run.call_args_list[0].args[0]
         self.assertIn('New-ScheduledTaskAction', script)
         self.assertIn('Register-ScheduledTask', script)
         self.assertTrue('--no-browser' in script or '-NoBrowser' in script)
+
+    def test_autostart_quotes_apostrophes_in_powershell_command(self):
+        with mock.patch.object(autostart, 'BASE_DIR', r"C:\Apps\O'Brien"), \
+                mock.patch.object(autostart.sys, 'frozen', False, create=True), \
+                mock.patch.object(
+                    autostart.sys,
+                    'executable',
+                    r"C:\Python O'Brien\python.exe",
+                ), \
+                mock.patch.object(
+                    autostart.os.path,
+                    'isfile',
+                    side_effect=lambda path: path.endswith('app.py'),
+                ):
+            _executable, arguments = autostart._autostart_launch_parts()
+
+        self.assertIn("O''Brien", arguments)
+        self.assertNotIn("& C:\\Python O'Brien", arguments)
 
     def test_autostart_powershell_runs_without_console_window(self):
         completed = mock.Mock(returncode=0, stdout='', stderr='')
@@ -201,9 +239,12 @@ class SecurityHardeningTests(unittest.TestCase):
             with mock.patch.object(os, 'name', 'nt'), \
                     mock.patch.object(autostart, '_run_powershell', return_value=completed), \
                     mock.patch.object(autostart, '_startup_folder', return_value=tmp):
-                source = helpers.enable_autostart()
+                source = autostart.enable_autostart()
 
-            launcher_path = os.path.join(tmp, helpers.AUTOSTART_LAUNCHER_NAME)
+            launcher_path = os.path.join(
+                tmp,
+                autostart.AUTOSTART_LAUNCHER_NAME,
+            )
             self.assertEqual(source, 'startup')
             self.assertFalse(os.path.exists(legacy_path))
             self.assertTrue(os.path.isfile(launcher_path))
@@ -222,13 +263,13 @@ class SecurityHardeningTests(unittest.TestCase):
                 mock.patch.object(autostart, '_run_powershell', return_value=completed), \
                 mock.patch.object(autostart, '_startup_launcher_path', return_value='Z:\\missing.vbs'), \
                 mock.patch.object(autostart, '_legacy_startup_launcher_paths', return_value=[]):
-            status = helpers.autostart_status()
+            status = autostart.autostart_status()
         self.assertFalse(status['enabled'])
         self.assertEqual(status['task_state'], 'Disabled')
 
     def test_index_defers_autostart_status_query(self):
         with mock.patch.object(
-                helpers, 'autostart_status',
+                settings_bp, 'autostart_status',
                 side_effect=AssertionError('首页不应同步查询 PowerShell 状态')):
             with app.app.test_client() as client:
                 response = client.get('/')
@@ -245,7 +286,11 @@ class SecurityHardeningTests(unittest.TestCase):
             'description': '计划任务已启用',
             'source': '计划任务',
         }
-        with mock.patch.object(helpers, 'autostart_status', return_value=status):
+        with mock.patch.object(
+            settings_bp,
+            'autostart_status',
+            return_value=status,
+        ):
             with app.app.test_client() as client:
                 response = client.get('/api/autostart/status')
                 try:
@@ -257,10 +302,10 @@ class SecurityHardeningTests(unittest.TestCase):
     def test_diagnostics_routes_load(self):
         with app.app.test_client() as client:
             with mock.patch.object(
-                    helpers, 'autostart_status',
+                    settings_bp, 'autostart_status',
                     side_effect=AssertionError('诊断页不应同步查询 PowerShell 状态')):
                 html_response = client.get('/diagnostics')
-            with mock.patch.object(helpers, 'autostart_status', return_value={
+            with mock.patch.object(settings_bp, 'autostart_status', return_value={
                     'enabled': False,
                     'supported': True,
                     'description': '未开启',

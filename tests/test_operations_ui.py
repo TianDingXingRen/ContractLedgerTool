@@ -13,53 +13,33 @@ import app
 import ledger_store
 import procurement_store
 import template_def
-from utils import helpers
+from utils.session_store import save_session_data
 
 
 class OperationsUiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.old_data_dir = ledger_store.DATA_DIR
-        self.old_db_path = ledger_store.DB_PATH
-        self.old_backup_dir = ledger_store.BACKUP_DIR
-        self.old_session_folder = helpers.SESSION_FOLDER
-        self.old_upload_folder = helpers.UPLOAD_FOLDER
-        self.old_output_folder = helpers.OUTPUT_FOLDER
-        self.old_base_dir = helpers.BASE_DIR
-        self.old_templates_dir = template_def.TEMPLATES_DIR
-
-        ledger_store.DATA_DIR = os.path.join(self.tmp.name, 'data')
-        ledger_store.DB_PATH = os.path.join(ledger_store.DATA_DIR, 'contracts.db')
-        ledger_store.BACKUP_DIR = os.path.join(ledger_store.DATA_DIR, 'backups')
-        helpers.SESSION_FOLDER = os.path.join(self.tmp.name, 'sessions')
-        helpers.UPLOAD_FOLDER = os.path.join(self.tmp.name, 'uploads')
-        helpers.OUTPUT_FOLDER = os.path.join(self.tmp.name, 'output')
-        helpers.BASE_DIR = self.tmp.name
-        template_def.TEMPLATES_DIR = os.path.join(self.tmp.name, 'templates')
-
-        os.makedirs(helpers.SESSION_FOLDER, exist_ok=True)
-        os.makedirs(helpers.UPLOAD_FOLDER, exist_ok=True)
-        os.makedirs(helpers.OUTPUT_FOLDER, exist_ok=True)
-        os.makedirs(template_def.TEMPLATES_DIR, exist_ok=True)
-        with open(os.path.join(self.tmp.name, 'config.json'), 'w', encoding='utf-8') as f:
-            json.dump({'test': True}, f)
-        ledger_store.init_db()
-        ledger_store.run_migrations()
-        procurement_store.init_db()
+        self.original_base_dir = app.BASE_DIR
+        self.original_resource_dir = app.RESOURCE_DIR
+        app.reset_runtime()
+        self.test_app = app.create_app(
+            runtime_base_dir=self.tmp.name,
+            resource_dir=self.original_resource_dir,
+            run_maintenance=False,
+            testing=True,
+        )
+        self.paths = self.test_app.extensions['runtime_paths']
 
     def tearDown(self):
-        ledger_store.DATA_DIR = self.old_data_dir
-        ledger_store.DB_PATH = self.old_db_path
-        ledger_store.BACKUP_DIR = self.old_backup_dir
-        helpers.SESSION_FOLDER = self.old_session_folder
-        helpers.UPLOAD_FOLDER = self.old_upload_folder
-        helpers.OUTPUT_FOLDER = self.old_output_folder
-        helpers.BASE_DIR = self.old_base_dir
-        template_def.TEMPLATES_DIR = self.old_templates_dir
+        app.reset_runtime()
         self.tmp.cleanup()
+        app.configure_runtime_paths(
+            self.original_base_dir,
+            self.original_resource_dir,
+        )
 
     def _client_with_csrf(self):
-        client = app.app.test_client()
+        client = self.test_app.test_client()
         with client.session_transaction() as sess:
             sess['_csrf_token'] = 'test-token'
         return client
@@ -110,7 +90,7 @@ class OperationsUiTests(unittest.TestCase):
                 download_response.close()
 
     def test_backup_download_rejects_unknown_file(self):
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             response = client.get('/backups/not-a-backup.txt/download')
             try:
                 self.assertEqual(response.status_code, 404)
@@ -118,9 +98,9 @@ class OperationsUiTests(unittest.TestCase):
                 response.close()
 
     def test_full_backup_package_create_download_restore_routes(self):
-        upload_path = os.path.join(helpers.UPLOAD_FOLDER, 'source.docx')
+        upload_path = os.path.join(self.paths.uploads_dir, 'source.docx')
         template_path = os.path.join(template_def.TEMPLATES_DIR, 'handover.contract-template')
-        output_path = os.path.join(helpers.OUTPUT_FOLDER, 'generated.docx')
+        output_path = os.path.join(self.paths.output_dir, 'generated.docx')
         defaults_dir = os.path.join(ledger_store.DATA_DIR, 'excel_bill_defaults')
         invoice_files_dir = os.path.join(ledger_store.DATA_DIR, 'invoice_files', '1')
         os.makedirs(defaults_dir, exist_ok=True)
@@ -218,7 +198,10 @@ class OperationsUiTests(unittest.TestCase):
     def test_handover_export_contains_contract_payment_procurement_and_risks(self):
         from openpyxl import load_workbook
 
-        docx_path = os.path.join(helpers.OUTPUT_FOLDER, 'handover-contract.docx')
+        docx_path = os.path.join(
+            self.paths.output_dir,
+            'handover-contract.docx',
+        )
         with open(docx_path, 'wb') as f:
             f.write(b'docx')
         ledger_store.create_contract_with_plans(
@@ -286,7 +269,7 @@ class OperationsUiTests(unittest.TestCase):
         self.assertIn('报价不完整', risk_values)
 
     def test_backups_page_exposes_full_package_and_handover_controls(self):
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             response = client.get('/backups')
             try:
                 self.assertEqual(response.status_code, 200)
@@ -328,7 +311,7 @@ class OperationsUiTests(unittest.TestCase):
                     invalid.close()
 
     def test_diagnostics_page_exposes_one_click_actions(self):
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             response = client.get('/diagnostics')
             try:
                 self.assertEqual(response.status_code, 200)
@@ -344,7 +327,7 @@ class OperationsUiTests(unittest.TestCase):
 
     def test_editor_page_exposes_sidebar_filters_and_result_panel(self):
         sid = 'editor-ui-test'
-        helpers.save_session_data(sid, {
+        save_session_data(sid, {
             'template_name': '测试模板',
             'step': 'editor',
             'fields': [
@@ -359,9 +342,9 @@ class OperationsUiTests(unittest.TestCase):
                     'default_rows': [],
                 },
             ],
-        })
+        }, self.paths)
 
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             with client.session_transaction() as sess:
                 sess['sid'] = sid
             response = client.get('/editor')
@@ -402,7 +385,7 @@ class OperationsUiTests(unittest.TestCase):
         self.assertNotIn('window.location.href = result.detailUrl', html)
 
     def test_create_template_table_editor_uses_stacked_column_cards(self):
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             response = client.get('/create-template')
             try:
                 self.assertEqual(response.status_code, 200)
@@ -419,7 +402,7 @@ class OperationsUiTests(unittest.TestCase):
         self.assertNotIn('max-w-2xl', html)
 
     def test_builder_preview_expands_with_page(self):
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             response = client.get('/create-template')
             try:
                 self.assertEqual(response.status_code, 200)
@@ -430,6 +413,7 @@ class OperationsUiTests(unittest.TestCase):
         self.assertIn('编制模板', html)
 
     def test_manual_template_save_preserves_table_column_types(self):
+        existing_files = set(os.listdir(template_def.TEMPLATES_DIR))
         form = {
             'csrf_token': 'test-token',
             'template_name': '表格测试模板',
@@ -457,9 +441,10 @@ class OperationsUiTests(unittest.TestCase):
             finally:
                 response.close()
 
-        files = os.listdir(template_def.TEMPLATES_DIR)
+        files = set(os.listdir(template_def.TEMPLATES_DIR)) - existing_files
         self.assertEqual(len(files), 1)
-        with open(os.path.join(template_def.TEMPLATES_DIR, files[0]), 'r', encoding='utf-8') as f:
+        saved_file = next(iter(files))
+        with open(os.path.join(template_def.TEMPLATES_DIR, saved_file), 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         columns = data['fields'][0]['columns']

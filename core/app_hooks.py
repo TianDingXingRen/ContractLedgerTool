@@ -42,6 +42,15 @@ def reset_rate_limit_state():
 
 def _check_single_limit(store, lock, key, max_req, window, now):
     """Check one rate-limit bucket and return (allowed, retry_seconds)."""
+    if (
+        not isinstance(max_req, int)
+        or isinstance(max_req, bool)
+        or max_req <= 0
+        or not isinstance(window, int)
+        or isinstance(window, bool)
+        or window <= 0
+    ):
+        raise ValueError('Rate limit values must be positive integers')
     with lock:
         while len(store) >= _RATE_LIMIT_MAX_KEYS:
             store.popitem(last=False)
@@ -136,6 +145,10 @@ def register_security_hooks(app, config):
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-XSS-Protection'] = '1; mode=block'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        if request.is_secure:
+            response.headers['Strict-Transport-Security'] = (
+                'max-age=31536000; includeSubDomains'
+            )
         if request.endpoint == 'static':
             # Official templates append a per-file version token. Versioned
             # assets are immutable; direct, unversioned probes get a short

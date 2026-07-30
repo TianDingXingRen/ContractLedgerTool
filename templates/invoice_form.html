@@ -6,7 +6,7 @@
 {% set allocation_rows = allocations|length + 2 %}
 <div class="ui-page">
   {% if error %}<div class="ui-alert" role="alert">{{ error }}</div>{% endif %}
-  <header class="ui-page-header"><div><h1 class="ui-page-title">{{ '编辑进项发票' if invoice and invoice.id else '登记进项发票' }}</h1><p class="ui-page-subtitle">填写票面信息，并按实际业务关系分摊到合同、投产通知和付款计划</p></div><div class="ui-page-actions"><a class="ui-button secondary" href="{{ url_for('invoice_detail', invoice_id=invoice.id) if invoice and invoice.id else url_for('invoice_list') }}">取消并返回</a></div></header>
+  <header class="ui-page-header"><div><h1 class="ui-page-title">{{ '编辑进项发票' if invoice and invoice.id else '登记进项发票' }}</h1><p class="ui-page-subtitle">填写票面信息，并按实际业务关系分摊到合同、投产通知和付款计划</p></div><div class="ui-page-actions"><a class="ui-button secondary" href="{{ url_for('invoices.invoice_detail', invoice_id=invoice.id) if invoice and invoice.id else url_for('invoices.invoice_list') }}">取消并返回</a></div></header>
   <form method="post" id="invoice-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">票面信息</h2><p class="ui-panel-subtitle">带 * 的字段为必填项</p></div></div><div class="ui-panel-body"><div class="ui-form-grid cols-3">
       <label class="ui-field"><span>发票代码</span><input class="ui-input" name="invoice_code" value="{{ invoice.invoice_code if invoice else '' }}"></label>

@@ -91,6 +91,23 @@ def absolute_path(relative):
     return path
 
 
+def resolve_download(file_id):
+    import procurement_store
+
+    record = procurement_store.get_project_file(file_id)
+    if not record:
+        raise FileNotFoundError('项目文件不存在')
+    path = absolute_path(record['relative_path'])
+    if not path.is_file():
+        raise FileNotFoundError('项目文件已丢失')
+    return {
+        'path': path,
+        'download_name': (
+            record.get('original_name') or path.name
+        ),
+    }
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as stream:

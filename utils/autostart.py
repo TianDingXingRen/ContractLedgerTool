@@ -57,7 +57,7 @@ def _autostart_launch_parts():
         exe_path = sys.executable
         return powerShell, (
             f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
-            f'-Command "Start-Process -FilePath \'{exe_path}\' '
+            f'-Command "Start-Process -FilePath {_ps_quote(exe_path)} '
             f'-ArgumentList \'--no-browser\' -WindowStyle Hidden"'
         )
 
@@ -87,7 +87,8 @@ def _autostart_launch_parts():
         raise RuntimeError(f'自启动配置失败：找不到 app.py (BASE_DIR={BASE_DIR})')
     return powerShell, (
         f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
-        f'-Command "& \'{python_exe}\' \'{app_py}\' --host 127.0.0.1 --port 5000 --no-browser"'
+        f'-Command "& {_ps_quote(python_exe)} {_ps_quote(app_py)} '
+        f'--host 127.0.0.1 --port 5000 --no-browser"'
     )
 
 

@@ -9,13 +9,13 @@
         <p class="text-xs text-base-content/50 mt-1">完整数据包、离职交接清单和本地数据库快照</p>
     </div>
     <div class="flex items-center gap-2">
-        <form method="post" action="{{ url_for('backup_create') }}">
+        <form method="post" action="{{ url_for('settings.backup_create') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-primary btn-sm" data-testid="create-backup">
                 <i data-lucide="database-backup" class="w-4 h-4"></i> 立即备份
             </button>
         </form>
-        <a href="{{ url_for('diagnostics') }}" class="btn btn-ghost btn-sm">诊断信息</a>
+        <a href="{{ url_for('settings.diagnostics') }}" class="btn btn-ghost btn-sm">诊断信息</a>
     </div>
 </div>
 
@@ -40,14 +40,14 @@
             <p class="text-xs text-base-content/50 mt-1">包含数据库、模板、上传文件、输出文件和常用配置</p>
         </div>
         <div class="flex flex-col sm:flex-row gap-2">
-            <form method="post" action="{{ url_for('full_backup_create') }}">
+            <form method="post" action="{{ url_for('settings.full_backup_create') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="label" value="handover">
                 <button type="submit" class="btn btn-success btn-sm" data-testid="create-full-backup">
                     <i data-lucide="archive" class="w-4 h-4"></i> 生成完整数据包
                 </button>
             </form>
-            <form method="post" action="{{ url_for('full_backup_upload') }}" enctype="multipart/form-data"
+            <form method="post" action="{{ url_for('settings.full_backup_upload') }}" enctype="multipart/form-data"
                   class="flex flex-wrap items-center gap-2" data-file-picker>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label class="btn btn-ghost btn-sm cursor-pointer">
@@ -87,9 +87,9 @@
                     </td>
                     <td class="text-right">
                         <div class="inline-flex items-center gap-1">
-                            <a href="{{ url_for('full_backup_download', filename=package.filename) }}"
+                            <a href="{{ url_for('settings.full_backup_download', filename=package.filename) }}"
                                class="btn btn-ghost btn-xs">下载</a>
-                            <form method="post" action="{{ url_for('full_backup_restore', filename=package.filename) }}"
+                            <form method="post" action="{{ url_for('settings.full_backup_restore', filename=package.filename) }}"
                                   data-confirm="确定要恢复这个完整数据包吗？当前数据会先自动生成回滚包。"
                                   data-confirm-title="恢复完整数据包"
                                   data-confirm-ok="恢复">
@@ -113,7 +113,7 @@
         <h3 class="font-semibold">交接清单</h3>
         <p class="text-xs text-base-content/50 mt-1">按负责人导出合同、付款、采购项目、待办风险和文件清单</p>
     </div>
-    <form method="post" action="{{ url_for('handover_export') }}" class="p-4 grid grid-cols-1 md:grid-cols-[minmax(180px,320px)_auto_auto] gap-3 items-end">
+    <form method="post" action="{{ url_for('settings.handover_export') }}" class="p-4 grid grid-cols-1 md:grid-cols-[minmax(180px,320px)_auto_auto] gap-3 items-end">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label class="form-control">
             <span class="label-text">员工姓名</span>
@@ -158,9 +158,9 @@
                     <td>{{ '%.1f'|format(backup.size / 1024) }} KB</td>
                     <td class="text-right">
                         <div class="inline-flex items-center gap-1">
-                            <a href="{{ url_for('backup_download', filename=backup.filename) }}"
+                            <a href="{{ url_for('settings.backup_download', filename=backup.filename) }}"
                                class="btn btn-ghost btn-xs">下载</a>
-                            <form method="post" action="{{ url_for('backup_restore', filename=backup.filename) }}"
+                            <form method="post" action="{{ url_for('settings.backup_restore', filename=backup.filename) }}"
                                   data-confirm="确定要恢复这个备份吗？当前数据库会先自动备份。"
                                   data-confirm-title="恢复备份"
                                   data-confirm-ok="恢复">

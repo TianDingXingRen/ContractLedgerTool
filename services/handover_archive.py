@@ -7,7 +7,7 @@ import os
 import sqlite3
 from pathlib import PurePosixPath
 
-from utils import helpers
+from utils.field_utils import safe_filename_part
 from utils.logger import get_logger
 
 
@@ -34,7 +34,7 @@ def remove_file_if_exists(directory, filename):
         get_logger().debug('Temporary handover file already absent')
 
 def safe_label(value, default='handover'):
-    label = helpers.safe_filename_part(str(value or '').strip(), default)[:36]
+    label = safe_filename_part(str(value or '').strip(), default)[:36]
     return label or default
 
 
@@ -128,6 +128,66 @@ def validate_sqlite_file(path):
             raise ValueError(f'数据库校验失败: {detail}')
     except sqlite3.DatabaseError as exc:
         raise ValueError(f'数据包内数据库无效: {exc}') from exc
+    finally:
+        if connection:
+            connection.close()
+
+
+def validate_application_database(
+    path,
+    *,
+    max_ledger_version,
+    max_procurement_version,
+):
+    """Validate that a SQLite file is a compatible application database."""
+    validate_sqlite_file(path)
+    required_tables = {
+        'contracts',
+        'payment_plans',
+        'schema_version',
+        'procurement_projects',
+        'procurement_schema_version',
+    }
+    connection = None
+    try:
+        connection = sqlite3.connect(path)
+        table_rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        tables = {str(row[0]) for row in table_rows}
+        missing = sorted(required_tables - tables)
+        if missing:
+            raise ValueError(
+                f'备份数据库缺少应用表: {", ".join(missing)}'
+            )
+
+        ledger_row = connection.execute(
+            'SELECT MAX(version) FROM schema_version'
+        ).fetchone()
+        procurement_row = connection.execute(
+            'SELECT MAX(version) FROM procurement_schema_version'
+        ).fetchone()
+        ledger_version = int(ledger_row[0] or 0) if ledger_row else 0
+        procurement_version = (
+            int(procurement_row[0] or 0) if procurement_row else 0
+        )
+        if ledger_version < 1 or procurement_version < 1:
+            raise ValueError('备份数据库缺少有效的架构版本记录')
+        if ledger_version > int(max_ledger_version):
+            raise ValueError(
+                f'备份数据库版本过新: {ledger_version} > {max_ledger_version}'
+            )
+        if procurement_version > int(max_procurement_version):
+            raise ValueError(
+                '备份采购数据库版本过新: '
+                f'{procurement_version} > {max_procurement_version}'
+            )
+        return {
+            'ledger_schema_version': ledger_version,
+            'procurement_schema_version': procurement_version,
+        }
+    except sqlite3.DatabaseError as exc:
+        raise ValueError(f'无法验证备份数据库架构: {exc}') from exc
     finally:
         if connection:
             connection.close()

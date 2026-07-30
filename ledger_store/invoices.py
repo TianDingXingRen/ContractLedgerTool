@@ -393,6 +393,30 @@ class InvoiceRepository:
         now = self.now()
         try:
             with self.get_conn() as conn:
+                existing_invoice = None
+                if invoice_id:
+                    existing_invoice = conn.execute(
+                        """SELECT id, invoice_status, total_amount_minor
+                           FROM invoices WHERE id = ?""",
+                        (invoice_id,),
+                    ).fetchone()
+                    if not existing_invoice:
+                        raise ValueError('发票不存在')
+                    active_red = conn.execute(
+                        """SELECT id, total_amount_minor FROM invoices
+                           WHERE original_invoice_id = ?
+                             AND invoice_status = 'red'
+                           LIMIT 1""",
+                        (invoice_id,),
+                    ).fetchone()
+                    if active_red and (
+                        invoice_status != 'valid'
+                        or amounts['total_amount_minor']
+                        != active_red['total_amount_minor']
+                    ):
+                        raise ValueError(
+                            '原发票已有生效红字发票，不能变更有效状态或价税合计'
+                        )
                 if original_invoice_id:
                     original = conn.execute(
                         """SELECT id, invoice_status, total_amount_minor
@@ -428,10 +452,6 @@ class InvoiceRepository:
                     str(data.get('remark') or '').strip(),
                 )
                 if invoice_id:
-                    if not conn.execute(
-                        'SELECT 1 FROM invoices WHERE id = ?', (invoice_id,)
-                    ).fetchone():
-                        raise ValueError('发票不存在')
                     conn.execute(
                         """UPDATE invoices SET
                                invoice_code = ?, invoice_no = ?, invoice_type = ?,

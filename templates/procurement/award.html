@@ -8,11 +8,11 @@
       <h1 class="text-2xl font-bold">成交建议</h1>
       <p class="text-sm text-base-content/50 mt-1">{{ project.project_no }} / {{ project.project_name }}</p>
     </div>
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回项目</a>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">返回项目</a>
   </div>
   {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
-  {% if award %}<div class="flex justify-end mb-3"><a class="btn btn-sm" href="{{ url_for('procurement_award_document', project_id=project.id) }}">导出成交建议 Word</a></div>{% endif %}
-  {% if not quotes %}<div class="alert alert-warning flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><span>尚无已确认的结构化报价，暂不能确认成交建议。可先导入报价，或返回项目继续补录资料。</span><span class="flex gap-2"><a class="btn btn-sm" href="{{ url_for('procurement_quote_import', project_id=project.id) }}">导入报价</a><a class="btn btn-ghost btn-sm" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回项目</a></span></div>{% else %}
+  {% if award %}<div class="flex justify-end mb-3"><form method="post" action="{{ url_for('procurement.procurement_award_document', project_id=project.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm" type="submit">导出成交建议 Word</button></form></div>{% endif %}
+  {% if not quotes %}<div class="alert alert-warning flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><span>尚无已确认的结构化报价，暂不能确认成交建议。可先导入报价，或返回项目继续补录资料。</span><span class="flex gap-2"><a class="btn btn-sm" href="{{ url_for('procurement.procurement_quote_import', project_id=project.id) }}">导入报价</a><a class="btn btn-ghost btn-sm" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">返回项目</a></span></div>{% else %}
   <form method="post" class="card bg-base-100 border border-base-300" x-data="{ mode: 'single' }">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card-body grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -32,7 +32,7 @@
       <label class="form-control md:col-span-2"><span class="label-text">未选择最低价说明</span><textarea class="textarea textarea-bordered" name="lowest_price_not_selected_reason"></textarea></label>
       <label class="form-control"><span class="label-text">风险提示</span><textarea class="textarea textarea-bordered" name="risk_note"></textarea></label>
       <label class="form-control"><span class="label-text">合同签订注意事项</span><textarea class="textarea textarea-bordered" name="contract_notice"></textarea></label>
-      <div class="md:col-span-2 flex justify-end gap-2"><a class="btn btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回</a><button class="btn btn-primary">确认成交建议</button></div>
+      <div class="md:col-span-2 flex justify-end gap-2"><a class="btn btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">返回</a><button class="btn btn-primary">确认成交建议</button></div>
     </div>
   </form>
   {% endif %}

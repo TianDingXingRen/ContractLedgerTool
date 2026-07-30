@@ -5,10 +5,10 @@
     <p class="text-sm text-base-content/50">{{ view.project.project_no }} / {{ view.project.project_name }}</p>
   </div>
   <div class="flex gap-2">
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_detail', project_id=view.project.id) }}">返回项目</a>
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation_plan', project_id=view.project.id) }}">谈判预案</a>
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation_minutes', project_id=view.project.id) }}">导出谈判纪要</a>
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_final_commitments', project_id=view.project.id) }}">最终承诺表</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=view.project.id) }}">返回项目</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation_plan', project_id=view.project.id) }}">谈判预案</a>
+    <form method="post" action="{{ url_for('procurement.procurement_negotiation_minutes', project_id=view.project.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="apple-btn apple-btn-ghost" type="submit">导出谈判纪要</button></form>
+    <form method="post" action="{{ url_for('procurement.procurement_final_commitments', project_id=view.project.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="apple-btn apple-btn-ghost" type="submit">最终承诺表</button></form>
   </div>
 </div>
 {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
@@ -74,7 +74,7 @@
     </div>
     {% endfor %}
     <div class="flex justify-end gap-2 mt-4">
-      {% if view.editing_round %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation', project_id=view.project.id) }}">取消编辑</a>{% endif %}
+      {% if view.editing_round %}<a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation', project_id=view.project.id) }}">取消编辑</a>{% endif %}
       <button class="apple-btn apple-btn-primary" {% if not view.suppliers %}disabled{% endif %}>{{ '保存修改' if view.editing_round else '保存谈判记录' }}</button>
     </div>
   </div>
@@ -85,7 +85,7 @@
   <div class="apple-section-body">
     <div class="flex items-start justify-between gap-3">
       <h3 class="font-semibold">第 {{ round.round_no }} 轮 - {{ round.meeting_date or '未填日期' }}</h3>
-      <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation', project_id=view.project.id, round_no=round.round_no) }}">编辑</a>
+      <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation', project_id=view.project.id, round_no=round.round_no) }}">编辑</a>
     </div>
     <p class="text-sm mt-1">{{ round.summary }}</p>
     <div class="text-xs text-base-content/60 mt-2">

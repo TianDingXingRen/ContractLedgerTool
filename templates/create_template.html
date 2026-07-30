@@ -8,7 +8,7 @@
         <h1 class="text-2xl font-bold">编制模板</h1>
         <p class="text-base-content/50 text-sm mt-1">手工定义合同模板字段，或上传样式文档自动识别标记</p>
     </div>
-    <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">返回首页</a>
+    <a href="{{ url_for('contracts.index') }}" class="btn btn-ghost btn-sm">返回首页</a>
 </div>
 
 <!-- Style Upload -->
@@ -28,7 +28,7 @@
                 <div class="font-medium text-success-content text-sm">{{ raw_name }}</div>
                 <div class="text-xs text-success-content/70">已识别 <strong>{{ detected_fields|length }}</strong> 个标记字段</div>
             </div>
-            <form method="post" action="{{ url_for('upload_style') }}" enctype="multipart/form-data" class="contents">
+            <form method="post" action="{{ url_for('templates.upload_style') }}" enctype="multipart/form-data" class="contents">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="file" name="file" accept=".docx,.doc" class="hidden" id="reUploadInput"
                        data-builder-action="reupload-selected">
@@ -38,7 +38,7 @@
             </form>
         </div>
         {% else %}
-        <form method="post" action="{{ url_for('upload_style') }}" enctype="multipart/form-data" id="uploadForm">
+        <form method="post" action="{{ url_for('templates.upload_style') }}" enctype="multipart/form-data" id="uploadForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="upload-zone border-2 border-dashed border-base-300 rounded-xl p-10 text-center cursor-pointer
                          hover:border-primary hover:bg-primary/5 transition-all" id="dropZone"
@@ -61,7 +61,7 @@
 </div>
 
 <!-- Field Builder -->
-<form id="templateForm" action="{{ url_for('template_manual_save') }}" method="post">
+<form id="templateForm" action="{{ url_for('templates.template_manual_save') }}" method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="stored_name" value="{{ stored_name or '' }}">
 
@@ -71,7 +71,7 @@
             <div class="editor-header flex items-center justify-between p-5 border-b border-base-300">
                 <h2 class="font-semibold">模板信息</h2>
                 <div class="flex gap-2">
-                    <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">取消</a>
+                    <a href="{{ url_for('contracts.index') }}" class="btn btn-ghost btn-sm">取消</a>
                     <button type="submit" class="btn btn-primary btn-sm" id="saveBtn">
                         <i data-lucide="check" class="w-4 h-4"></i> 保存模板
                     </button>

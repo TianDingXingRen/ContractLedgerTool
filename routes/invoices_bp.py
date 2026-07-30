@@ -8,12 +8,11 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from flask import current_app, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, current_app, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.utils import safe_join, secure_filename
 
 import ledger_store
-from routes.legacy_blueprint import LegacyEndpointBlueprint
-from utils import helpers
+from utils.field_utils import float_or_none, normalize_date
 from utils.logger import get_logger
 
 
@@ -25,7 +24,7 @@ def _form_date(form, key, label):
     raw = str(form.get(key, '') or '').strip()
     if not raw:
         return ''
-    normalized = helpers.normalize_date(raw)
+    normalized = normalize_date(raw)
     if not normalized:
         raise ValueError(f'{label}格式无效，请使用 YYYY-MM-DD')
     return normalized
@@ -37,10 +36,10 @@ def _invoice_data(form):
         ('tax_amount', '税额'),
         ('total_amount', '价税合计'),
     ):
-        if helpers.float_or_none(form.get(key)) is None:
+        if float_or_none(form.get(key)) is None:
             raise ValueError(f'{label}必须是有效金额')
     tax_rate_raw = str(form.get('tax_rate', '') or '').strip()
-    if tax_rate_raw and helpers.float_or_none(tax_rate_raw) is None:
+    if tax_rate_raw and float_or_none(tax_rate_raw) is None:
         raise ValueError('税率必须是有效数字')
     return {
         'invoice_code': form.get('invoice_code', ''),
@@ -196,7 +195,7 @@ def _register_invoice_routes(bp):
                 invoice_id = ledger_store.save_invoice(
                     _invoice_data(request.form), allocations
                 )
-                return redirect(url_for('invoice_detail', invoice_id=invoice_id))
+                return redirect(url_for('invoices.invoice_detail', invoice_id=invoice_id))
             except ValueError as exc:
                 submitted = dict(request.form)
                 submitted['allocations'] = allocations
@@ -236,7 +235,7 @@ def _register_invoice_routes(bp):
                     _invoice_data(request.form), allocations,
                     invoice_id=invoice_id,
                 )
-                return redirect(url_for('invoice_detail', invoice_id=invoice_id))
+                return redirect(url_for('invoices.invoice_detail', invoice_id=invoice_id))
             except ValueError as exc:
                 submitted = dict(request.form)
                 submitted['id'] = invoice_id
@@ -258,13 +257,13 @@ def _register_invoice_file_routes(bp):
         upload = request.files.get('file')
         if not upload or not upload.filename:
             return redirect(url_for(
-                'invoice_detail', invoice_id=invoice_id, error='请选择发票附件'
+                'invoices.invoice_detail', invoice_id=invoice_id, error='请选择发票附件'
             ))
         original_name = os.path.basename(upload.filename)[:255]
         extension = Path(original_name).suffix.lower()
         if extension not in ALLOWED_INVOICE_FILE_EXTENSIONS:
             return redirect(url_for(
-                'invoice_detail', invoice_id=invoice_id,
+                'invoices.invoice_detail', invoice_id=invoice_id,
                 error='仅支持 PDF、JPG、PNG、OFD 或 XML 发票附件',
             ))
         safe_stem = secure_filename(Path(original_name).stem)[:60] or 'invoice'
@@ -285,13 +284,22 @@ def _register_invoice_file_routes(bp):
                 file_size=target.stat().st_size,
                 sha256=digest.hexdigest(),
             )
-        except ValueError as exc:
-            target.unlink(missing_ok=True)
-            return redirect(url_for(
-                'invoice_detail', invoice_id=invoice_id, error=str(exc)
-            ))
+        except Exception as exc:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                get_logger().warning(
+                    '发票附件登记失败后无法清理暂存文件: %s',
+                    target,
+                    exc_info=True,
+                )
+            if isinstance(exc, ValueError):
+                return redirect(url_for(
+                    'invoices.invoice_detail', invoice_id=invoice_id, error=str(exc)
+                ))
+            raise
         return redirect(url_for(
-            'invoice_detail', invoice_id=invoice_id, message='发票附件已上传'
+            'invoices.invoice_detail', invoice_id=invoice_id, message='发票附件已上传'
         ))
 
     @bp.route('/invoices/<int:invoice_id>/files/<int:file_id>/download')
@@ -348,11 +356,11 @@ def _register_invoice_file_routes(bp):
                     exc_info=True,
                 )
         return redirect(url_for(
-            'invoice_detail', invoice_id=invoice_id, message='发票附件已删除'
+            'invoices.invoice_detail', invoice_id=invoice_id, message='发票附件已删除'
         ))
 
 def register(app):
-    bp = LegacyEndpointBlueprint('invoices', __name__)
+    bp = Blueprint('invoices', __name__)
     _register_invoice_routes(bp)
     _register_invoice_file_routes(bp)
     app.register_blueprint(bp)

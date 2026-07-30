@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PyInstaller 打包公共模块 — 统一 hidden-imports、资源准备、目录工具。
-
-build_desktop_exe / build_installer / build_package 共用此模块，
-避免隐藏导入清单和资源准备逻辑多份不一致的问题。
-"""
+"""`build_package.py` 使用的 PyInstaller 资源与命令构造工具。"""
 
 import json
 import re
@@ -221,7 +217,7 @@ def source_metadata():
 def prepare_app_resources(res_dir, write_version=True):
     """准备 PyInstaller 打包所需的资源目录（static/templates/uploads/version）。
 
-    所有 build 脚本共用此函数，避免资源准备逻辑重复。
+    构建入口复用此函数准备不同子命令所需的相同资源。
     返回 manifest 字典，包含 html_templates/templates/uploads/skipped 及可选 version。
     """
     verify_compiled_frontend()

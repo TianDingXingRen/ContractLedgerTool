@@ -22,7 +22,12 @@ from services.generation_recovery_service import reconcile_generation_jobs
 from core.app_errors import register_error_handlers
 from core.app_hooks import register_security_hooks
 from core.app_secrets import load_or_create_secret_key
-from core.app_startup import open_browser_later, should_open_browser, validate_bind_host
+from core.app_startup import (
+    is_loopback_host,
+    open_browser_later,
+    should_open_browser,
+    validate_bind_host,
+)
 from core.app_template_context import csrf_token, register_template_context
 from utils.logger import setup_logging, get_logger, close_logging
 from config import config as app_config
@@ -198,7 +203,7 @@ def init_runtime(run_maintenance=True):
             )
         if run_maintenance:
             ledger_store.backup_database()
-            _cleanup_old_files(max_age_days=app_config.CLEANUP_DAYS)
+            _cleanup_old_files()
         _seed_packaged_assets()
         _runtime_initialized = True
 
@@ -221,6 +226,8 @@ def create_app(runtime_base_dir=None, resource_dir=None, run_maintenance=True, t
     app.config['TESTING'] = bool(testing)
     app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'
     app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SECURE'] = not is_loopback_host(app_config.HOST)
+    app.config['TRUSTED_HOSTS'] = list(app_config.TRUSTED_HOSTS)
     app.config['MAX_CONTENT_LENGTH'] = app_config.MAX_CONTENT_LENGTH_MB * 1024 * 1024
     app.config['CONTRACT_TOOL_BIND_HOST'] = app_config.HOST
     app.config['CONTRACT_TOOL_BIND_PORT'] = app_config.PORT
@@ -374,16 +381,34 @@ if __name__ == '__main__':
         validate_bind_host(
             args.host, app_config.ALLOW_REMOTE,
             app_config.REMOTE_ACCESS_TOKEN,
+            app_config.REMOTE_TLS_CERT,
+            app_config.REMOTE_TLS_KEY,
+            app_config.DEBUG,
         )
     except ValueError as exc:
         parser.error(str(exc))
     flask_app = get_default_app()
     flask_app.config['CONTRACT_TOOL_BIND_HOST'] = args.host
     flask_app.config['CONTRACT_TOOL_BIND_PORT'] = args.port
+    remote_bind = not is_loopback_host(args.host)
+    flask_app.config['SESSION_COOKIE_SECURE'] = remote_bind
+    ssl_context = None
+    if remote_bind:
+        ssl_context = (
+            os.path.abspath(app_config.REMOTE_TLS_CERT),
+            os.path.abspath(app_config.REMOTE_TLS_KEY),
+        )
     _register_signal_handlers()
     if should_open_browser(args.no_browser, app_config.DEBUG):
-        _open_browser_later(f'http://{args.host}:{args.port}/')
+        scheme = 'https' if remote_bind else 'http'
+        browser_host = f'[{args.host}]' if ':' in args.host else args.host
+        _open_browser_later(f'{scheme}://{browser_host}:{args.port}/')
     try:
-        flask_app.run(debug=app_config.DEBUG, host=args.host, port=args.port)
+        flask_app.run(
+            debug=app_config.DEBUG,
+            host=args.host,
+            port=args.port,
+            ssl_context=ssl_context,
+        )
     finally:
         _shutdown()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import itertools
 import os
 import tempfile
 
@@ -13,7 +12,7 @@ from decimal import Decimal, InvalidOperation
 import ledger_store
 import procurement_store
 from services import procurement_file_service
-from utils import helpers
+from services.office_parse_service import extract_excel_rows_isolated
 from utils.constants import (
     PROCUREMENT_METHOD_LABELS,
     PROCUREMENT_STAGE_LABELS,
@@ -23,6 +22,7 @@ from utils.constants import (
 from utils.money import to_minor, from_minor
 from utils.logger import get_logger
 from utils.security import MAX_TEXT_VALUE_LENGTH, limit_text, validate_office_archive
+from utils.template_paths import safe_template_path
 
 
 MAX_PROCUREMENT_IMPORT_ROWS = 1000
@@ -66,6 +66,44 @@ STAGE_ACTIONS = {
 }
 
 
+def list_projects(*, status='', q='', page=1):
+    return procurement_store.list_projects(
+        status=status,
+        q=q,
+        page=page,
+    )
+
+
+def project_statuses():
+    return procurement_store.PROJECT_STATUSES
+
+
+def get_project(project_id):
+    return procurement_store.get_project(project_id)
+
+
+def get_project_item(project_id, item_id):
+    item = procurement_store.get_project_item(item_id)
+    if not item or item['project_id'] != project_id:
+        return None
+    return item
+
+
+def delete_item(project_id, item_id):
+    return procurement_store.delete_project_item(project_id, item_id)
+
+
+def list_suppliers(project_id):
+    return procurement_store.list_project_suppliers(project_id)
+
+
+def get_supplier(project_id, supplier_id):
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    if not supplier or supplier['project_id'] != project_id:
+        return None
+    return supplier
+
+
 def _positive_quantity(value):
     try:
         quantity = Decimal(str(value or '').strip())
@@ -88,14 +126,18 @@ def minor_to_money(value):
     return from_minor(value)
 
 
-def _next_project_no():
+def _next_project_no(conn=None):
     prefix = 'CG-' + date.today().strftime('%Y%m%d') + '-'
-    with ledger_store.get_conn() as conn:
-        conn.execute('BEGIN IMMEDIATE')
-        rows = conn.execute(
+    def _read(connection):
+        return connection.execute(
             'SELECT project_no FROM procurement_projects WHERE project_no LIKE ? ORDER BY project_no DESC LIMIT 1',
             (prefix + '%',),
         ).fetchone()
+    if conn is None:
+        with ledger_store.get_conn() as managed_conn:
+            rows = _read(managed_conn)
+    else:
+        rows = _read(conn)
     if not rows:
         return prefix + '0001'
     try:
@@ -111,9 +153,8 @@ def create_project(form):
     if not name:
         raise ValueError('项目名称不能为空')
     submitted_project_no = str(form.get('project_no') or '').strip()
-    project_no = submitted_project_no or _next_project_no()
     data = {
-        'project_no': project_no,
+        'project_no': submitted_project_no,
         'project_name': name,
         'purchase_method': str(form.get('purchase_method') or 'competitive_negotiation').strip(),
         'demand_department': str(form.get('demand_department') or '').strip(),
@@ -129,10 +170,15 @@ def create_project(form):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            if attempt > 0:
-                project_no = _next_project_no()
-                data['project_no'] = project_no
-            project_id = procurement_store.create_project(data)
+            if submitted_project_no:
+                project_id = procurement_store.create_project(data)
+            else:
+                with ledger_store.get_conn() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    data['project_no'] = _next_project_no(conn)
+                    project_id = procurement_store.create_project(
+                        data, conn=conn
+                    )
             break
         except sqlite3.IntegrityError:
             if submitted_project_no:
@@ -399,34 +445,36 @@ def add_items_from_paste(project_id, text):
 
 
 def add_items_from_excel(project_id, file_storage):
-    from openpyxl import load_workbook
-
     filename = str(getattr(file_storage, 'filename', '') or '')
     if not filename.lower().endswith('.xlsx'):
         raise ValueError('采购明细批量导入仅支持 .xlsx 格式')
     temp_path = ''
-    workbook = None
-    row_iterator = None
     try:
         with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as temp_file:
             temp_path = temp_file.name
         file_storage.save(temp_path)
         validate_office_archive(temp_path)
-        workbook = load_workbook(temp_path, data_only=True, read_only=True)
-        row_iterator = iter(workbook.active.iter_rows(values_only=True))
-        first = next(row_iterator, None)
+        try:
+            extracted_rows = extract_excel_rows_isolated(
+                temp_path,
+                max_rows=MAX_PROCUREMENT_IMPORT_ROWS + 1,
+                max_columns=50,
+            )
+        except ValueError as exc:
+            if str(MAX_PROCUREMENT_IMPORT_ROWS + 1) in str(exc):
+                raise ValueError(
+                    f'一次最多导入 {MAX_PROCUREMENT_IMPORT_ROWS} 条采购明细'
+                ) from exc
+            raise
+        first = extracted_rows[0] if extracted_rows else None
         if first is None:
             raise ValueError('没有可导入的采购明细')
         if str(first[0] or '').strip() not in {'物资名称', '产品名称', '标的名称'}:
-            rows = itertools.chain([first], row_iterator)
+            rows = extracted_rows
         else:
-            rows = row_iterator
+            rows = extracted_rows[1:]
         return add_items_from_rows(project_id, rows)
     finally:
-        if row_iterator is not None and hasattr(row_iterator, 'close'):
-            row_iterator.close()
-        if workbook is not None:
-            workbook.close()
         if temp_path:
             try:
                 os.remove(temp_path)
@@ -473,11 +521,11 @@ def delete_supplier(project_id, supplier_id):
             )
 
 
-def prepare_direct_contract_session(project_id, template_filename):
+def prepare_direct_contract_session(project_id, template_filename, paths):
     project = project_detail(project_id)
     if not project:
         raise ValueError('采购项目不存在')
-    path = helpers.safe_template_path(template_filename)
+    path = safe_template_path(template_filename, paths)
     primary_supplier = (project.get('suppliers') or [{}])[0]
     amount_minor = project.get('target_price_minor') or project.get('budget_minor') or 0
     payload = {

@@ -8,8 +8,8 @@
     <p class="text-sm text-base-content/50">{{ view['project'].project_no }} / {{ view['project'].project_name }}</p>
   </div>
   <div class="flex gap-2">
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_detail', project_id=view['project'].id) }}">返回项目</a>
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation', project_id=view['project'].id) }}">谈判记录</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=view['project'].id) }}">返回项目</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation', project_id=view['project'].id) }}">谈判记录</a>
   </div>
 </div>
 
@@ -104,7 +104,7 @@
   </section>
 
   <div class="flex justify-end gap-2">
-    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_negotiation', project_id=view['project'].id) }}">取消</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation', project_id=view['project'].id) }}">取消</a>
     <button class="apple-btn apple-btn-primary" type="submit" {% if not view['items'] %}disabled{% endif %}>生成 Word</button>
   </div>
 </form>

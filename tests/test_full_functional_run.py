@@ -3,13 +3,16 @@ import io
 import json
 import os
 import sys
+import tempfile
 import uuid
 import zipfile
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(
+    0,
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+)
 
-import app
-from app import app as flask_app
+import template_def
 
 PASS = 0
 FAIL = 0
@@ -41,7 +44,7 @@ def summary():
     return FAIL
 
 # ═══════════════════════════════════════════════════════
-def run():
+def _run_with_app(flask_app):
     client = flask_app.test_client()
     CSRF = 'test-full-functional-csrf'
 
@@ -186,9 +189,9 @@ def run():
     check('台账含上海客户B', '上海客户B' in html)
 
     # 搜索
-    r = get('/contracts?q=更新后')
+    r = get('/contracts?q=北京客户A')
     html = r.get_data(as_text=True); r.close()
-    check('搜索返回结果', '更新后合同标题' in html)
+    check('搜索返回结果', '北京客户A' in html)
 
     # 按状态筛选
     r = get('/contracts?status=draft')
@@ -306,13 +309,17 @@ def run():
 
     # ── 13. 付款计划导出 ──
     section('13. 付款计划导出')
-    r = get('/payment-plans/export-next-month')
+    with client.session_transaction() as sess:
+        set_csrf(sess)
+    r = post('/payment-plans/export-next-month')
     check('导出下月付款计划 200', r.status_code == 200)
     r.close()
 
     # ── 14. 合同导出 ──
     section('14. 合同台账导出')
-    r = get('/contracts/export')
+    with client.session_transaction() as sess:
+        set_csrf(sess)
+    r = post('/contracts/export')
     check('导出合同台账 200', r.status_code == 200)
     r.close()
 
@@ -430,10 +437,41 @@ def run():
     r.close()
 
     # 验证删除
-    templates_after = [t for t in os.listdir(app.template_def.TEMPLATES_DIR) if t.endswith('.contract-template')]
+    templates_after = [
+        item
+        for item in os.listdir(template_def.TEMPLATES_DIR)
+        if item.endswith('.contract-template')
+    ]
     check('模板已删除', tpl_filename not in templates_after, str(templates_after))
 
     return summary()
+
+
+def run():
+    import app as app_module
+
+    global PASS, FAIL, _results
+    PASS = 0
+    FAIL = 0
+    _results = []
+    original_base_dir = app_module.BASE_DIR
+    original_resource_dir = app_module.RESOURCE_DIR
+    with tempfile.TemporaryDirectory() as runtime_dir:
+        app_module.reset_runtime()
+        test_app = app_module.create_app(
+            runtime_base_dir=runtime_dir,
+            resource_dir=original_resource_dir,
+            run_maintenance=False,
+            testing=True,
+        )
+        try:
+            return _run_with_app(test_app)
+        finally:
+            app_module.reset_runtime()
+            app_module.configure_runtime_paths(
+                original_base_dir,
+                original_resource_dir,
+            )
 
 
 if __name__ == '__main__':

@@ -1,3 +1,4 @@
+import io
 import sqlite3
 
 import pytest
@@ -86,6 +87,48 @@ def test_invoice_storage_rejects_paths_outside_runtime_root(client):
             _resolved_invoice_file('../outside.pdf')
         with pytest.raises(ValueError, match='路径无效'):
             _resolved_invoice_file(r'..\outside.pdf')
+
+
+def test_invoice_upload_removes_file_when_database_registration_fails(
+    app, client, monkeypatch,
+):
+    invoice_id = ledger_store.save_invoice(
+        {
+            'invoice_code': '044001',
+            'invoice_no': 'UPLOAD-ROLLBACK',
+            'seller_tax_no': 'TAX-UPLOAD',
+            'amount_ex_tax': 100,
+            'tax_amount': 13,
+            'total_amount': 113,
+        },
+        [],
+    )
+    monkeypatch.setattr(
+        ledger_store,
+        'add_invoice_file',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError('database registration failed')
+        ),
+    )
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'invoice-upload-token'
+
+    response = client.post(
+        f'/invoices/{invoice_id}/files',
+        data={
+            'csrf_token': 'invoice-upload-token',
+            'file': (io.BytesIO(b'%PDF-1.4\n'), 'invoice.pdf'),
+        },
+        content_type='multipart/form-data',
+    )
+
+    assert response.status_code == 500
+    invoice_dir = (
+        app.extensions['runtime_paths'].data_dir
+        / 'invoice_files'
+        / str(invoice_id)
+    )
+    assert not list(invoice_dir.glob('*'))
 
 
 def test_issue_notice_locks_quantity_and_generates_payment(tmp_db):
@@ -404,7 +447,7 @@ def test_full_red_invoice_offsets_original_allocation(tmp_db):
     )
     assert ledger_store.get_production_notice(notice_id)['allocated_amount'] == 100
 
-    ledger_store.save_invoice(
+    red_id = ledger_store.save_invoice(
         {
             'invoice_no': 'RED-OFFSET',
             'invoice_status': 'red',
@@ -416,6 +459,33 @@ def test_full_red_invoice_offsets_original_allocation(tmp_db):
         [],
     )
     assert ledger_store.get_production_notice(notice_id)['allocated_amount'] == 0
+
+    original = ledger_store.get_invoice(original_id)
+    original['amount_ex_tax'] = 200
+    original['total_amount'] = 200
+    with pytest.raises(ValueError, match='已有生效红字发票'):
+        ledger_store.save_invoice(
+            original,
+            original['allocations'],
+            invoice_id=original_id,
+        )
+
+    original = ledger_store.get_invoice(original_id)
+    original['invoice_status'] = 'void'
+    with pytest.raises(ValueError, match='已有生效红字发票'):
+        ledger_store.save_invoice(original, [], invoice_id=original_id)
+
+    with ledger_store.get_conn() as conn, pytest.raises(
+        sqlite3.IntegrityError,
+        match='已有生效红字发票',
+    ):
+        conn.execute(
+            'UPDATE invoices SET total_amount_minor = 20000 WHERE id = ?',
+            (original_id,),
+        )
+
+    assert ledger_store.get_invoice(original_id)['total_amount'] == 100
+    assert ledger_store.get_invoice(red_id)['total_amount'] == 100
     ledger_store.cancel_production_notice(notice_id, reason='发票已全额红冲')
     assert ledger_store.get_production_notice(notice_id)['status'] == 'cancelled'
 

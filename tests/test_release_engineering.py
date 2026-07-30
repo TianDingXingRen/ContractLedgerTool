@@ -33,16 +33,30 @@ def test_build_metadata_records_git_revision_and_dirty_state():
 
 def test_development_toolchain_is_fully_pinned():
     lock = (ROOT / 'requirements-dev.lock').read_text(encoding='utf-8')
-    pinned = [
-        line.strip()
-        for line in lock.splitlines()
-        if line.strip() and not line.lstrip().startswith(('#', '-r'))
-    ]
-    assert '-r requirements.lock' in lock
-    assert {'pytest', 'ruff', 'pytest-cov', 'playwright', 'pyinstaller'} <= {
-        line.split('==', 1)[0].lower() for line in pinned
+    runtime_lock = (ROOT / 'requirements.lock').read_text(encoding='utf-8')
+    entry_pattern = re.compile(
+        r'(?ms)^([A-Za-z0-9][A-Za-z0-9_.-]*==[^\n]+)'
+        r'(.*?)(?=^[A-Za-z0-9][A-Za-z0-9_.-]*==|\Z)'
+    )
+    entries = entry_pattern.findall(lock)
+    runtime_entries = entry_pattern.findall(runtime_lock)
+    pinned_names = {
+        requirement.split('==', 1)[0].lower()
+        for requirement, _details in entries
     }
-    assert all(line.count('==') == 1 for line in pinned)
+    runtime_names = {
+        requirement.split('==', 1)[0].lower()
+        for requirement, _details in runtime_entries
+    }
+    assert runtime_names <= pinned_names
+    assert {'pytest', 'ruff', 'pytest-cov', 'playwright', 'pyinstaller'} <= {
+        name.lower() for name in pinned_names
+    }
+    assert all(
+        requirement.split(';', 1)[0].count('==') == 1
+        and '--hash=sha256:' in details
+        for requirement, details in entries
+    )
 
 
 def test_ci_and_release_workflows_use_the_shared_quality_gate():
@@ -114,7 +128,7 @@ def test_offline_binaries_use_windowed_mode_and_hidden_powershell(tmp_path):
     assert '--windowed' in command
     assert '--console' not in command
 
-    build_script = (ROOT / 'build_installer.py').read_text(encoding='utf-8')
+    build_script = (ROOT / 'build_package.py').read_text(encoding='utf-8')
     assert "windowed=True" in build_script
     assert "'--windowed'" in build_script
     assert "'--console'" not in build_script
@@ -123,10 +137,10 @@ def test_offline_binaries_use_windowed_mode_and_hidden_powershell(tmp_path):
 
 
 def test_windowed_installer_reports_the_resolved_local_url(tmp_path):
-    import build_installer
+    import build_package
 
     bootstrap_path = tmp_path / 'offline_installer_bootstrap.py'
-    build_installer.write_bootstrap(bootstrap_path)
+    build_package.write_bootstrap(bootstrap_path)
     spec = importlib.util.spec_from_file_location('installer_bootstrap_test', bootstrap_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -151,10 +165,10 @@ def test_windowed_installer_reports_the_resolved_local_url(tmp_path):
 
 def test_windowed_installer_leaves_desktop_before_opening_picker(
         tmp_path, monkeypatch):
-    import build_installer
+    import build_package
 
     bootstrap_path = tmp_path / 'offline_installer_bootstrap.py'
-    build_installer.write_bootstrap(bootstrap_path)
+    build_package.write_bootstrap(bootstrap_path)
     spec = importlib.util.spec_from_file_location(
         'installer_bootstrap_workdir_test',
         bootstrap_path,
@@ -192,10 +206,10 @@ def test_windowed_installer_leaves_desktop_before_opening_picker(
 
 def test_windowed_installer_removes_only_fresh_empty_desktop_log(
         tmp_path, monkeypatch):
-    import build_installer
+    import build_package
 
     bootstrap_path = tmp_path / 'offline_installer_bootstrap.py'
-    build_installer.write_bootstrap(bootstrap_path)
+    build_package.write_bootstrap(bootstrap_path)
     spec = importlib.util.spec_from_file_location(
         'installer_bootstrap_cleanup_test',
         bootstrap_path,
@@ -223,26 +237,27 @@ def test_windowed_installer_removes_only_fresh_empty_desktop_log(
 
 
 def test_installer_uses_early_runtime_working_directory_hook(tmp_path):
-    import build_installer
+    import build_package
 
     hook_path = tmp_path / 'installer_runtime_hook.py'
-    build_installer.write_installer_runtime_hook(hook_path)
+    build_package.write_installer_runtime_hook(hook_path)
     hook = hook_path.read_text(encoding='utf-8')
-    build_script = (ROOT / 'build_installer.py').read_text(encoding='utf-8')
+    build_script = (ROOT / 'build_package.py').read_text(encoding='utf-8')
 
     assert "getattr(sys, '_MEIPASS', None)" in hook
     assert 'os.chdir(runtime_root)' in hook
     assert "'--runtime-hook', str(INSTALLER_RUNTIME_HOOK)" in build_script
 
 
-def test_legacy_packaging_commands_delegate_to_graphical_installer():
-    desktop_builder = (ROOT / 'build_desktop_exe.py').read_text(encoding='utf-8')
+def test_packaging_uses_one_argparse_entry_point():
     package_builder = (ROOT / 'build_package.py').read_text(encoding='utf-8')
 
-    assert 'build_installer.main()' in desktop_builder
-    assert 'ContractLedgerTool_Setup_v{version}.exe' in desktop_builder
-    assert 'build_pyinstaller_cmd' not in desktop_builder
-    assert 'from build_desktop_exe import main' in package_builder
+    assert not (ROOT / 'build_desktop_exe.py').exists()
+    assert not (ROOT / 'build_installer.py').exists()
+    assert "add_parser('app'" in package_builder
+    assert "add_parser('installer'" in package_builder
+    assert "'desktop'," in package_builder
+    assert 'ContractLedgerTool_Setup_v{project_version()}.exe' in package_builder
     assert 'zipfile' not in package_builder
 
 

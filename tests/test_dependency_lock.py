@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def test_requirements_lock_pins_runtime_dependencies():
@@ -10,10 +11,12 @@ def test_requirements_lock_pins_runtime_dependencies():
         assert package in requirements.lower()
         assert f'{package}==' in lock.lower()
 
-    pinned_lines = [
-        line.strip() for line in lock.splitlines()
-        if line.strip() and not line.startswith('#')
-    ]
-    assert pinned_lines
-    assert all('==' in line for line in pinned_lines)
-    assert all('>=' not in line and '<' not in line for line in pinned_lines)
+    entries = re.findall(
+        r'(?ms)^([A-Za-z0-9][A-Za-z0-9_.-]*==[^\n]+)'
+        r'(.*?)(?=^[A-Za-z0-9][A-Za-z0-9_.-]*==|\Z)',
+        lock,
+    )
+    assert entries
+    assert all('>=' not in requirement and '<' not in requirement
+               for requirement, _details in entries)
+    assert all('--hash=sha256:' in details for _requirement, details in entries)
