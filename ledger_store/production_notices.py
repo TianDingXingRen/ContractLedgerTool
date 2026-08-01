@@ -6,6 +6,8 @@ import json
 import sqlite3
 from datetime import date
 
+from database.connection_factory import begin_immediate
+
 
 ACTIVE_NOTICE_STATUSES = {'issued', 'acknowledged', 'closed'}
 
@@ -429,7 +431,12 @@ class ProductionNoticeRepository:
             """SELECT 1
                FROM invoice_allocations ia
                JOIN invoices i ON i.id = ia.invoice_id
-               WHERE ia.production_notice_id = ?
+               JOIN production_notices pn ON pn.id = ?
+               LEFT JOIN payment_plans pp ON pp.id = ia.payment_plan_id
+               WHERE (
+                   ia.production_notice_id = pn.id
+                   OR pp.trigger_event_id = pn.payment_trigger_event_id
+               )
                  AND i.invoice_status = 'valid'
                  AND NOT EXISTS (
                      SELECT 1 FROM invoices red
@@ -478,6 +485,7 @@ class ProductionNoticeRepository:
 
     def issue(self, notice_id, operator=''):
         with self.get_conn() as conn:
+            begin_immediate(conn)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()
@@ -585,6 +593,7 @@ class ProductionNoticeRepository:
         if not reason:
             raise ValueError('取消投产通知必须填写原因')
         with self.get_conn() as conn:
+            begin_immediate(conn)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()
@@ -595,6 +604,7 @@ class ProductionNoticeRepository:
     def revise(self, notice_id, operator=''):
         now = self.now()
         with self.get_conn() as conn:
+            begin_immediate(conn)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()

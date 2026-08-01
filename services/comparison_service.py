@@ -65,10 +65,12 @@ def run_configured_comparison(project_id, form):
     return run_comparison(project_id, threshold)
 
 
-def update_clarification(question_id, form):
+def update_clarification(project_id, question_id, form):
+    data = dict(form)
+    data['project_id'] = project_id
     return procurement_store.update_clarification(
         question_id,
-        form,
+        data,
     )
 
 

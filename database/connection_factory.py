@@ -29,6 +29,19 @@ def open_sqlite(
     return connection
 
 
+def begin_immediate(connection: sqlite3.Connection) -> None:
+    """Reserve the SQLite write slot before a read/validate/write sequence.
+
+    SQLite's default deferred transactions allow two writers to validate the
+    same stale row before either update is issued.  Repositories that derive
+    persisted fields from a preceding read use this helper so the read and the
+    eventual write are serialized.  Existing caller-owned transactions keep
+    their current boundary.
+    """
+    if not connection.in_transaction:
+        connection.execute('BEGIN IMMEDIATE')
+
+
 def _ensure_parent(database_path, directory=None) -> None:
     target = Path(directory) if directory is not None else Path(database_path).parent
     target.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,6 @@
 import sqlite3
+from contextlib import closing
+from pathlib import Path
 
 import ledger_store
 from ledger_store.schema import (
@@ -41,7 +43,7 @@ INSERT INTO payment_plans (
 
 
 def _create_database_at_version(path, target_version):
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.executescript(_V1_SCHEMA)
         connection.executescript(SCHEMA_VERSION_SQL)
         connection.execute(
@@ -72,6 +74,7 @@ def _create_database_at_version(path, target_version):
                 'INSERT INTO schema_version(version, applied_at) VALUES (?, ?)',
                 (version, '2026-01-01'),
             )
+        connection.commit()
 
 
 def test_every_historical_ledger_version_upgrades_to_current(tmp_path, monkeypatch):
@@ -86,7 +89,7 @@ def test_every_historical_ledger_version_upgrades_to_current(tmp_path, monkeypat
         ledger_store.run_migrations()
 
         assert ledger_store.get_schema_version() == CURRENT_SCHEMA_VERSION
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection:
             assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
             contract = connection.execute(
                 'SELECT amount_minor, record_origin, original_filename, source_sha256 '
@@ -103,3 +106,32 @@ def test_every_historical_ledger_version_upgrades_to_current(tmp_path, monkeypat
         assert contract == (12_345, 'generated', '', '')
         assert payment == (1_234, 123, None)
         assert serial_table == ('contract_serials',)
+
+
+def test_restore_supported_historical_ledger_only_backup(tmp_db):
+    backup_path = Path(ledger_store.BACKUP_DIR) / 'legacy-ledger-only.db'
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    _create_database_at_version(backup_path, 1)
+
+    ledger_store.restore_backup(backup_path.name)
+
+    assert ledger_store.get_schema_version() == CURRENT_SCHEMA_VERSION
+    with closing(sqlite3.connect(ledger_store.DB_PATH)) as connection:
+        contract = connection.execute(
+            'SELECT title FROM contracts WHERE contract_no = ?',
+            ('MATRIX-001',),
+        ).fetchone()
+        procurement_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('procurement_projects', "
+                "'procurement_schema_version')"
+            )
+        }
+
+    assert contract == ('Migration matrix',)
+    assert procurement_tables == {
+        'procurement_projects',
+        'procurement_schema_version',
+    }

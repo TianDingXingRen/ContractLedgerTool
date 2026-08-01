@@ -86,11 +86,11 @@ def confirm_all_payment_plans(contract_id):
 
 
 def batch_confirm_payment_plans(plan_ids):
-    ledger_store.batch_confirm_plans(plan_ids)
+    return ledger_store.batch_confirm_plans(plan_ids)
 
 
 def batch_mark_payment_plans_paid(plan_ids, paid_date):
-    ledger_store.batch_mark_plans_paid(plan_ids, paid_date)
+    return ledger_store.batch_mark_plans_paid(plan_ids, paid_date)
 
 
 def quick_update_payment_plan(
@@ -99,6 +99,8 @@ def quick_update_payment_plan(
     plan = ledger_store.get_payment_plan(plan_id)
     if not plan:
         raise NotFoundError('付款计划不存在')
+    if plan.get('confirm_status') == 'void':
+        raise ValueError('已作废的付款计划不能执行快捷操作')
 
     if action == 'confirm':
         values = {'confirm_status': 'confirmed'}
@@ -123,4 +125,8 @@ def quick_update_payment_plan(
     else:
         raise ValueError('快捷操作无效')
 
-    ledger_store.update_payment_plan(plan_id, values)
+    changed = ledger_store.update_payment_plan(
+        plan_id, values, require_not_void=True
+    )
+    if not changed:
+        raise NotFoundError('付款计划不存在')

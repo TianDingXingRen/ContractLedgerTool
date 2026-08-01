@@ -3,6 +3,8 @@ let currentPreset = null;
 let currentDetailColumns = [];
 let contracts = [];
 let selectedContractItems = [];
+let contractItemsController = null;
+let contractItemsRequestId = 0;
 
 async function apiFetch(url, options = {}) {
     const opts = { ...options };
@@ -93,7 +95,11 @@ function toggleContractSection() {
 }
 
 async function onContractChange() {
-    const cid = document.getElementById('contractSelect').value;
+    const contractSelect = document.getElementById('contractSelect');
+    const cid = contractSelect.value;
+    const requestId = ++contractItemsRequestId;
+    if (contractItemsController) contractItemsController.abort();
+    contractItemsController = null;
     document.getElementById('contractId').value = cid;
     document.getElementById('columnMappingSection').classList.toggle('hidden', !cid);
     document.getElementById('defaultValues').classList.toggle('hidden', !cid);
@@ -102,13 +108,27 @@ async function onContractChange() {
     if (!cid) {
         selectedContractItems = [];
         document.getElementById('contractItemCount').textContent = '';
-        document.getElementById('previewBody').innerHTML = '';
+        updateMappingUI();
+        renderPreview();
         return;
     }
 
+    const controller = new AbortController();
+    contractItemsController = controller;
+    selectedContractItems = [];
+    document.getElementById('contractItemCount').textContent = '加载中…';
+    updateMappingUI();
+    renderPreview();
     try {
-        const resp = await fetch('/api/excel-bill/contracts/' + cid + '/items');
-        const data = await resp.json();
+        const resp = await fetch('/api/excel-bill/contracts/' + cid + '/items', {
+            headers: { Accept: 'application/json' },
+            signal: controller.signal,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.error || `请求失败（${resp.status}）`);
+        }
+        if (requestId !== contractItemsRequestId || contractSelect.value !== cid) return;
         selectedContractItems = data.items || [];
         document.getElementById('contractItemCount').textContent =
             '共 ' + data.item_count + ' 行采购标的';
@@ -123,7 +143,15 @@ async function onContractChange() {
         }
         renderPreview();
     } catch (e) {
-        showToast('加载采购标的数据失败', 'error');
+        if (e.name === 'AbortError') return;
+        if (requestId !== contractItemsRequestId || contractSelect.value !== cid) return;
+        selectedContractItems = [];
+        document.getElementById('contractItemCount').textContent = '加载失败';
+        updateMappingUI();
+        renderPreview();
+        showToast('加载采购标的数据失败: ' + e.message, 'error');
+    } finally {
+        if (contractItemsController === controller) contractItemsController = null;
     }
 }
 

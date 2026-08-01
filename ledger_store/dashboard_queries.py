@@ -260,14 +260,20 @@ def summarize_payment_plans(
     with get_conn() as conn:
         row = conn.execute(
             f"""SELECT COUNT(*),
-                       SUM(CASE WHEN p.payment_status != 'paid' THEN 1 ELSE 0 END),
-                       COALESCE(SUM(CASE WHEN p.payment_status != 'paid'
-                         THEN MAX(COALESCE(p.due_amount_minor,0) - COALESCE(p.paid_amount_minor,0),0)
-                         ELSE 0 END),0),
-                       SUM(CASE WHEN p.payment_status != 'paid' AND COALESCE(p.due_date,'') != ''
-                                     AND p.due_date < ? THEN 1 ELSE 0 END),
-                       COALESCE(SUM(CASE WHEN p.payment_status != 'paid' AND COALESCE(p.due_date,'') != ''
-                                     AND p.due_date < ?
+                       SUM(CASE WHEN p.confirm_status != 'void'
+                                     AND p.payment_status != 'paid' THEN 1 ELSE 0 END),
+                       COALESCE(SUM(CASE WHEN p.confirm_status != 'void'
+                                     AND p.payment_status != 'paid'
+                          THEN MAX(COALESCE(p.due_amount_minor,0) - COALESCE(p.paid_amount_minor,0),0)
+                          ELSE 0 END),0),
+                       SUM(CASE WHEN p.confirm_status != 'void'
+                                     AND p.payment_status != 'paid'
+                                     AND COALESCE(p.due_date,'') != ''
+                                      AND p.due_date < ? THEN 1 ELSE 0 END),
+                       COALESCE(SUM(CASE WHEN p.confirm_status != 'void'
+                                     AND p.payment_status != 'paid'
+                                     AND COALESCE(p.due_date,'') != ''
+                                      AND p.due_date < ?
                          THEN MAX(COALESCE(p.due_amount_minor,0) - COALESCE(p.paid_amount_minor,0),0)
                          ELSE 0 END),0)
                   FROM payment_plans p JOIN contracts c ON c.id = p.contract_id

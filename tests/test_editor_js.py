@@ -93,6 +93,53 @@ class EditorJavaScriptTests(unittest.TestCase):
         self.assertIn("event.key !== 'Escape'", editor)
         self.assertIn('announceEditorStatus', editor)
 
+    def test_invoice_and_excel_bill_async_loaders_guard_latest_selection(self):
+        with open(
+            os.path.join(app.RESOURCE_DIR, 'static', 'js', 'invoice-form.js'),
+            encoding='utf-8',
+        ) as f:
+            invoice_form = f.read()
+        with open(
+            os.path.join(app.RESOURCE_DIR, 'static', 'js', 'excel-bill.js'),
+            encoding='utf-8',
+        ) as f:
+            excel_bill = f.read()
+
+        self.assertIn('new AbortController()', invoice_form)
+        self.assertIn('targetRequests.get(row) !== controller', invoice_form)
+        self.assertIn('contractField.value !== contract', invoice_form)
+        self.assertIn('if (!response.ok)', invoice_form)
+        self.assertIn('const previousNoticeId = noticeField.value;', invoice_form)
+        self.assertIn('const previousPlanId = planField.value;', invoice_form)
+        self.assertRegex(
+            invoice_form,
+            r"data\.notices \|\| \[\],\s*'不关联',\s*contract,\s*previousNoticeId",
+        )
+        self.assertRegex(
+            invoice_form,
+            r"data\.plans \|\| \[\],\s*'不关联',\s*contract,\s*previousPlanId",
+        )
+        self.assertIn('MAX_ALLOCATION_ROWS = 100', invoice_form)
+        self.assertIn("currencyField.value = 'CNY'", invoice_form)
+        self.assertIn('currencyField.readOnly = true', invoice_form)
+        self.assertIn('pendingTargetLoads += 1;', invoice_form)
+        self.assertIn('pendingTargetLoads - 1', invoice_form)
+        self.assertIn("invoiceForm.addEventListener('submit'", invoice_form)
+        self.assertIn('event.preventDefault();', invoice_form)
+        self.assertIn('button.disabled = true;', invoice_form)
+        self.assertNotIn(
+            "replaceOptions(noticeField, [], '加载中…'",
+            invoice_form,
+        )
+
+        self.assertIn('new AbortController()', excel_bill)
+        self.assertIn('requestId !== contractItemsRequestId', excel_bill)
+        self.assertIn('contractSelect.value !== cid', excel_bill)
+        self.assertIn('if (!resp.ok)', excel_bill)
+        loading = excel_bill.index("textContent = '加载中…';")
+        request = excel_bill.index('    try {', loading)
+        self.assertIn('updateMappingUI();', excel_bill[loading:request])
+
 
 if __name__ == '__main__':
     unittest.main()

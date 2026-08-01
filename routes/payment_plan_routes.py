@@ -32,11 +32,15 @@ def _payment_redirect(form_or_args):
                     default_tab='payments',
                 )
             )
-    return redirect(
-        url_for(
-            'payments.payment_plan_list',
-            **payment_filter_args(form_or_args),
+    redirect_args = payment_filter_args(form_or_args)
+    try:
+        redirect_args['page'] = max(
+            1, int(form_or_args.get('page', 1) or 1)
         )
+    except (TypeError, ValueError):
+        redirect_args['page'] = 1
+    return redirect(
+        url_for('payments.payment_plan_list', **redirect_args)
     )
 
 

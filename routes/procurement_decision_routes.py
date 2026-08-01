@@ -116,6 +116,7 @@ def procurement_clarification_update(question_id):
         return '采购项目 ID 无效', 400
     try:
         comparison_service.update_clarification(
+            project_id,
             question_id,
             request.form,
         )

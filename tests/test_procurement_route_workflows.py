@@ -572,16 +572,19 @@ def test_split_decision_routes_cover_error_translation(
         '/procurement/clarifications/1',
         {'project_id': '0'},
     ).status_code == 400
+    clarification_calls = []
     monkeypatch.setattr(
         module.comparison_service,
         'update_clarification',
-        lambda *_args: None,
+        lambda *args: clarification_calls.append(args),
     )
     assert _post(
         client,
         '/procurement/clarifications/1',
         {'project_id': '1'},
     ).status_code == 302
+    assert clarification_calls
+    assert clarification_calls[0][0:2] == (1, 1)
 
     monkeypatch.setattr(
         module.award_service,

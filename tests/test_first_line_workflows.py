@@ -4,6 +4,7 @@ import uuid
 
 import ledger_store
 import template_def
+from services import payment_queries
 from utils import helpers
 
 
@@ -41,7 +42,8 @@ def test_payment_work_view_and_quick_update(app, client):
     assert '处理视图' in html
     assert '批量确认' in html
     assert '报表月份' in html
-    assert '导出月度模板' in html
+    assert '导出付款计划' in html
+    assert '导出月度模板' not in html
 
     token = _set_csrf(client)
     response = client.post(
@@ -52,14 +54,95 @@ def test_payment_work_view_and_quick_update(app, client):
             'paid_amount': '400',
             'paid_date': date.today().strftime('%Y-%m-%d'),
             'view': 'work',
+            'page': '2',
         },
         follow_redirects=False,
     )
     assert response.status_code == 302
+    assert 'page=2' in response.headers['Location']
     updated = ledger_store.get_payment_plan(plan['id'])
     assert updated['confirm_status'] == 'confirmed'
     assert updated['payment_status'] == 'partial'
     assert updated['paid_amount'] == 400
+
+
+def test_void_and_pending_plans_cannot_be_paid_from_workbench(app, client):
+    contract_id = ledger_store.create_contract(
+        {'title': '付款状态机测试合同'}, {}, ''
+    )
+    confirmed_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '已确认节点',
+        'due_amount': 100,
+        'confirm_status': 'confirmed',
+    })
+    pending_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '待确认节点',
+        'due_amount': 100,
+        'confirm_status': 'pending',
+    })
+    void_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '已作废节点',
+        'due_amount': 100,
+        'confirm_status': 'void',
+    })
+
+    page = client.get('/payment-plans')
+    html = page.get_data(as_text=True)
+    assert '已作废付款计划不可批量操作' in html
+    assert f'data-drawer-open="workbenchPayDrawer{void_id}"' not in html
+
+    token = _set_csrf(client, 'payment-state-token')
+    paid_date = date.today().strftime('%Y-%m-%d')
+    response = client.post(
+        f'/payment-plans/{void_id}/quick-update',
+        data={
+            'csrf_token': token,
+            'action': 'paid',
+            'paid_date': paid_date,
+        },
+    )
+    assert response.status_code == 400
+    assert '已作废' in response.get_data(as_text=True)
+
+    response = client.post(
+        '/payment-plans/batch-paid',
+        data={
+            'csrf_token': token,
+            'ids': f'[{confirmed_id}, {pending_id}]',
+            'paid_date': paid_date,
+        },
+    )
+    assert response.status_code == 400
+    assert '只有已确认' in response.get_data(as_text=True)
+    assert ledger_store.get_payment_plan(confirmed_id)['payment_status'] == 'unpaid'
+
+    response = client.post(
+        '/payment-plans/batch-paid',
+        data={
+            'csrf_token': token,
+            'ids': f'[{void_id}]',
+            'paid_date': paid_date,
+        },
+    )
+    assert response.status_code == 400
+    assert ledger_store.get_payment_plan(void_id)['confirm_status'] == 'void'
+
+
+def test_payment_due_today_is_not_reported_overdue(app):
+    contract_id = ledger_store.create_contract(
+        {'title': '今日到期边界合同'}, {}, ''
+    )
+    plan_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '今日到期',
+        'due_date': date.today().strftime('%Y-%m-%d'),
+        'due_amount': 100,
+        'confirm_status': 'confirmed',
+    })
+
+    context = payment_queries.payment_plan_page({}, 1, date.today())
+    row = next(item for item in context['plans'] if item['id'] == plan_id)
+    assert row['is_overdue'] is False
+    assert context['payment_summary']['overdue_count'] == 0
 
 
 def test_generate_preflight_blocks_duplicate_contract_no(app, client):

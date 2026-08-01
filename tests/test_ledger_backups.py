@@ -1,7 +1,10 @@
 import os
 import shutil
 import sqlite3
+from contextlib import closing
 from datetime import date, timedelta
+
+import pytest
 
 
 def test_ledger_backup_wrappers_delegate_to_split_module(tmp_db):
@@ -81,3 +84,38 @@ def test_scheduled_retention_never_removes_safety_or_manual_backups(tmp_db):
         if name.startswith('contracts_2026-') and name.endswith('.db')
     ]
     assert len(scheduled) == 7
+
+
+def test_restore_rejects_sqlite_without_application_schema(tmp_db):
+    import ledger_store
+
+    contract_id = ledger_store.create_contract({'title': 'Keep Me'}, {}, '')
+    invalid_path = os.path.join(ledger_store.BACKUP_DIR, 'invalid-schema.db')
+    os.makedirs(ledger_store.BACKUP_DIR, exist_ok=True)
+    with closing(sqlite3.connect(invalid_path)) as connection:
+        connection.execute('CREATE TABLE notes (value TEXT)')
+        connection.execute("INSERT INTO notes VALUES ('not an app backup')")
+        connection.commit()
+
+    with pytest.raises(ValueError, match='备份数据库缺少应用表'):
+        ledger_store.restore_backup(os.path.basename(invalid_path))
+
+    assert ledger_store.get_contract(contract_id)['title'] == 'Keep Me'
+
+
+def test_restore_rejects_backup_from_newer_ledger_schema(tmp_db):
+    import ledger_store
+
+    contract_id = ledger_store.create_contract({'title': 'Current Data'}, {}, '')
+    backup = ledger_store.create_backup('future_schema')
+    with closing(sqlite3.connect(backup['path'])) as connection:
+        connection.execute(
+            'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
+            (ledger_store.CURRENT_SCHEMA_VERSION + 1, '2099-01-01 00:00:00'),
+        )
+        connection.commit()
+
+    with pytest.raises(ValueError, match='备份数据库版本过新'):
+        ledger_store.restore_backup(backup['filename'])
+
+    assert ledger_store.get_contract(contract_id)['title'] == 'Current Data'

@@ -3,6 +3,7 @@
 import math
 import os
 import re
+from decimal import Decimal, ROUND_HALF_UP
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
@@ -119,7 +120,8 @@ def export_payment_plans(path, rows, title='下月付款计划'):
 def _minor_to_wan(value):
     if value is None:
         return None
-    return round(int(value) / 1_000_000, 2)
+    amount = Decimal(int(value)) / Decimal(1_000_000)
+    return float(amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
 def _safe_sheet_name(value, used):
@@ -127,7 +129,8 @@ def _safe_sheet_name(value, used):
     name = name[:31]
     candidate = name
     suffix = 2
-    while candidate in used:
+    used_casefolded = {str(item).casefold() for item in used}
+    while candidate.casefold() in used_casefolded:
         tail = f'-{suffix}'
         candidate = f'{name[:31-len(tail)]}{tail}'
         suffix += 1
@@ -204,6 +207,8 @@ def export_monthly_payment_plan_report(path, report):
     for project in report.get('projects', []):
         sheet_name = _safe_sheet_name(project['project_name'], used_sheet_names)
         ws = wb.create_sheet(sheet_name)
+        sheet_name = ws.title
+        used_sheet_names.add(sheet_name)
         columns = monthly_detail_columns(node_count)
         headers = column_headers(columns)
         last_col = len(headers)
@@ -312,6 +317,15 @@ def export_monthly_payment_plan_report(path, report):
                 f'={helper_current_letter}{row_index}+'
                 f'{helper_previous_letter}{row_index}',
             )
+            if row['current_month_minor']:
+                ws.cell(
+                    row_index,
+                    current_payment_col,
+                ).fill = _STYLES.monthly_current_fill
+                ws.cell(
+                    row_index,
+                    current_payment_col,
+                ).font = _STYLES.monthly_total_font
             for column in [6, current_payment_col]:
                 ws.cell(row_index, column).number_format = MONEY_FORMAT
             for node_index, node in enumerate(row['nodes']):
@@ -398,7 +412,11 @@ def export_monthly_payment_plan_report(path, report):
         ws.cell(legend_paid_row, 1, '绿色的表示已付款')
         ws.cell(legend_paid_row, 1).fill = _STYLES.monthly_paid_fill
         ws.cell(legend_paid_row, 1).font = _STYLES.monthly_total_font
-        ws.cell(legend_current_row, 1, '黄色表示计划本月付款')
+        ws.cell(
+            legend_current_row,
+            1,
+            f'黄色表示{display_month}计划付款',
+        )
         ws.cell(legend_current_row, 1).fill = _STYLES.monthly_current_fill
         ws.cell(legend_current_row, 1).font = _STYLES.monthly_total_font
 
@@ -460,7 +478,11 @@ def export_monthly_payment_plan_report(path, report):
                 cell.alignment = _STYLES.right_alignment
 
     for row_index, ref in enumerate(project_refs, 3):
-        summary_ws.cell(row_index, 2, ref['name'])
+        summary_ws.cell(
+            row_index,
+            2,
+            safe_spreadsheet_value(ref['name']),
+        )
         summary_ws.cell(row_index, 2).font = _STYLES.monthly_summary_bold_font
         summary_ws.cell(
             row_index,

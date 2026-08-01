@@ -372,6 +372,9 @@ class InvoiceRepository:
             raise ValueError('核验状态无效')
         if deduction_status not in DEDUCTION_STATUSES:
             raise ValueError('抵扣状态无效')
+        currency = str(data.get('currency') or 'CNY').strip().upper() or 'CNY'
+        if currency != 'CNY':
+            raise ValueError('发票币种仅支持 CNY（人民币）')
         if invoice_status == 'void' and review_status == 'verified':
             raise ValueError('作废发票不能标记为已核验')
         if deduction_status == 'deducted' and (
@@ -396,12 +399,21 @@ class InvoiceRepository:
                 existing_invoice = None
                 if invoice_id:
                     existing_invoice = conn.execute(
-                        """SELECT id, invoice_status, total_amount_minor
+                        """SELECT id, invoice_status, original_invoice_id,
+                                  total_amount_minor
                            FROM invoices WHERE id = ?""",
                         (invoice_id,),
                     ).fetchone()
                     if not existing_invoice:
                         raise ValueError('发票不存在')
+                    if existing_invoice['invoice_status'] == 'red' and (
+                        invoice_status != 'red'
+                        or original_invoice_id
+                        != existing_invoice['original_invoice_id']
+                    ):
+                        raise ValueError(
+                            '已生效红字发票不能变更状态或关联原发票'
+                        )
                     active_red = conn.execute(
                         """SELECT id, total_amount_minor FROM invoices
                            WHERE original_invoice_id = ?
@@ -445,7 +457,7 @@ class InvoiceRepository:
                     str(data.get('seller_tax_no') or '').strip().upper(),
                     str(data.get('buyer_name') or '').strip(),
                     str(data.get('buyer_tax_no') or '').strip().upper(),
-                    str(data.get('currency') or 'CNY').strip().upper() or 'CNY',
+                    currency,
                     amounts['amount_ex_tax_minor'], amounts['tax_amount_minor'],
                     amounts['total_amount_minor'], tax_rate_bps, invoice_status,
                     review_status, deduction_status, original_invoice_id,

@@ -12,6 +12,20 @@ from utils.security import path_within
 
 
 _SCHEDULED_BACKUP_RE = re.compile(r'^contracts_\d{4}-\d{2}-\d{2}\.db$')
+_REQUIRED_APPLICATION_TABLES = {
+    'contracts',
+    'payment_plans',
+}
+_REQUIRED_APPLICATION_COLUMNS = {
+    'contracts': {'id', 'title', 'created_at', 'updated_at'},
+    'payment_plans': {
+        'id', 'contract_id', 'due_amount', 'created_at', 'updated_at',
+    },
+}
+_PROCUREMENT_IDENTITY_TABLES = {
+    'procurement_projects',
+    'procurement_schema_version',
+}
 
 
 def _is_scheduled_backup(filename):
@@ -131,7 +145,7 @@ def backup_path(backup_dir, filename):
 
 def restore_backup(db_path, data_dir, backup_dir, filename, create_backup_func):
     src = backup_path(backup_dir, filename)
-    _validate_sqlite_backup(src)
+    _validate_application_backup(src)
     rollback = None
     if os.path.exists(db_path):
         rollback = create_backup_func('before_restore')
@@ -189,6 +203,86 @@ def _validate_sqlite_backup(path):
             raise ValueError(f'Backup validation failed: {detail}')
     except sqlite3.DatabaseError as exc:
         raise ValueError(f'Backup file is not a valid SQLite database: {exc}') from exc
+    finally:
+        if conn:
+            conn.close()
+
+
+def _validate_application_backup(path):
+    """Reject valid SQLite files that are not compatible application backups."""
+    _validate_sqlite_backup(path)
+    conn = None
+    try:
+        conn = sqlite3.connect(path)
+        conn.execute('PRAGMA query_only = ON')
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        missing = sorted(_REQUIRED_APPLICATION_TABLES - tables)
+        if missing:
+            raise ValueError(
+                f'备份数据库缺少应用表: {", ".join(missing)}'
+            )
+        for table, required_columns in _REQUIRED_APPLICATION_COLUMNS.items():
+            columns = {
+                str(row[1])
+                for row in conn.execute(f'PRAGMA table_info({table})').fetchall()
+            }
+            missing_columns = sorted(required_columns - columns)
+            if missing_columns:
+                raise ValueError(
+                    f'备份数据库应用表 {table} 缺少字段: '
+                    f'{", ".join(missing_columns)}'
+                )
+
+        procurement_identity = tables & _PROCUREMENT_IDENTITY_TABLES
+        if procurement_identity and procurement_identity != _PROCUREMENT_IDENTITY_TABLES:
+            missing = sorted(_PROCUREMENT_IDENTITY_TABLES - tables)
+            raise ValueError(
+                f'备份数据库缺少采购应用表: {", ".join(missing)}'
+            )
+
+        ledger_version = None
+        if 'schema_version' in tables:
+            ledger_row = conn.execute(
+                'SELECT MAX(version) FROM schema_version'
+            ).fetchone()
+            ledger_version = int(ledger_row[0] or 0) if ledger_row else 0
+        procurement_version = None
+        if procurement_identity:
+            procurement_row = conn.execute(
+                'SELECT MAX(version) FROM procurement_schema_version'
+            ).fetchone()
+            procurement_version = (
+                int(procurement_row[0] or 0) if procurement_row else 0
+            )
+
+        from .schema import CURRENT_SCHEMA_VERSION as max_ledger_version
+        from procurement_store.schema import (
+            CURRENT_SCHEMA_VERSION as max_procurement_version,
+        )
+
+        if (ledger_version is not None and ledger_version < 1) or (
+            procurement_version is not None and procurement_version < 1
+        ):
+            raise ValueError('备份数据库缺少有效的架构版本记录')
+        if ledger_version is not None and ledger_version > max_ledger_version:
+            raise ValueError(
+                f'备份数据库版本过新: {ledger_version} > {max_ledger_version}'
+            )
+        if (
+            procurement_version is not None
+            and procurement_version > max_procurement_version
+        ):
+            raise ValueError(
+                '备份采购数据库版本过新: '
+                f'{procurement_version} > {max_procurement_version}'
+            )
+    except sqlite3.DatabaseError as exc:
+        raise ValueError(f'无法验证备份数据库架构: {exc}') from exc
     finally:
         if conn:
             conn.close()

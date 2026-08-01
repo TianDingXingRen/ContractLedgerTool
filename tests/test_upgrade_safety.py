@@ -1,4 +1,5 @@
 import sqlite3
+from pathlib import Path
 
 
 def _create_legacy_database(path):
@@ -63,6 +64,34 @@ def _create_legacy_database(path):
     )
     conn.commit()
     conn.close()
+
+
+def test_restore_supported_legacy_database_without_schema_version(tmp_db):
+    import ledger_store
+
+    backup_path = Path(ledger_store.BACKUP_DIR) / 'legacy-before-versions.db'
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    _create_legacy_database(backup_path)
+
+    ledger_store.restore_backup(backup_path.name)
+
+    assert ledger_store.get_schema_version() == ledger_store.CURRENT_SCHEMA_VERSION
+    contracts = ledger_store.list_contracts()
+    assert contracts['total'] == 1
+    assert contracts['rows'][0]['contract_no'] == 'LEGACY-001'
+    with ledger_store.get_conn() as connection:
+        procurement_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('procurement_projects', "
+                "'procurement_schema_version')"
+            )
+        }
+    assert procurement_tables == {
+        'procurement_projects',
+        'procurement_schema_version',
+    }
 
 
 def test_app_upgrade_backs_up_legacy_database_before_migration(tmp_path):

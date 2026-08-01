@@ -1,5 +1,8 @@
+import threading
+
 import pytest
 
+import ledger_store
 from ledger_store import money_fields
 
 
@@ -69,3 +72,67 @@ def test_plan_assignment_keeps_legacy_and_minor_columns_together():
 
     assert assignments == ['due_amount = ?', 'due_amount_minor = ?']
     assert values == [0.29, 29]
+
+
+def test_concurrent_payment_update_reloads_after_acquiring_write_lock(tmp_db):
+    contract_id = ledger_store.create_contract(
+        {'title': '并发付款校验合同'}, {}, ''
+    )
+    plan_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '并发节点',
+        'due_amount': 100,
+        'paid_amount': 0,
+        'confirm_status': 'confirmed',
+    })
+    writer_ready = threading.Event()
+    release_writer = threading.Event()
+    payer_started = threading.Event()
+    payer_done = threading.Event()
+    writer_failures = []
+    payer_errors = []
+
+    def lower_due_amount():
+        try:
+            with ledger_store.get_conn() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                conn.execute(
+                    """UPDATE payment_plans
+                          SET due_amount = 50, due_amount_minor = 5000
+                        WHERE id = ?""",
+                    (plan_id,),
+                )
+                writer_ready.set()
+                assert release_writer.wait(5)
+        except BaseException as exc:
+            writer_failures.append(exc)
+
+    def record_payment():
+        payer_started.set()
+        try:
+            ledger_store.update_payment_plan(plan_id, {
+                'paid_amount': 80,
+                'paid_date': '2026-07-31',
+            })
+        except ValueError as exc:
+            payer_errors.append(exc)
+        finally:
+            payer_done.set()
+
+    writer = threading.Thread(target=lower_due_amount)
+    payer = threading.Thread(target=record_payment)
+    writer.start()
+    assert writer_ready.wait(5)
+    payer.start()
+    assert payer_started.wait(5)
+    assert not payer_done.wait(0.2)
+    release_writer.set()
+    writer.join(5)
+    payer.join(5)
+
+    assert not writer_failures
+    assert len(payer_errors) == 1
+    assert '不能大于应付金额' in str(payer_errors[0])
+    plan = ledger_store.get_payment_plan(plan_id)
+    assert plan['due_amount'] == 50
+    assert plan['paid_amount'] == 0
+    assert plan['payment_status'] == 'unpaid'

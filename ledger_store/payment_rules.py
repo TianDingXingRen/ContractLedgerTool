@@ -7,6 +7,7 @@ import json
 from decimal import Decimal, ROUND_HALF_UP
 
 from . import money_fields
+from .payment_plans import effective_invoice_allocation_minor
 
 
 PARSE_STATUSES = {'exact', 'partial', 'conflict', 'unsupported', 'manual'}
@@ -426,6 +427,11 @@ class PaymentRuleRepository:
             raise ValueError('业务事件金额已变化，但关联付款计划已经付款')
         if changed and plan['confirm_status'] == 'void':
             raise ValueError('业务事件金额已变化，但关联付款计划已经作废')
+        if (
+            changed
+            and due_minor < effective_invoice_allocation_minor(conn, plan['id'])
+        ):
+            raise ValueError('应付金额不能小于付款计划的有效发票分摊金额')
         if changed:
             conn.execute(
                 """UPDATE payment_plans

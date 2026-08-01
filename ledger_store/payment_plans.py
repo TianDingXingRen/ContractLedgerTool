@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
+from database.connection_factory import begin_immediate
+
 from . import list_queries, money_fields
+
+
+def effective_invoice_allocation_minor(conn, plan_id):
+    """Return allocations that still consume a payment plan's invoice cap."""
+    return int(conn.execute(
+        """SELECT COALESCE(SUM(ia.allocated_amount_minor), 0)
+             FROM invoice_allocations ia
+             JOIN invoices i ON i.id = ia.invoice_id
+            WHERE ia.payment_plan_id = ?
+              AND i.invoice_status = 'valid'
+              AND NOT EXISTS (
+                  SELECT 1 FROM invoices red
+                   WHERE red.original_invoice_id = i.id
+                     AND red.invoice_status = 'red'
+              )""",
+        (plan_id,),
+    ).fetchone()[0] or 0)
 
 
 class PaymentPlanRepository:
@@ -61,8 +80,35 @@ class PaymentPlanRepository:
             raise ValueError('合同内编号不存在、已停用或不属于当前合同')
         return serial_id
 
+    @staticmethod
+    def _effective_invoice_allocation_minor(conn, plan_id):
+        return effective_invoice_allocation_minor(conn, plan_id)
+
+    def _validate_invoice_allocation_constraints(
+        self, conn, plan_id, merged
+    ):
+        allocated_minor = self._effective_invoice_allocation_minor(
+            conn, plan_id
+        )
+        if allocated_minor <= 0:
+            return
+        if merged.get('confirm_status') == 'void':
+            raise ValueError('付款计划已有有效发票分摊，不能作废')
+        due_minor = merged.get('due_amount_minor')
+        if due_minor is None or due_minor < allocated_minor:
+            raise ValueError('应付金额不能小于付款计划的有效发票分摊金额')
+
+    @staticmethod
+    def _validate_void_transition(merged):
+        if (
+            merged.get('confirm_status') == 'void'
+            and int(merged.get('paid_amount_minor') or 0) > 0
+        ):
+            raise ValueError('付款计划已发生付款，不能作废')
+
     def insert_impl(self, conn, contract_id, plan):
         plan = self.normalize_consistency(plan)
+        self._validate_void_transition(plan)
         contract_serial_id = self._validate_contract_serial(
             conn, contract_id, plan.get('contract_serial_id')
         )
@@ -157,6 +203,7 @@ class PaymentPlanRepository:
 
     def save_changes(self, contract_id, changes):
         with self.get_conn() as conn:
+            begin_immediate(conn)
             contract = conn.execute(
                 'SELECT id FROM contracts WHERE id = ?', (contract_id,)
             ).fetchone()
@@ -192,6 +239,10 @@ class PaymentPlanRepository:
                     row['user_modified'] = 1
                     row['parse_status'] = 'manual'
                     row = self.normalize_consistency(row)
+                    self._validate_void_transition(row)
+                    self._validate_invoice_allocation_constraints(
+                        conn, plan_id, row
+                    )
                     assignments = []
                     values = []
                     for key in self.update_fields:
@@ -261,10 +312,13 @@ class PaymentPlanRepository:
             ).fetchone()
         return self.row_to_dict(row)
 
-    def update(self, plan_id, data, contract_id=None):
+    def update(
+        self, plan_id, data, contract_id=None, *, require_not_void=False
+    ):
         if not any(key in data for key in self.update_fields):
             return None
         with self.get_conn() as conn:
+            begin_immediate(conn)
             where = 'id = ?'
             lookup_values = [plan_id]
             if contract_id is not None:
@@ -275,6 +329,8 @@ class PaymentPlanRepository:
             ).fetchone()
             if not existing:
                 return 0
+            if require_not_void and existing['confirm_status'] == 'void':
+                raise ValueError('已作废的付款计划不能执行快捷操作')
             merged = self.row_to_dict(existing)
             merged.update(
                 {key: data[key] for key in self.update_fields if key in data}
@@ -284,6 +340,10 @@ class PaymentPlanRepository:
                     conn, existing['contract_id'], data.get('contract_serial_id')
                 )
             merged = self.normalize_consistency(merged)
+            self._validate_void_transition(merged)
+            self._validate_invoice_allocation_constraints(
+                conn, plan_id, merged
+            )
             assignments = []
             values = []
             for key in self.update_fields:
@@ -308,6 +368,7 @@ class PaymentPlanRepository:
             return 0
         now = self.now()
         with self.get_conn() as conn:
+            begin_immediate(conn)
             count = 0
             for plan_id in plan_ids:
                 where = 'id = ? AND confirm_status = ?'
@@ -328,23 +389,30 @@ class PaymentPlanRepository:
             return 0
         now = self.now()
         with self.get_conn() as conn:
-            count = 0
+            begin_immediate(conn)
+            prepared = []
             for plan_id in plan_ids:
                 row = conn.execute(
-                    """SELECT * FROM payment_plans
-                       WHERE id = ? AND confirm_status = 'confirmed'
-                         AND payment_status != 'paid'""",
+                    'SELECT * FROM payment_plans WHERE id = ?',
                     (plan_id,),
                 ).fetchone()
                 if not row:
+                    raise ValueError('付款计划不存在')
+                if row['confirm_status'] != 'confirmed':
+                    raise ValueError('只有已确认的付款计划可以批量登记付款')
+                if row['payment_status'] == 'paid':
                     continue
                 plan = self.row_to_dict(row)
                 due_amount = plan.get('due_amount')
                 if due_amount is None:
-                    continue
+                    raise ValueError('付款计划缺少应付金额，不能批量登记付款')
                 updated = self.normalize_consistency(
                     {**plan, 'paid_amount': due_amount, 'paid_date': paid_date}
                 )
+                prepared.append((plan_id, updated))
+
+            count = 0
+            for plan_id, updated in prepared:
                 cur = conn.execute(
                     """UPDATE payment_plans
                        SET paid_amount = ?, paid_amount_minor = ?, paid_date = ?,

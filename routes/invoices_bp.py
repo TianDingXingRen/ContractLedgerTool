@@ -41,6 +41,9 @@ def _invoice_data(form):
     tax_rate_raw = str(form.get('tax_rate', '') or '').strip()
     if tax_rate_raw and float_or_none(tax_rate_raw) is None:
         raise ValueError('税率必须是有效数字')
+    currency = str(form.get('currency', 'CNY') or 'CNY').strip().upper()
+    if currency != 'CNY':
+        raise ValueError('发票币种仅支持 CNY（人民币）')
     return {
         'invoice_code': form.get('invoice_code', ''),
         'invoice_no': form.get('invoice_no', ''),
@@ -51,7 +54,7 @@ def _invoice_data(form):
         'seller_tax_no': form.get('seller_tax_no', ''),
         'buyer_name': form.get('buyer_name', ''),
         'buyer_tax_no': form.get('buyer_tax_no', ''),
-        'currency': form.get('currency', 'CNY'),
+        'currency': 'CNY',
         'amount_ex_tax': form.get('amount_ex_tax', ''),
         'tax_amount': form.get('tax_amount', ''),
         'total_amount': form.get('total_amount', ''),
@@ -67,9 +70,11 @@ def _invoice_data(form):
 
 def _allocation_rows(form):
     try:
-        count = min(MAX_ALLOCATION_ROWS, max(0, int(form.get('allocation_count', 0))))
+        count = int(form.get('allocation_count', 0))
     except (TypeError, ValueError) as exc:
         raise ValueError('发票分摊行数无效') from exc
+    if count < 0 or count > MAX_ALLOCATION_ROWS:
+        raise ValueError(f'发票分摊行数必须在 0 到 {MAX_ALLOCATION_ROWS} 之间')
     rows = []
     for index in range(count):
         rows.append({

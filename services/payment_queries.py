@@ -60,16 +60,20 @@ def payment_plan_page(filters, page, today):
     }
     result = ledger_store.list_payment_plans(page=page, **query)
     today_str = today.strftime('%Y-%m-%d')
+    overdue_end = (today - timedelta(days=1)).strftime('%Y-%m-%d')
     due_soon_end = (today + timedelta(days=7)).strftime('%Y-%m-%d')
     for row in result['rows']:
-        unpaid = (
-            (row.get('due_amount') or 0) - (row.get('paid_amount') or 0)
+        outstanding = max(
+            (row.get('due_amount') or 0) - (row.get('paid_amount') or 0),
+            0,
         )
         due_date = row.get('due_date') or ''
-        is_unpaid = row.get('payment_status') != 'paid'
-        row['unpaid_amount'] = unpaid
+        is_void = row.get('confirm_status') == 'void'
+        is_unpaid = row.get('payment_status') != 'paid' and not is_void
+        row['unpaid_amount'] = outstanding if is_unpaid else 0
+        row['can_bulk_select'] = not is_void
         row['is_overdue'] = bool(
-            due_date and due_date <= today_str and is_unpaid
+            due_date and due_date < today_str and is_unpaid
         )
         row['is_due_soon'] = bool(
             due_date
@@ -80,6 +84,9 @@ def payment_plan_page(filters, page, today):
     next_start, next_end = next_month_range()
     return {
         'plans': result['rows'],
+        'selectable_plan_ids': [
+            row['id'] for row in result['rows'] if row['can_bulk_select']
+        ],
         **query,
         'project_names': ledger_store.list_project_names(),
         'page': result['page'],
@@ -88,6 +95,7 @@ def payment_plan_page(filters, page, today):
         'next_start': next_start,
         'next_end': next_end,
         'today': today,
+        'overdue_end': overdue_end,
         'due_soon_end': due_soon_end,
         'view_mode': view_mode,
         'payment_summary': ledger_store.summarize_payment_plans(

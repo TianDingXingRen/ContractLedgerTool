@@ -1,7 +1,7 @@
 """Monthly payment-report query model.
 
-The report is intentionally based only on contracts, contract serials and
-payment plans.  Production notices are not queried or inferred.
+The report exports every contract payment node and highlights outstanding
+nodes in the selected month. Production notices are not queried or inferred.
 """
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
               FROM payment_plans p
               JOIN contracts c ON c.id = p.contract_id
               LEFT JOIN contract_serials s ON s.id = p.contract_serial_id
-             WHERE p.confirm_status = 'confirmed'
+             WHERE p.confirm_status IN ('pending', 'confirmed')
                AND (c.deleted_at = '' OR c.deleted_at IS NULL)
              ORDER BY c.project_name, c.id, s.serial_no,
                       COALESCE(p.due_date, '9999-12-31'), p.id
@@ -152,7 +152,6 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
         ):
             if is_relevant_unpaid:
                 diagnostics['unassigned_serial_count'] += 1
-            continue
         grouped[(plan['contract_id'], plan['contract_serial_id'])].append(plan)
 
     report_rows = []
@@ -183,13 +182,19 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
                 current_plans.append(plan)
 
         planned_minor = current_minor + previous_minor
-        if planned_minor <= 0:
-            continue
         first = serial_plans[0]
         if first.get('serial_amount_minor') is None:
-            missing_serial_amount_ids.add(serial_id)
-        metadata = _metadata_text(first, current_plans + previous_plans)
-        bank_acceptance = _labeled_value(metadata, 'bank_acceptance')
+            missing_serial_amount_ids.add((_contract_id, serial_id))
+        metadata = _metadata_text(first, serial_plans)
+        planned_metadata = _metadata_text(
+            first,
+            previous_plans + current_plans,
+        )
+        previous_metadata = _metadata_text(first, previous_plans)
+        bank_acceptance = _labeled_value(
+            planned_metadata,
+            'bank_acceptance',
+        )
         relevant_conditions = [
             _plan_condition(plan) for plan in previous_plans + current_plans
             if _plan_condition(plan)
@@ -232,7 +237,7 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
             'bank_acceptance': bank_acceptance,
             'bank_acceptance_minor': planned_minor if bank_acceptance else 0,
             'prior_unpaid_reason': (
-                _labeled_value(metadata, 'prior_unpaid_reason')
+                _labeled_value(previous_metadata, 'prior_unpaid_reason')
                 if previous_minor else ''
             ),
         })

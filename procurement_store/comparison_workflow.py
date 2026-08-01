@@ -93,18 +93,28 @@ def update_clarification(get_conn, audit, now_func, question_id, data):
     status = data.get('status')
     if status not in allowed_statuses:
         raise ValueError('澄清问题状态无效')
+    try:
+        project_id = int(data.get('project_id') or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('采购项目 ID 无效') from exc
+    if project_id < 1:
+        raise ValueError('采购项目 ID 无效')
     with get_conn() as conn:
         row = conn.execute(
-            'SELECT * FROM clarification_questions WHERE id = ?', (question_id,)
+            'SELECT * FROM clarification_questions WHERE id = ? AND project_id = ?',
+            (question_id, project_id),
         ).fetchone()
         if not row:
-            raise ValueError('澄清问题不存在')
-        conn.execute(
+            raise ValueError('澄清问题不存在或不属于该采购项目')
+        cursor = conn.execute(
             """UPDATE clarification_questions
-               SET question_text = ?, answer_text = ?, status = ?, updated_at = ? WHERE id = ?""",
+               SET question_text = ?, answer_text = ?, status = ?, updated_at = ?
+               WHERE id = ? AND project_id = ?""",
             (data.get('question_text') or row['question_text'], data.get('answer_text') or '',
-             status, now_func(), question_id),
+             status, now_func(), question_id, project_id),
         )
+        if cursor.rowcount != 1:
+            raise ValueError('澄清问题不存在或不属于该采购项目')
         audit(conn, 'clarification', question_id, 'update', before=dict(row), after=data)
 
 

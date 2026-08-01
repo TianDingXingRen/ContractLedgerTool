@@ -14,7 +14,7 @@
       <label class="ui-field"><span>发票类型</span><select class="ui-select" name="invoice_type">{% for value,label in [('vat_special','增值税专票'),('vat_normal','增值税普票'),('electronic','电子发票'),('other','其他')] %}<option value="{{ value }}" {{ 'selected' if invoice and invoice.invoice_type == value }}>{{ label }}</option>{% endfor %}</select></label>
       <label class="ui-field"><span>开票日期</span><input class="ui-input" type="date" name="issue_date" value="{{ invoice.issue_date if invoice else today }}"></label>
       <label class="ui-field"><span>收票日期</span><input class="ui-input" type="date" name="received_date" value="{{ invoice.received_date if invoice else today }}"></label>
-      <label class="ui-field"><span>币种</span><input class="ui-input" name="currency" value="{{ invoice.currency if invoice else 'CNY' }}"></label>
+      <label class="ui-field"><span>币种</span><input class="ui-input" name="currency" value="CNY" readonly aria-readonly="true" title="仅支持人民币（CNY）"></label>
       <label class="ui-field"><span>销方名称</span><input class="ui-input" name="seller_name" value="{{ invoice.seller_name if invoice else '' }}"></label>
       <label class="ui-field"><span>销方税号</span><input class="ui-input" name="seller_tax_no" value="{{ invoice.seller_tax_no if invoice else '' }}"></label>
       <label class="ui-field"><span>购方名称</span><input class="ui-input" name="buyer_name" value="{{ invoice.buyer_name if invoice else '' }}"></label>

@@ -131,6 +131,66 @@ def test_invoice_upload_removes_file_when_database_registration_fails(
     assert not list(invoice_dir.glob('*'))
 
 
+def test_invoice_route_rejects_allocation_count_above_limit(client):
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'invoice-limit-token'
+
+    response = client.post(
+        '/invoices/new',
+        data={
+            'csrf_token': 'invoice-limit-token',
+            'invoice_no': 'TOO-MANY-ALLOCATIONS',
+            'currency': 'CNY',
+            'amount_ex_tax': '100',
+            'tax_amount': '13',
+            'total_amount': '113',
+            'allocation_count': '101',
+        },
+    )
+
+    assert response.status_code == 400
+    assert '发票分摊行数必须在 0 到 100 之间' in response.get_data(as_text=True)
+    assert len(ledger_store.list_invoices()) == 0
+
+
+def test_invoice_route_rejects_non_cny_currency(client):
+    with client.session_transaction() as flask_session:
+        flask_session['_csrf_token'] = 'invoice-currency-token'
+
+    response = client.post(
+        '/invoices/new',
+        data={
+            'csrf_token': 'invoice-currency-token',
+            'invoice_no': 'FOREIGN-CURRENCY',
+            'currency': 'USD',
+            'amount_ex_tax': '100',
+            'tax_amount': '13',
+            'total_amount': '113',
+            'allocation_count': '0',
+        },
+    )
+
+    assert response.status_code == 400
+    assert '发票币种仅支持 CNY（人民币）' in response.get_data(as_text=True)
+    assert len(ledger_store.list_invoices()) == 0
+
+
+def test_invoice_store_rejects_non_cny_currency(tmp_db):
+    with pytest.raises(ValueError, match='发票币种仅支持 CNY'):
+        ledger_store.save_invoice(
+            {
+                'invoice_no': 'STORE-FOREIGN-CURRENCY',
+                'currency': 'USD',
+                'amount_ex_tax': 100,
+                'tax_amount': 13,
+                'total_amount': 113,
+            },
+            [],
+        )
+
+    assert len(ledger_store.list_invoices()) == 0
+
+
 def test_issue_notice_locks_quantity_and_generates_payment(tmp_db):
     contract_id = _contract()
     item_id = _baseline(contract_id)
@@ -322,6 +382,61 @@ def test_cannot_cancel_or_revise_notice_with_invoice_allocation(tmp_db):
         ledger_store.revise_production_notice(notice_id)
 
 
+def test_plan_only_allocation_blocks_notice_changes_and_event_recalculation(
+    tmp_db,
+):
+    contract_id = _contract()
+    item_id = _baseline(contract_id)
+    _rule(contract_id)
+    notice_id = _notice(contract_id, item_id, 1, 1, 1, 'TZ-PLAN-INVOICED')
+    issue = ledger_store.issue_production_notice(notice_id)
+    plan_id = issue['payment_plan_ids'][0]
+    ledger_store.save_invoice(
+        {
+            'invoice_no': 'PLAN-ONLY-ALLOCATION',
+            'amount_ex_tax': 20,
+            'tax_amount': 0,
+            'total_amount': 20,
+        },
+        [{
+            'contract_id': contract_id,
+            'payment_plan_id': plan_id,
+            'allocated_amount': 20,
+        }],
+    )
+
+    with pytest.raises(ValueError, match='已有发票分摊'):
+        ledger_store.cancel_production_notice(notice_id, reason='不能取消')
+    with pytest.raises(ValueError, match='已有发票分摊'):
+        ledger_store.revise_production_notice(notice_id)
+
+    with pytest.raises(ValueError, match='不能小于.*有效发票分摊金额'):
+        with ledger_store.get_conn() as conn:
+            ledger_store._PAYMENT_RULES.create_matching_event_instances_impl(
+                conn,
+                contract_id=contract_id,
+                event_type='production_notice_issued',
+                reference_no='TZ-PLAN-INVOICED',
+                event_date='2026-07-22',
+                base_amount_minor=5_000,
+                reference_name='投产通知 TZ-PLAN-INVOICED 第1版',
+                metadata={
+                    'production_notice_id': notice_id,
+                    'notice_no': 'TZ-PLAN-INVOICED',
+                    'version': 1,
+                    'total_qty': 1,
+                },
+            )
+
+    assert ledger_store.get_production_notice(notice_id)['status'] == 'issued'
+    assert ledger_store.get_payment_plan(plan_id)['due_amount'] == 30
+    event = next(
+        item for item in ledger_store.list_payment_trigger_events(contract_id)
+        if item['id'] == issue['event_id']
+    )
+    assert event['base_amount'] == 100
+
+
 def test_invoice_notice_and_payment_must_share_event_and_respect_caps(tmp_db):
     contract_id = _contract()
     item_id = _baseline(contract_id)
@@ -374,6 +489,45 @@ def test_invoice_notice_and_payment_must_share_event_and_respect_caps(tmp_db):
                 'allocated_amount': 20,
             }],
         )
+
+
+def test_invoice_allocation_blocks_void_and_due_reduction_on_payment_plan(
+    tmp_db,
+):
+    contract_id = _contract()
+    plan_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '已核销付款节点',
+        'due_amount': 100,
+        'confirm_status': 'confirmed',
+    })
+    ledger_store.save_invoice(
+        {
+            'invoice_no': 'PLAN-REVERSE-GUARD',
+            'amount_ex_tax': 80,
+            'tax_amount': 0,
+            'total_amount': 80,
+        },
+        [{
+            'contract_id': contract_id,
+            'payment_plan_id': plan_id,
+            'allocated_amount': 80,
+        }],
+    )
+
+    with pytest.raises(ValueError, match='有效发票分摊.*不能作废'):
+        ledger_store.save_payment_plan_changes(contract_id, [{
+            'id': plan_id,
+            'data': {'confirm_status': 'void'},
+        }])
+    with pytest.raises(ValueError, match='不能小于.*有效发票分摊金额'):
+        ledger_store.update_payment_plan(plan_id, {'due_amount': 79.99})
+
+    assert ledger_store.update_payment_plan(
+        plan_id, {'due_amount': 80}
+    ) == 1
+    plan = ledger_store.get_payment_plan(plan_id)
+    assert plan['confirm_status'] == 'confirmed'
+    assert plan['due_amount'] == 80
 
 
 def test_event_reference_collision_is_rejected_before_notice_issue(tmp_db):
@@ -488,6 +642,66 @@ def test_full_red_invoice_offsets_original_allocation(tmp_db):
     assert ledger_store.get_invoice(red_id)['total_amount'] == 100
     ledger_store.cancel_production_notice(notice_id, reason='发票已全额红冲')
     assert ledger_store.get_production_notice(notice_id)['status'] == 'cancelled'
+
+
+def test_effective_red_invoice_cannot_be_voided_or_retargeted(tmp_db):
+    contract_id = _contract()
+    plan_id = ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '红冲后可降额节点',
+        'due_amount': 100,
+        'confirm_status': 'confirmed',
+    })
+    original_id = ledger_store.save_invoice(
+        {
+            'invoice_no': 'RED-LOCK-ORIGINAL',
+            'amount_ex_tax': 100,
+            'tax_amount': 0,
+            'total_amount': 100,
+        },
+        [{
+            'contract_id': contract_id,
+            'payment_plan_id': plan_id,
+            'allocated_amount': 100,
+        }],
+    )
+    alternate_id = ledger_store.save_invoice(
+        {
+            'invoice_no': 'RED-LOCK-ALTERNATE',
+            'amount_ex_tax': 100,
+            'tax_amount': 0,
+            'total_amount': 100,
+        },
+        [],
+    )
+    red_id = ledger_store.save_invoice(
+        {
+            'invoice_no': 'RED-LOCK',
+            'invoice_status': 'red',
+            'original_invoice_id': original_id,
+            'amount_ex_tax': 100,
+            'tax_amount': 0,
+            'total_amount': 100,
+        },
+        [],
+    )
+    assert ledger_store.update_payment_plan(plan_id, {'due_amount': 0}) == 1
+
+    red_invoice = ledger_store.get_invoice(red_id)
+    red_invoice['invoice_status'] = 'void'
+    red_invoice['original_invoice_id'] = None
+    with pytest.raises(ValueError, match='已生效红字发票不能变更'):
+        ledger_store.save_invoice(red_invoice, [], invoice_id=red_id)
+
+    red_invoice = ledger_store.get_invoice(red_id)
+    red_invoice['original_invoice_id'] = alternate_id
+    with pytest.raises(ValueError, match='已生效红字发票不能变更'):
+        ledger_store.save_invoice(red_invoice, [], invoice_id=red_id)
+
+    stored_red = ledger_store.get_invoice(red_id)
+    assert stored_red['invoice_status'] == 'red'
+    assert stored_red['original_invoice_id'] == original_id
+    assert ledger_store.get_invoice(original_id)['has_red_offset'] == 1
+    assert ledger_store.get_payment_plan(plan_id)['due_amount'] == 0
 
 
 def test_contract_item_ranges_history_and_deleted_contract_guard(tmp_db):
