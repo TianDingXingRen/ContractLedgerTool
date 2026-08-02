@@ -225,7 +225,10 @@ def _seed_launcher_script(resource_dir, target_dir, filename):
         if src.is_file():
             shutil.copy2(src, dst)
             try:
-                os.chmod(dst, 0o444)
+                # Launcher assets only need to be readable by the account that
+                # owns this single-user installation.  Avoid granting read
+                # access to every local account on POSIX-compatible systems.
+                os.chmod(dst, 0o400)
             except OSError:
                 get_logger().warning('无法将内置资源设为只读: %s', dst, exc_info=True)
             return

@@ -164,7 +164,10 @@ class Config:
                 or '://' in host
                 or '/' in host
             ):
-                logger.warning('忽略不安全的 TRUSTED_HOSTS 项: %r', item)
+                # Do not echo configuration values into logs.  Besides being
+                # unnecessary for recovery, a crafted value could forge a log
+                # line or disclose deployment details.
+                logger.warning('已忽略一个不安全的 TRUSTED_HOSTS 项')
                 continue
             if host not in hosts:
                 hosts.append(host)

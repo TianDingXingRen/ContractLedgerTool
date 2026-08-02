@@ -85,7 +85,7 @@ class TemplateDef:
                 os.remove(tmp)
             except FileNotFoundError:
                 logging.getLogger('contract_tool').debug(
-                    '模板暂存文件已不存在: %s', tmp
+                    '模板暂存文件已不存在'
                 )
         return self._path
 
@@ -347,7 +347,7 @@ def _backup_before_save(path):
                 )
     except Exception:
         logging.getLogger('contract_tool').warning(
-            '保存前版本备份失败: %s', path, exc_info=True)
+            '保存前版本备份失败', exc_info=True)
 
 
 def list_versions(template_name):

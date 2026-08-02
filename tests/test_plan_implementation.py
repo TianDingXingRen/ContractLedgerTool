@@ -31,7 +31,11 @@ def _assert_inline_scripts_have_valid_syntax(html):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node.js is not installed')
-    scripts = re.findall(r'<script(?P<attrs>\s[^>]*)?>(?P<body>.*?)</script>', html, flags=re.I | re.S)
+    scripts = re.findall(
+        r'<script(?P<attrs>\s[^>]*)?>(?P<body>.*?)</script\s*>',
+        html,
+        flags=re.I | re.S,
+    )
     executable_scripts = (
         body for attrs, body in scripts
         if body.strip() and 'type="application/json"' not in (attrs or '').lower()

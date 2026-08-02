@@ -105,9 +105,8 @@ def contract_batch_status():
         new_status,
     )
     get_logger().info(
-        'Batch updated %d contracts to status %s',
+        'Batch updated %d contracts',
         count,
-        new_status,
     )
     return redirect(url_for('contracts.contract_ledger'))
 

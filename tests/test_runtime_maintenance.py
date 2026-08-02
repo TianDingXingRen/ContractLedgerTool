@@ -56,7 +56,10 @@ def test_cleanup_old_files_preserves_referenced_outputs_and_template_uploads(tmp
     assert fresh_session.exists()
 
 
-def test_seed_packaged_assets_copies_once_and_skips_same_version_overwrite(tmp_path):
+def test_seed_packaged_assets_copies_once_and_skips_same_version_overwrite(
+    tmp_path,
+    monkeypatch,
+):
     resource_dir = tmp_path / 'resource'
     runtime_dir = tmp_path / 'runtime'
     paths = RuntimePaths.create(runtime_dir, resource_dir)
@@ -71,6 +74,13 @@ def test_seed_packaged_assets_copies_once_and_skips_same_version_overwrite(tmp_p
     (resource_dir / 'installer_assets' / 'start.ps1').write_text('start-v1', encoding='utf-8')
     (resource_dir / 'installer_assets' / 'stop.ps1').write_text('stop-v1', encoding='utf-8')
 
+    chmod_calls = []
+    monkeypatch.setattr(
+        runtime_maintenance.os,
+        'chmod',
+        lambda path, mode: chmod_calls.append((path, mode)),
+    )
+
     runtime_maintenance.seed_packaged_assets(paths)
 
     target_template = paths.templates_dir / 'sample.contract-template'
@@ -79,6 +89,7 @@ def test_seed_packaged_assets_copies_once_and_skips_same_version_overwrite(tmp_p
     assert (paths.base_dir / 'start.ps1').read_text(encoding='utf-8') == 'start-v1'
     assert (paths.base_dir / 'stop.ps1').read_text(encoding='utf-8') == 'stop-v1'
     assert (paths.base_dir / '.installed_version').read_text(encoding='utf-8') == '20260628.1'
+    assert [mode for _path, mode in chmod_calls] == [0o400, 0o400]
 
     target_template.write_text('user-edit', encoding='utf-8')
     runtime_maintenance.seed_packaged_assets(paths)

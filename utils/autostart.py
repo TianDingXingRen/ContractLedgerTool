@@ -199,8 +199,12 @@ def autostart_status():
                 startup_enabled = True
                 startup_valid = _startup_launcher_matches(candidate)
                 break
-    except Exception as e:
-        startup_error = str(e)
+    except Exception:
+        get_logger().warning(
+            '无法读取自启动文件夹状态',
+            exc_info=True,
+        )
+        startup_error = '无法读取启动文件夹状态'
     script = (
         f"$task = Get-ScheduledTask -TaskName {_ps_quote(AUTOSTART_TASK_NAME)} -ErrorAction SilentlyContinue; "
         "if ($task) { Write-Output $task.State }"
@@ -210,15 +214,23 @@ def autostart_status():
     task_error = ''
     try:
         result = _run_powershell(script)
-    except Exception as e:
-        task_error = f'无法读取计划任务状态：{e}'
+    except Exception:
+        get_logger().warning(
+            '无法读取计划任务状态',
+            exc_info=True,
+        )
+        task_error = '无法读取计划任务状态'
         result = None
     if result is not None:
         if result.returncode == 0:
             task_state = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ''
             task_enabled = task_state.lower() in {'ready', 'running'}
         else:
-            task_error = result.stderr.strip() or result.stdout.strip()
+            get_logger().warning(
+                '计划任务状态查询失败，退出码: %s',
+                result.returncode,
+            )
+            task_error = '无法读取计划任务状态'
 
     enabled_sources = []
     if task_enabled:

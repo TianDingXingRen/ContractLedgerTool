@@ -218,6 +218,25 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertFalse(status['enabled'])
         self.assertEqual(status['task_state'], 'Disabled')
 
+    def test_autostart_status_does_not_expose_internal_errors(self):
+        autostart._autostart_cache = None
+        internal_error = 'secret-path\\launcher.vbs\nTraceback: internal detail'
+        with mock.patch.object(os, 'name', 'nt'), \
+                mock.patch.object(
+                    autostart,
+                    '_startup_launcher_path',
+                    side_effect=RuntimeError(internal_error),
+                ), \
+                mock.patch.object(
+                    autostart,
+                    '_run_powershell',
+                    side_effect=RuntimeError(internal_error),
+                ):
+            status = autostart.autostart_status()
+
+        self.assertEqual(status['message'], '无法读取计划任务状态')
+        self.assertNotIn(internal_error, status['message'])
+
     def test_index_defers_autostart_status_query(self):
         with mock.patch.object(
                 settings_bp, 'autostart_status',

@@ -92,10 +92,18 @@ def test_empty_sqlite_file_is_not_accepted_as_application_backup(tmp_path):
         )
 
 
-def test_config_clamps_zero_rate_limits_and_rejects_wildcard_hosts(tmp_path):
+def test_config_clamps_zero_rate_limits_and_rejects_wildcard_hosts(
+    tmp_path,
+    caplog,
+):
+    forged_log_value = 'attacker.example\nFORGED-LOG-LINE'
     (tmp_path / 'config.json').write_text(
         json.dumps({
-            'TRUSTED_HOSTS': ['*', 'contracts.internal'],
+            'TRUSTED_HOSTS': [
+                '*',
+                forged_log_value,
+                'contracts.internal',
+            ],
             'RATE_LIMIT_DEFAULT': [0, 0],
             'RATE_LIMIT_GLOBAL': [-1, 0],
             'RATE_LIMITS': {'/generate': [0, 0]},
@@ -110,6 +118,7 @@ def test_config_clamps_zero_rate_limits_and_rejects_wildcard_hosts(tmp_path):
     assert loaded.RATE_LIMITS['/generate'] == (1, 1)
     assert '*' not in loaded.TRUSTED_HOSTS
     assert 'contracts.internal' in loaded.TRUSTED_HOSTS
+    assert forged_log_value not in caplog.text
 
 
 def test_procurement_excel_import_enforces_row_limit():
