@@ -98,7 +98,7 @@ jobs:
           sbom-path: dist/release/ContractLedgerTool.sbom.cdx.json
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ContractLedgerTool-${{ github.ref_name }}
           path: |
