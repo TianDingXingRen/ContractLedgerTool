@@ -10,11 +10,9 @@ from docx import Document
 import app
 import field_eval
 import ledger_store
-from routes import contract_download_routes, settings_bp
-from runtime.paths import RuntimePaths
+from routes import settings_bp
 from utils import autostart
 from utils.generation_utils import validate_template_source_bindings
-from utils.security import path_within
 
 
 class SecurityHardeningTests(unittest.TestCase):
@@ -94,53 +92,6 @@ class SecurityHardeningTests(unittest.TestCase):
             ], docx_path)
             self.assertTrue(errors)
             self.assertIn('乙方', errors[0])
-
-    def test_pdf_download_sanitizes_contract_number_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = RuntimePaths.create(tmp)
-            paths.output_dir.mkdir()
-            docx_path = os.path.join(paths.output_dir, 'source.docx')
-            with open(docx_path, 'wb') as f:
-                f.write(b'docx')
-            written_paths = []
-
-            def fake_convert(_docx_path, pdf_path):
-                written_paths.append(pdf_path)
-                with open(pdf_path, 'wb') as f:
-                    f.write(b'%PDF-1.4\n')
-
-            contract = {'docx_path': docx_path, 'contract_no': '..\\outside/name'}
-            with mock.patch.object(ledger_store, 'get_contract', return_value=contract), \
-                    mock.patch.object(
-                        contract_download_routes,
-                        'current_runtime_paths',
-                        return_value=paths,
-                    ), \
-                    mock.patch.object(
-                        contract_download_routes.pdf_exporter,
-                        'convert_docx_to_pdf',
-                        side_effect=fake_convert,
-                    ):
-                with app.app.test_client() as client:
-                    with client.session_transaction() as sess:
-                        sess['_csrf_token'] = 'pdf-token'
-                    response = client.post(
-                        '/contracts/1/download-pdf',
-                        data={'csrf_token': 'pdf-token'},
-                    )
-                    try:
-                        self.assertEqual(response.status_code, 200)
-                    finally:
-                        response.close()
-                    response = client.get('/contracts/1/download-pdf')
-                    try:
-                        self.assertEqual(response.status_code, 200)
-                    finally:
-                        response.close()
-
-            self.assertEqual(len(written_paths), 1)
-            self.assertTrue(path_within(paths.output_dir, written_paths[0]))
-            self.assertNotIn('..', os.path.basename(written_paths[0]))
 
     def test_post_without_csrf_is_rejected(self):
         with app.app.test_client() as client:

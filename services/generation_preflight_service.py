@@ -2,18 +2,8 @@
 
 from __future__ import annotations
 
-import pdf_exporter
 import ledger_store
 from utils.generation_utils import contract_number_keys, infer_contract_summary
-
-
-def _pdf_warning_enabled():
-    info = pdf_exporter.diagnose_environment()
-    has_word = info.get('winword_found') not in ('', 'Not found', None)
-    has_libreoffice = info.get('libreoffice_found') == 'True'
-    if has_word or has_libreoffice:
-        return ''
-    return '当前环境未检测到 Word 或 LibreOffice，勾选生成 PDF 时可能失败'
 
 
 def _summary_warnings(summary):
@@ -27,7 +17,7 @@ def _summary_warnings(summary):
     return warnings
 
 
-def build_single_preflight(tpl, fields, field_values, classification, generate_pdf=False):
+def build_single_preflight(tpl, fields, field_values, classification):
     summary = infer_contract_summary(tpl, fields, field_values)
     summary.update(classification or {})
     blocking = []
@@ -35,10 +25,6 @@ def build_single_preflight(tpl, fields, field_values, classification, generate_p
     contract_no = str(summary.get('contract_no') or '').strip()
     if contract_no and ledger_store.contract_no_exists(contract_no):
         blocking.append(f'合同编号 {contract_no} 已存在，请修改后再生成')
-    if generate_pdf:
-        pdf_warning = _pdf_warning_enabled()
-        if pdf_warning:
-            warnings.append(pdf_warning)
     return {
         'ok': not blocking,
         'mode': 'single',
@@ -53,7 +39,6 @@ def build_single_preflight(tpl, fields, field_values, classification, generate_p
             'project_name': summary.get('project_name') or '',
             'coverage_start': summary.get('coverage_start'),
             'coverage_end': summary.get('coverage_end'),
-            'pdf': bool(generate_pdf),
             'ledger': True,
         },
     }
@@ -66,7 +51,6 @@ def build_batch_preflight(
     classification,
     counterparties,
     batch_field_keys,
-    generate_pdf=False,
 ):
     blocking = []
     warnings = []
@@ -91,9 +75,6 @@ def build_batch_preflight(
         suffix = ' 等' if len(duplicate_numbers) > 5 else ''
         blocking.append(f'批量合同编号已存在：{preview}{suffix}')
 
-    if generate_pdf:
-        warnings.append('批量生成当前只输出 DOCX 压缩包，PDF 需在合同详情中按需导出')
-
     return {
         'ok': not blocking,
         'mode': 'batch',
@@ -107,7 +88,6 @@ def build_batch_preflight(
             'project_name': (classification or {}).get('project_name') or '',
             'coverage_start': (classification or {}).get('coverage_start'),
             'coverage_end': (classification or {}).get('coverage_end'),
-            'pdf': False,
             'ledger': True,
         },
     }

@@ -1,4 +1,83 @@
-// Shared shell behavior: feedback and form confirmations.
+// Shared shell behavior: theme, feedback, and form confirmations.
+
+(function themeSystem() {
+  'use strict';
+
+  const storageKey = 'theme';
+
+  function normalizeTheme(value) {
+    return value === 'dark' ? 'dark' : 'light';
+  }
+
+  function readSavedTheme() {
+    try {
+      return normalizeTheme(window.localStorage.getItem(storageKey));
+    } catch (_error) {
+      return 'light';
+    }
+  }
+
+  function replaceThemeIcon(button, theme) {
+    const current = button.querySelector('[data-theme-icon]');
+    const icon = document.createElement('i');
+    icon.setAttribute('data-theme-icon', '');
+    icon.setAttribute('data-lucide', theme === 'dark' ? 'sun' : 'moon');
+    icon.style.width = '15px';
+    icon.style.height = '15px';
+    if (current) current.replaceWith(icon);
+    else button.appendChild(icon);
+  }
+
+  function syncThemeButton(button, theme, replaceIcon) {
+    if (!button) return;
+    const dark = theme === 'dark';
+    button.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    button.setAttribute('aria-label', dark ? '切换亮色模式' : '切换暗色模式');
+    button.setAttribute('title', dark ? '切换亮色模式' : '切换暗色模式');
+    const icon = button.querySelector('[data-theme-icon]');
+    const expected = dark ? 'sun' : 'moon';
+    if (replaceIcon && (!icon || icon.getAttribute('data-lucide') !== expected)) {
+      replaceThemeIcon(button, theme);
+    } else if (icon) {
+      icon.setAttribute('data-lucide', expected);
+    }
+  }
+
+  function applyTheme(theme, persist) {
+    const normalized = normalizeTheme(theme);
+    document.documentElement.dataset.theme = normalized;
+    if (persist) {
+      try {
+        window.localStorage.setItem(storageKey, normalized);
+      } catch (_error) {
+        // The current page still switches theme when storage is unavailable.
+      }
+    }
+    syncThemeButton(
+      document.querySelector('[data-shell-action="toggle-theme"]'),
+      normalized,
+      persist
+    );
+    return normalized;
+  }
+
+  applyTheme(readSavedTheme(), false);
+
+  document.addEventListener('DOMContentLoaded', () => {
+    syncThemeButton(
+      document.querySelector('[data-shell-action="toggle-theme"]'),
+      normalizeTheme(document.documentElement.dataset.theme),
+      true
+    );
+  });
+
+  document.addEventListener('click', (event) => {
+    const toggle = event.target.closest('[data-shell-action="toggle-theme"]');
+    if (!toggle) return;
+    const current = normalizeTheme(document.documentElement.dataset.theme);
+    applyTheme(current === 'dark' ? 'light' : 'dark', true);
+  });
+})();
 
 function toastCenter() {
   return {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light" x-data="{ theme: localStorage.getItem('theme') || 'light' }" x-init="$el.dataset.theme = theme; $watch('theme', v => { $el.dataset.theme = v; localStorage.setItem('theme', v); })">
+<html lang="zh-CN" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -41,7 +41,7 @@
 
 <div class="tf">
 <div style="display:flex;align-items:center;gap:12px"><button class="stb" type="button" data-shell-action="toggle-sidebar" aria-label="打开或关闭导航菜单"><i data-lucide="menu" style="width:20px;height:20px"></i></button><div class="tbr">采购业务平台 / <strong>{% block breadcrumb %}工作台{% endblock %}</strong></div></div>
-<div style="display:flex;align-items:center;gap:8px"><button class="bgx" type="button" aria-label="切换暗色模式" title="切换暗色模式" @click="theme = theme === 'light' ? 'dark' : 'light'"><i :data-lucide="theme === 'light' ? 'moon' : 'sun'" style="width:15px;height:15px"></i></button><a href="{{ url_for('settings.diagnostics') }}" class="bgx" aria-label="打开系统诊断" title="系统诊断"><i data-lucide="info" style="width:15px;height:15px"></i></a></div>
+<div style="display:flex;align-items:center;gap:8px"><button class="bgx" type="button" data-shell-action="toggle-theme" aria-label="切换暗色模式" aria-pressed="false" title="切换暗色模式"><i data-theme-icon data-lucide="moon" style="width:15px;height:15px"></i></button><a href="{{ url_for('settings.diagnostics') }}" class="bgx" aria-label="打开系统诊断" title="系统诊断"><i data-lucide="info" style="width:15px;height:15px"></i></a></div>
 </div>
 <div class="ma">
 

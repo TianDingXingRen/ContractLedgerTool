@@ -1,9 +1,7 @@
 from docx import Document
 from openpyxl import load_workbook
-import pytest
 
 import docx_builder
-import pdf_exporter
 import xlsx_exporter
 
 
@@ -68,14 +66,3 @@ def test_generated_xlsx_matches_semantic_snapshot(tmp_path):
         ]
     finally:
         workbook.close()
-
-
-def test_pdf_output_validator_rejects_external_tool_garbage(tmp_path):
-    invalid = tmp_path / 'invalid.pdf'
-    invalid.write_bytes(b'not-a-pdf')
-    with pytest.raises(RuntimeError, match='输出无效'):
-        pdf_exporter._validate_pdf_output(invalid)
-
-    valid = tmp_path / 'valid.pdf'
-    valid.write_bytes(b'%PDF-1.7\n%%EOF')
-    assert pdf_exporter._validate_pdf_output(valid) == valid

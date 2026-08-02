@@ -46,10 +46,6 @@
         <div class="ui-menu-panel">
           {% if contract.docx_path %}
           <a class="ui-menu-item" href="{{ url_for('contracts.contract_download', contract_id=contract.id) }}"><i data-lucide="download"></i>下载 DOCX</a>
-          <form method="post" action="{{ url_for('contracts.contract_download_pdf', contract_id=contract.id) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="ui-menu-item" type="submit"><i data-lucide="file-text"></i>下载 PDF</button>
-          </form>
           {% endif %}
           <a class="ui-menu-item" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}"><i data-lucide="boxes"></i>维护产品基线</a>
           <a class="ui-menu-item" href="{{ url_for('payments.payment_plan_list') }}"><i data-lucide="calendar-days"></i>付款工作台</a>

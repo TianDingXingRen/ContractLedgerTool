@@ -401,7 +401,6 @@ function Clear-LegacyProgramFiles($InstallDir) {
         "field_eval.py",
         "ledger_store.py",
         "payment_extractor.py",
-        "pdf_exporter.py",
         "template_def.py",
         "xlsx_exporter.py",
         "requirements.txt",

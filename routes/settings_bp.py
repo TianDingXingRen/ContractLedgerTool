@@ -20,7 +20,6 @@ from flask import (
 from core.maintenance_gate import maintenance_gate
 
 import ledger_store
-import pdf_exporter
 import template_def
 from config import config as app_config
 from runtime.flask_paths import current_runtime_paths
@@ -115,7 +114,6 @@ def _diagnostics_payload(include_autostart=True):
             'backups': len(backups),
         },
         'autostart': autostart,
-        'pdf': pdf_exporter.diagnose_environment(),
         'data_protection': data_protection_service.data_protection_status(
             current_app.extensions['runtime_paths']
         ),

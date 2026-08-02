@@ -80,7 +80,7 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 foreach ($name in @(
     "app.py", "config.py", "docx_builder.py", "excel_bill_service.py",
-    "field_eval.py", "payment_extractor.py", "pdf_exporter.py", "template_def.py",
+    "field_eval.py", "payment_extractor.py", "template_def.py",
     "xlsx_exporter.py", "requirements.txt", "requirements.lock", "pyproject.toml",
     "version.txt", "setup_autostart.ps1", "setup_autostart_remove.ps1"
 )) {

@@ -1091,7 +1091,6 @@
             }
             var disposition = response.headers.get('Content-Disposition') || '';
             var detailUrl = response.headers.get('X-Contract-Detail-Url') || '';
-            var pdfUrl = response.headers.get('X-PDF-Url') || '';
             var genErrors = response.headers.get('X-Generation-Errors') || '';
             var ledgerError = response.headers.get('X-Ledger-Error') || '';
             try { genErrors = decodeURIComponent(genErrors); } catch(e) {}
@@ -1100,7 +1099,7 @@
             var match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s"']+)/i);
             if (match) { try { filename = decodeURIComponent(match[1]); } catch(e) {} }
             return response.blob().then(function(blob) {
-                return { blob: blob, filename: filename, detailUrl: detailUrl, pdfUrl: pdfUrl,
+                return { blob: blob, filename: filename, detailUrl: detailUrl,
                          isBatch: isZip, genErrors: genErrors, ledgerError: ledgerError };
             });
         })
@@ -1109,13 +1108,6 @@
             var a = document.createElement('a');
             a.href = url; a.download = result.filename;
             document.body.appendChild(a); a.click(); a.remove();
-            if (result.pdfUrl) {
-                var pdfFrame = document.createElement('iframe');
-                pdfFrame.style.display = 'none';
-                pdfFrame.src = result.pdfUrl;
-                document.body.appendChild(pdfFrame);
-                setTimeout(function() { document.body.removeChild(pdfFrame); }, 5000);
-            }
             overlay.classList.remove('active');
             document.getElementById('editorForm').removeAttribute('aria-busy');
             resetGenerateButton(btn, origText);
@@ -1272,7 +1264,6 @@
         const panel = document.getElementById('generationResultPanel');
         const downloadLink = document.getElementById('resultDownloadLink');
         const detailLink = document.getElementById('resultDetailLink');
-        const pdfLink = document.getElementById('resultPdfLink');
         const resultText = document.getElementById('generationResultText');
 
         downloadLink.href = blobUrl;
@@ -1286,13 +1277,6 @@
             detailLink.classList.remove('hidden');
         } else {
             detailLink.classList.add('hidden');
-        }
-
-        if (result.pdfUrl) {
-            pdfLink.href = result.pdfUrl;
-            pdfLink.classList.remove('hidden');
-        } else {
-            pdfLink.classList.add('hidden');
         }
 
         setAssistTab('review');

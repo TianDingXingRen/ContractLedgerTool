@@ -3,7 +3,6 @@ import queue
 
 import pytest
 
-import pdf_exporter
 from services import isolated_process, legacy_doc_conversion_service
 
 
@@ -84,10 +83,7 @@ def test_legacy_conversion_rejects_unrelated_target_path(tmp_path):
         )
 
 
-def test_word_workers_use_isolated_instances_and_disable_macros():
-    pdf_source = inspect.getsource(pdf_exporter._word_pdf_worker)
+def test_legacy_word_worker_uses_isolated_instance_and_disables_macros():
     doc_source = inspect.getsource(legacy_doc_conversion_service._legacy_doc_worker)
-    assert 'DispatchEx' in pdf_source
-    assert 'AutomationSecurity = 3' in pdf_source
     assert 'DispatchEx' in doc_source
     assert 'AutomationSecurity = 3' in doc_source

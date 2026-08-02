@@ -68,9 +68,6 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('refreshDiagnosticsBtn').addEventListener('click', function() {
     refreshDiagnostics('诊断信息已刷新');
   });
-  document.getElementById('pdfCheckBtn').addEventListener('click', function() {
-    refreshDiagnostics('PDF 环境已重新检测');
-  });
   document.querySelectorAll('.diagnostics-folder-form').forEach(function(form) {
     form.addEventListener('submit', function(event) {
       event.preventDefault();

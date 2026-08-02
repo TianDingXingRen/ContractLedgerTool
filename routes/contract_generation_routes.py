@@ -11,7 +11,7 @@ from flask import current_app, jsonify, redirect, request, send_file, session, u
 import template_def
 from core.domain_errors import DocumentGenerationError, ProcurementLinkError, ValidationError
 from runtime.flask_paths import current_runtime_paths
-from services import contract_output_service, generation_preflight_service
+from services import generation_preflight_service
 from services.contract_generation_service import ContractGenerationRequest, ProcurementLink
 from utils.errors import GENERIC_GENERATE_ERROR, safe_error, safe_file_error
 from utils.generation_utils import (
@@ -123,17 +123,6 @@ def generate():
     except Exception as exc:
         return safe_error(exc, '合同生成事务失败', 500)
 
-    pdf_url = ''
-    if request.form.get('generate_pdf') == '1':
-        try:
-            contract_output_service.convert_generated_pdf(result.output_path)
-            if result.contract_id:
-                pdf_url = url_for(
-                    'contracts.contract_download_pdf',
-                    contract_id=result.contract_id,
-                )
-        except Exception as exc:
-            get_logger().warning('PDF export failed: %s', exc)
     response = send_file(
         result.output_path,
         as_attachment=True,
@@ -146,12 +135,10 @@ def generate():
             'contracts.contract_detail',
             contract_id=result.contract_id,
         )
-    if pdf_url:
-        response.headers['X-PDF-Url'] = pdf_url
     return response
 
 
-def _batch_preflight(template, fields, data, classification, generate_pdf):
+def _batch_preflight(template, fields, data, classification):
     if data.get('procurement_data_sheet_id'):
         return {
             'ok': False,
@@ -197,7 +184,6 @@ def _batch_preflight(template, fields, data, classification, generate_pdf):
         classification,
         counterparties,
         batch_field_keys,
-        generate_pdf=generate_pdf,
     )
 
 
@@ -228,7 +214,6 @@ def generate_preflight():
         }), 500
 
     fields = template.data.get('fields', [])
-    generate_pdf = request.form.get('generate_pdf') == '1'
     try:
         classification = parse_contract_classification(request.form)
     except ValueError:
@@ -243,7 +228,6 @@ def generate_preflight():
             fields,
             data,
             classification,
-            generate_pdf,
         )
     else:
         field_values, input_errors = prepare_generation_values(fields, request.form)
@@ -259,7 +243,6 @@ def generate_preflight():
                 fields,
                 field_values,
                 classification,
-                generate_pdf=generate_pdf,
             )
     return jsonify(payload), 200 if payload['ok'] else 400
 

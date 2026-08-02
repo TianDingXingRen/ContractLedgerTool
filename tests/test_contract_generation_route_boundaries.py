@@ -4,14 +4,12 @@ import uuid
 
 import pytest
 
-import ledger_store
 import template_def
 from core.domain_errors import (
     DocumentGenerationError,
     ProcurementLinkError,
     ValidationError,
 )
-from services import contract_output_service
 from utils.errors import GENERIC_FILE_ERROR, GENERIC_GENERATE_ERROR
 from utils.security import MAX_BATCH_CONTRACTS, MAX_COUNTERPARTY_LENGTH
 from utils.session_store import save_session_data
@@ -124,11 +122,9 @@ def test_generate_translates_service_failures(
     assert expected_message in response.get_data(as_text=True)
 
 
-def test_generate_returns_contract_and_pdf_headers(app, client, monkeypatch):
+def test_generate_returns_contract_headers(app, client, monkeypatch):
     _, token = _activate_template(app, client)
     generation_service = app.extensions['contract_tool'].contract_generation
-    converted = []
-
     def generate(request):
         Path(request.output_path).write_bytes(b'generated docx')
         return SimpleNamespace(
@@ -138,52 +134,11 @@ def test_generate_returns_contract_and_pdf_headers(app, client, monkeypatch):
         )
 
     monkeypatch.setattr(generation_service, 'generate', generate)
-    monkeypatch.setattr(
-        contract_output_service,
-        'convert_generated_pdf',
-        lambda path: converted.append(path),
-    )
-    response = client.post('/generate', data={
-        'csrf_token': token,
-        'generate_pdf': '1',
-    })
+    response = client.post('/generate', data={'csrf_token': token})
     try:
         assert response.status_code == 200
         assert response.headers['X-Contract-Id'] == '73'
         assert response.headers['X-Contract-Detail-Url'].endswith('/contracts/73')
-        assert response.headers['X-PDF-Url'].endswith(
-            '/contracts/73/download-pdf'
-        )
-        assert len(converted) == 1
-    finally:
-        response.close()
-
-
-def test_generate_tolerates_optional_pdf_failure(app, client, monkeypatch):
-    _, token = _activate_template(app, client)
-    generation_service = app.extensions['contract_tool'].contract_generation
-
-    def generate(request):
-        Path(request.output_path).write_bytes(b'generated docx')
-        return SimpleNamespace(
-            contract_id=74,
-            output_path=request.output_path,
-            previous_project_status=None,
-        )
-
-    monkeypatch.setattr(generation_service, 'generate', generate)
-    monkeypatch.setattr(
-        contract_output_service,
-        'convert_generated_pdf',
-        lambda _path: (_ for _ in ()).throw(OSError('converter unavailable')),
-    )
-    response = client.post('/generate', data={
-        'csrf_token': token,
-        'generate_pdf': '1',
-    })
-    try:
-        assert response.status_code == 200
-        assert 'X-PDF-Url' not in response.headers
     finally:
         response.close()
 
@@ -297,52 +252,3 @@ def test_batch_route_validates_context_fields_and_counterparties(app, client):
     })
     assert no_counterparty.status_code == 400
     assert '请至少输入一个对方单位' in no_counterparty.get_data(as_text=True)
-
-
-def test_convert_generated_pdf_uses_adjacent_output(tmp_path, monkeypatch):
-    source = tmp_path / 'contract.docx'
-    calls = []
-    monkeypatch.setattr(
-        contract_output_service.pdf_exporter,
-        'convert_docx_to_pdf',
-        lambda docx, pdf: calls.append((docx, pdf)),
-    )
-    result = contract_output_service.convert_generated_pdf(str(source))
-    assert result == str(tmp_path / 'contract.pdf')
-    assert calls == [(str(source), result)]
-
-
-def test_pdf_download_uses_generated_docx_identity_not_sanitized_contract_number(
-    app,
-    client,
-):
-    output_dir = app.extensions['runtime_paths'].output_dir
-    first_docx = output_dir / 'first-immutable-output.docx'
-    second_docx = output_dir / 'second-immutable-output.docx'
-    first_docx.write_bytes(b'first docx')
-    second_docx.write_bytes(b'second docx')
-    first_pdf = Path(contract_output_service.generated_pdf_path(str(first_docx)))
-    second_pdf = Path(contract_output_service.generated_pdf_path(str(second_docx)))
-    first_pdf.write_bytes(b'first pdf')
-    second_pdf.write_bytes(b'second pdf')
-    first_id = ledger_store.create_contract(
-        {'contract_no': 'A/B', 'title': '第一份合同'},
-        {},
-        str(first_docx),
-    )
-    second_id = ledger_store.create_contract(
-        {'contract_no': 'A\\B', 'title': '第二份合同'},
-        {},
-        str(second_docx),
-    )
-
-    first_response = client.get(f'/contracts/{first_id}/download-pdf')
-    second_response = client.get(f'/contracts/{second_id}/download-pdf')
-    try:
-        assert first_response.status_code == 200
-        assert first_response.get_data() == b'first pdf'
-        assert second_response.status_code == 200
-        assert second_response.get_data() == b'second pdf'
-    finally:
-        first_response.close()
-        second_response.close()

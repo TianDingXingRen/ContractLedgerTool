@@ -18,7 +18,6 @@
 - **付款计划** — 完全离线、基于规则抽取付款条款，支持人工确认、合同内编号归集和月度付款计划导出
 - **投产通知** — 维护合同产品与号段，登记、修订和统计每次投产通知，并按通知金额触发付款计划
 - **发票管理** — 维护发票、附件、核验/作废/红冲状态，并分摊到合同、投产通知和付款计划
-- **PDF 导出** — 通过隔离的 Word COM 子进程导出 PDF（需 Microsoft Word）
 - **旧版 Word 导入** — 支持 `.docx`，并可通过本机 Word/WPS 将 `.doc` 安全转换为 `.docx`
 - **Excel 导出** — 付款计划和台账均可导出
 - **版本管理** — 模板修改自动备份历史版本，支持回滚
@@ -27,7 +26,7 @@
 
 - **Python** 3.10+
 - **操作系统** Windows 10/11（自启动功能仅 Windows）
-- **Microsoft Word** 2013+（可选，用于 PDF 导出）
+- **Microsoft Word 或 WPS**（可选，仅用于把旧版 `.doc` 模板转换为 `.docx`）
 
 ## 安装
 
@@ -148,7 +147,6 @@ $env:CT_TESSERACT_CMD = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
 | `CT_MAX_CONTENT_LENGTH_MB` | 50 | 上传文件大小限制 |
 | `CT_CLEANUP_DAYS` | 7 | 文件自动清理天数 |
 | `CT_LOG_LEVEL` | INFO | 日志级别 |
-| `CT_WORD_COM_TIMEOUT` | 60 | Word 转 PDF 隔离进程超时秒数（15–180） |
 
 默认只允许本机访问。如确需局域网访问，请同时设置 `CT_ALLOW_REMOTE=1`、监听地址、至少16位的 `CT_REMOTE_ACCESS_TOKEN`、`CT_REMOTE_TLS_CERT`、`CT_REMOTE_TLS_KEY`，并把实际访问域名或 IP 加入 `CT_TRUSTED_HOSTS`。局域网模式禁止调试和明文 HTTP；浏览器弹出登录框时可使用任意用户名，并把令牌作为密码。
 
@@ -166,7 +164,6 @@ $env:CT_TESSERACT_CMD = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
 ├── procurement_store/      # 采购项目、报价、比价、澄清和成交数据
 ├── services/               # 采购业务服务、报价解析和合同数据映射
 ├── payment_extractor.py    # 付款条款提取
-├── pdf_exporter.py         # PDF 导出
 ├── xlsx_exporter.py        # Excel 导出
 ├── routes/                 # 路由蓝图
 ├── utils/                  # 工具模块

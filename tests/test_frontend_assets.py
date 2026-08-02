@@ -67,6 +67,22 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("dataset.appShell = 'ready'", script)
         self.assertNotIn('tailwind.config =', script)
 
+    def test_theme_toggle_uses_csp_safe_static_script(self):
+        base_path = os.path.join(app.RESOURCE_DIR, 'templates', 'base.html')
+        script_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'app-shell.js')
+        with open(base_path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        with open(script_path, 'r', encoding='utf-8') as f:
+            script = f.read()
+
+        self.assertIn('data-shell-action="toggle-theme"', html)
+        self.assertNotIn('x-init="theme', html)
+        self.assertNotIn('@click="theme', html)
+        self.assertIn("const storageKey = 'theme'", script)
+        self.assertIn('window.localStorage.getItem(storageKey)', script)
+        self.assertIn('window.localStorage.setItem(storageKey, normalized)', script)
+        self.assertIn('document.documentElement.dataset.theme = normalized', script)
+
     def test_shared_feedback_replaces_browser_native_prompts(self):
         roots = (
             os.path.join(app.RESOURCE_DIR, 'templates'),

@@ -141,6 +141,38 @@ class BrowserUiSmokeTests(unittest.TestCase):
                 self.skipTest('Playwright browser binaries are not installed')
             raise
 
+    def test_theme_toggle_persists_without_csp_errors(self):
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(viewport={'width': 1280, 'height': 800})
+                page_errors = []
+                page.on('pageerror', lambda error: page_errors.append(str(error)))
+                page.goto(f'{self.base_url}/', wait_until='networkidle')
+                page.evaluate("localStorage.removeItem('theme')")
+                page.reload(wait_until='networkidle')
+
+                root = page.locator('html')
+                toggle = page.locator('[data-shell-action="toggle-theme"]')
+                self.assertEqual(root.get_attribute('data-theme'), 'light')
+                toggle.click()
+                self.assertEqual(root.get_attribute('data-theme'), 'dark')
+                self.assertEqual(toggle.get_attribute('aria-pressed'), 'true')
+                self.assertEqual(page.evaluate("localStorage.getItem('theme')"), 'dark')
+
+                page.reload(wait_until='networkidle')
+                self.assertEqual(root.get_attribute('data-theme'), 'dark')
+                self.assertEqual(
+                    toggle.locator('[data-theme-icon]').get_attribute('data-lucide'),
+                    'sun',
+                )
+                self.assertEqual(page_errors, [])
+                browser.close()
+        except Exception as exc:
+            if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
+                self.skipTest('Playwright browser binaries are not installed')
+            raise
+
     def test_payment_report_actions_share_bottom_edge(self):
         try:
             with sync_playwright() as playwright:

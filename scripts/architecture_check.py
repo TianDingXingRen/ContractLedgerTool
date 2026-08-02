@@ -42,23 +42,19 @@ ROUTE_LAYER_FORBIDDEN_IMPORTS = {
     'ledger_store',
     'procurement_store',
     'xlsx_exporter',
-    'pdf_exporter',
     'sqlite3',
     'openpyxl',
 }
 # These files are the remaining migration queue. A dependency may only leave
 # this list; adding new route-to-infrastructure coupling fails the check.
 ROUTE_DEPENDENCY_ALLOWLIST = {
-    'routes/contract_download_routes.py': {
-        'ledger_store',
-        'pdf_exporter',
-    },
+    'routes/contract_download_routes.py': {'ledger_store'},
     'routes/contract_workspace.py': {
         'ledger_store',
         'procurement_store',
     },
     'routes/invoices_bp.py': {'ledger_store'},
-    'routes/settings_bp.py': {'ledger_store', 'pdf_exporter'},
+    'routes/settings_bp.py': {'ledger_store'},
 }
 INNER_LAYER_ROOTS = {
     'core',

@@ -476,11 +476,6 @@ CONTRACT_ROUTES = {
         ('GET',),
     ),
     (
-        'contracts.contract_download_pdf',
-        '/contracts/<int:contract_id>/download-pdf',
-        ('GET', 'POST'),
-    ),
-    (
         'contracts.contract_export',
         '/contracts/export',
         ('POST',),
