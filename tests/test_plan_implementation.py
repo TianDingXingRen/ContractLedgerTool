@@ -1,11 +1,11 @@
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import uuid
 import zipfile
+from html.parser import HTMLParser
 
 import pytest
 from docx import Document
@@ -27,18 +27,41 @@ def _docx_text(blob):
     return '\n'.join(parts)
 
 
+class _InlineScriptCollector(HTMLParser):
+    """Collect inline script bodies using HTML parsing, not tag regexes."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.scripts = []
+        self._active_attrs = None
+        self._active_body = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == 'script':
+            self._active_attrs = dict(attrs)
+            self._active_body = []
+
+    def handle_data(self, data):
+        if self._active_attrs is not None:
+            self._active_body.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() != 'script' or self._active_attrs is None:
+            return
+        self.scripts.append((self._active_attrs, ''.join(self._active_body)))
+        self._active_attrs = None
+        self._active_body = []
+
+
 def _assert_inline_scripts_have_valid_syntax(html):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node.js is not installed')
-    scripts = re.findall(
-        r'<script(?P<attrs>\s[^>]*)?>(?P<body>.*?)</script\s*>',
-        html,
-        flags=re.I | re.S,
-    )
+    collector = _InlineScriptCollector()
+    collector.feed(html)
     executable_scripts = (
-        body for attrs, body in scripts
-        if body.strip() and 'type="application/json"' not in (attrs or '').lower()
+        body for attrs, body in collector.scripts
+        if body.strip() and (attrs.get('type') or '').lower() != 'application/json'
     )
     for script in executable_scripts:
         result = subprocess.run(
