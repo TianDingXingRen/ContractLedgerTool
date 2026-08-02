@@ -9,6 +9,7 @@ import re
 import shutil
 import time
 import logging
+import uuid
 from datetime import datetime
 
 from utils.security import path_within as _path_within
@@ -72,10 +73,20 @@ class TemplateDef:
         _ensure_dir()
         self._path = path or self._path or self._default_path()
         _backup_before_save(self._path)
-        tmp = self._path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self._path)
+        tmp = self._path + f'.tmp-{uuid.uuid4().hex}'
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        finally:
+            try:
+                os.remove(tmp)
+            except FileNotFoundError:
+                logging.getLogger('contract_tool').debug(
+                    '模板暂存文件已不存在'
+                )
         return self._path
 
     def _default_path(self):
@@ -331,10 +342,12 @@ def _backup_before_save(path):
             try:
                 os.remove(os.path.join(vdir, old_file))
             except OSError:
-                pass
+                logging.getLogger('contract_tool').warning(
+                    '无法清理超出保留上限的模板版本: %s', old_file, exc_info=True,
+                )
     except Exception:
         logging.getLogger('contract_tool').warning(
-            '保存前版本备份失败: %s', path, exc_info=True)
+            '保存前版本备份失败', exc_info=True)
 
 
 def list_versions(template_name):
@@ -369,6 +382,54 @@ def list_versions(template_name):
     return versions
 
 
+def compare_version(template_name, version_filename):
+    """Compare a historical template definition with the current definition."""
+    safe_name = _safe_template_stem(template_name)
+    safe_version = os.path.basename(version_filename or '')
+    if not safe_version.endswith('.contract-template'):
+        raise FileNotFoundError(f'版本文件不存在: {safe_version}')
+
+    current_path = os.path.abspath(os.path.join(TEMPLATES_DIR, f'{safe_name}.contract-template'))
+    version_dir = _versions_dir(safe_name)
+    version_path = os.path.abspath(os.path.join(version_dir, safe_version))
+    if not _path_within(TEMPLATES_DIR, current_path) or not os.path.isfile(current_path):
+        raise FileNotFoundError(f'模板文件不存在: {template_name}')
+    if not _path_within(version_dir, version_path) or not os.path.isfile(version_path):
+        raise FileNotFoundError(f'版本文件不存在: {safe_version}')
+
+    with open(current_path, 'r', encoding='utf-8') as f:
+        current = json.load(f)
+    with open(version_path, 'r', encoding='utf-8') as f:
+        historical = json.load(f)
+
+    def field_map(data):
+        result = {}
+        for index, field in enumerate(data.get('fields') or []):
+            key = str(field.get('key') or f'字段 {index + 1}')
+            result[key] = field
+        return result
+
+    current_fields = field_map(current)
+    historical_fields = field_map(historical)
+    added_keys = sorted(current_fields.keys() - historical_fields.keys())
+    removed_keys = sorted(historical_fields.keys() - current_fields.keys())
+    changed_keys = sorted(
+        key for key in current_fields.keys() & historical_fields.keys()
+        if current_fields[key] != historical_fields[key]
+    )
+    metadata_keys = ('format_version', 'template_name', 'source_docx')
+    metadata_changed = [
+        key for key in metadata_keys if current.get(key) != historical.get(key)
+    ]
+    return {
+        'added': added_keys,
+        'removed': removed_keys,
+        'changed': changed_keys,
+        'metadata_changed': metadata_changed,
+        'has_changes': bool(added_keys or removed_keys or changed_keys or metadata_changed),
+    }
+
+
 def restore_version(template_name, version_filename):
     """恢复某个历史版本（当前版本也会被备份）"""
     vdir = _versions_dir(template_name)
@@ -385,12 +446,22 @@ def restore_version(template_name, version_filename):
     if os.path.exists(main_path):
         before_restore = os.path.join(vdir,
             datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_before_restore.contract-template')
-        try:
-            shutil.copy2(main_path, before_restore)
-        except Exception:
-            logging.getLogger('contract_tool').warning(
-                '版本回滚前备份当前模板失败: %s', template_name, exc_info=True)
+        shutil.copy2(main_path, before_restore)
+        with open(before_restore, 'r', encoding='utf-8') as f:
+            json.load(f)
     with open(src, 'r', encoding='utf-8') as f:
         json.load(f)
-    shutil.copy2(src, main_path)
+    staged = main_path + f'.restore-{uuid.uuid4().hex}'
+    try:
+        shutil.copy2(src, staged)
+        with open(staged, 'r', encoding='utf-8') as f:
+            json.load(f)
+        os.replace(staged, main_path)
+    finally:
+        try:
+            os.remove(staged)
+        except FileNotFoundError:
+            logging.getLogger('contract_tool').debug(
+                '模板恢复暂存文件已不存在: %s', staged
+            )
     return main_path

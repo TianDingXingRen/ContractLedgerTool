@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ '编辑' if invoice and invoice.id else '登记' }}发票{% endblock %}
+{% block breadcrumb %}发票管理 / {{ '编辑' if invoice and invoice.id else '登记' }}发票{% endblock %}
+{% block content %}
+{% set allocations = invoice.allocations if invoice and invoice.allocations else [{'contract_id': selected_contract_id or '', 'production_notice_id':'', 'payment_plan_id':'', 'allocated_amount':'', 'remark':''}] %}
+{% set allocation_rows = allocations|length + 2 %}
+<div class="ui-page">
+  {% if error %}<div class="ui-alert" role="alert">{{ error }}</div>{% endif %}
+  <header class="ui-page-header"><div><h1 class="ui-page-title">{{ '编辑进项发票' if invoice and invoice.id else '登记进项发票' }}</h1><p class="ui-page-subtitle">填写票面信息，并按实际业务关系分摊到合同、投产通知和付款计划</p></div><div class="ui-page-actions"><a class="ui-button secondary" href="{{ url_for('invoices.invoice_detail', invoice_id=invoice.id) if invoice and invoice.id else url_for('invoices.invoice_list') }}">取消并返回</a></div></header>
+  <form method="post" id="invoice-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">票面信息</h2><p class="ui-panel-subtitle">带 * 的字段为必填项</p></div></div><div class="ui-panel-body"><div class="ui-form-grid cols-3">
+      <label class="ui-field"><span>发票代码</span><input class="ui-input" name="invoice_code" value="{{ invoice.invoice_code if invoice else '' }}"></label>
+      <label class="ui-field"><span>发票号码 *</span><input class="ui-input" required name="invoice_no" value="{{ invoice.invoice_no if invoice else '' }}"></label>
+      <label class="ui-field"><span>发票类型</span><select class="ui-select" name="invoice_type">{% for value,label in [('vat_special','增值税专票'),('vat_normal','增值税普票'),('electronic','电子发票'),('other','其他')] %}<option value="{{ value }}" {{ 'selected' if invoice and invoice.invoice_type == value }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="ui-field"><span>开票日期</span><input class="ui-input" type="date" name="issue_date" value="{{ invoice.issue_date if invoice else today }}"></label>
+      <label class="ui-field"><span>收票日期</span><input class="ui-input" type="date" name="received_date" value="{{ invoice.received_date if invoice else today }}"></label>
+      <label class="ui-field"><span>币种</span><input class="ui-input" name="currency" value="CNY" readonly aria-readonly="true" title="仅支持人民币（CNY）"></label>
+      <label class="ui-field"><span>销方名称</span><input class="ui-input" name="seller_name" value="{{ invoice.seller_name if invoice else '' }}"></label>
+      <label class="ui-field"><span>销方税号</span><input class="ui-input" name="seller_tax_no" value="{{ invoice.seller_tax_no if invoice else '' }}"></label>
+      <label class="ui-field"><span>购方名称</span><input class="ui-input" name="buyer_name" value="{{ invoice.buyer_name if invoice else '' }}"></label>
+      <label class="ui-field"><span>购方税号</span><input class="ui-input" name="buyer_tax_no" value="{{ invoice.buyer_tax_no if invoice else '' }}"></label>
+      <label class="ui-field"><span>不含税金额 *</span><input class="ui-input" required inputmode="decimal" name="amount_ex_tax" value="{{ invoice.amount_ex_tax if invoice and invoice.amount_ex_tax is defined else '' }}"></label>
+      <label class="ui-field"><span>税额 *</span><input class="ui-input" required inputmode="decimal" name="tax_amount" value="{{ invoice.tax_amount if invoice and invoice.tax_amount is defined else '' }}"></label>
+      <label class="ui-field"><span>价税合计 *</span><input class="ui-input" required inputmode="decimal" name="total_amount" value="{{ invoice.total_amount if invoice and invoice.total_amount is defined else '' }}"></label>
+      <label class="ui-field"><span>税率（%）</span><input class="ui-input" inputmode="decimal" name="tax_rate" value="{{ invoice.tax_rate if invoice and invoice.tax_rate is defined and invoice.tax_rate is not none else '' }}"></label>
+      <label class="ui-field"><span>票据状态</span><select class="ui-select" name="invoice_status">{% for value,label in [('valid','有效'),('red','红字'),('void','作废')] %}<option value="{{ value }}" {{ 'selected' if invoice and invoice.invoice_status == value }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="ui-field"><span>核验状态</span><select class="ui-select" name="review_status">{% for value,label in [('pending','待核验'),('verified','已核验'),('exception','异常')] %}<option value="{{ value }}" {{ 'selected' if invoice and invoice.review_status == value }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="ui-field"><span>抵扣状态</span><select class="ui-select" name="deduction_status">{% for value,label in [('not_applicable','不适用'),('pending','待抵扣'),('deducted','已抵扣')] %}<option value="{{ value }}" {{ 'selected' if invoice and invoice.deduction_status == value }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="ui-field"><span>原发票 ID（红字票）</span><input class="ui-input" inputmode="numeric" name="original_invoice_id" value="{{ invoice.original_invoice_id if invoice and invoice.original_invoice_id else '' }}"><small>仅登记红字票时填写</small></label>
+      <label class="ui-field span-3"><span>备注</span><textarea class="ui-textarea" name="remark">{{ invoice.remark if invoice else '' }}</textarea></label>
+    </div></div></section>
+
+    <section class="ui-panel"><div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">合同与业务分摊</h2><p class="ui-panel-subtitle">分摊合计不得超过价税合计；投产通知和付款计划必须属于所选合同</p></div><button type="button" class="ui-button secondary compact" id="add-allocation"><i data-lucide="plus"></i>增加分摊</button></div><input type="hidden" id="allocation-count" name="allocation_count" value="{{ allocation_rows }}"><div class="ui-panel-body flush"><div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>合同 *</th><th>投产通知</th><th>付款计划</th><th>分摊金额 *</th><th>备注</th></tr></thead><tbody id="allocation-rows">
+      {% for index in range(allocation_rows) %}{% set row = allocations[index] if index < allocations|length else {} %}<tr data-allocation-row><td><select class="ui-select compact allocation-contract" name="allocation_{{ index }}_contract_id" aria-label="第 {{ index + 1 }} 行合同"><option value="">请选择</option>{% for contract in contracts %}<option value="{{ contract.id }}" {{ 'selected' if row.contract_id and row.contract_id|int == contract.id }}>{{ contract.contract_no or contract.title }}</option>{% endfor %}</select></td><td><select class="ui-select compact allocation-notice" name="allocation_{{ index }}_production_notice_id" aria-label="第 {{ index + 1 }} 行投产通知"><option value="">不关联</option>{% for item in notices %}<option value="{{ item.id }}" data-contract="{{ item.contract_id }}" {{ 'selected' if row.production_notice_id and row.production_notice_id|int == item.id }}>{{ item.notice_no }} V{{ item.version }}</option>{% endfor %}</select></td><td><select class="ui-select compact allocation-plan" name="allocation_{{ index }}_payment_plan_id" aria-label="第 {{ index + 1 }} 行付款计划"><option value="">不关联</option>{% for item in plans %}<option value="{{ item.id }}" data-contract="{{ item.contract_id }}" {{ 'selected' if row.payment_plan_id and row.payment_plan_id|int == item.id }}>{{ item.phase_name or ('计划 #' ~ item.id) }}</option>{% endfor %}</select></td><td><input class="ui-input compact" inputmode="decimal" name="allocation_{{ index }}_allocated_amount" value="{{ row.allocated_amount if row.allocated_amount else '' }}" aria-label="第 {{ index + 1 }} 行分摊金额"></td><td><input class="ui-input compact" name="allocation_{{ index }}_remark" value="{{ row.remark or '' }}" aria-label="第 {{ index + 1 }} 行备注"></td></tr>{% endfor %}
+    </tbody></table></div></div></section>
+    <div class="flex justify-end mt-4"><button class="ui-button primary" type="submit"><i data-lucide="save"></i>保存发票</button></div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ static_url('js/invoice-form.js') }}"></script>{% endblock %}

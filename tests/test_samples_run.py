@@ -1,11 +1,9 @@
 """使用4个样本合同的自动化功能测试"""
-import io, json, os, sys, tempfile
+import io
+import os
+import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
-import app
-from app import app as flask_app
-import template_def, field_eval, docx_builder
-from utils import helpers
 from docx import Document
 
 PASS = FAIL = 0

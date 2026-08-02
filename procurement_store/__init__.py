@@ -9,37 +9,31 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 
 import ledger_store
+from database.migration_runner import (
+    MigrationStep,
+    ensure_column,
+    local_now as _now,
+    read_schema_version,
+    row_to_dict as _dict,
+    run_versioned_migrations,
+)
 from . import award_contracts
 from . import comparison_workflow
 from . import project_components
 from . import project_queries
 from . import quote_jobs
+from .constants import PROJECT_STATUSES
 from .schema import (
+    CURRENT_SCHEMA_VERSION,
     PROCUREMENT_SCHEMA_SQL,
     SCHEMA_VERSION_INSERT_SQL,
     V2_COLUMN_MIGRATIONS,
     V3_CONTRACT_REFS_INDEX_SQL,
     V3_CONTRACT_REFS_SQL,
+    V4_INDEX_STATEMENTS,
 )
-
-
-PROJECT_STATUSES = {
-    'draft', 'documents_ready', 'inquiry_sent', 'quotes_received',
-    'clarifying', 'negotiating', 'award_draft', 'award_confirmed',
-    'contract_draft', 'contract_created', 'archived',
-}
-
-
-def _now():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-
-def _dict(row):
-    return dict(row) if row is not None else None
-
 
 def _normalize_name(value):
     return re.sub(r'\s+', '', str(value or '')).casefold()
@@ -59,30 +53,63 @@ def _audit(conn, entity_type, entity_id, action, before=None, after=None, note='
     )
 
 
-def _ensure_column(conn, table_name, column_name, column_sql):
-    columns = {row['name'] for row in conn.execute(f'PRAGMA table_info({table_name})').fetchall()}
-    if column_name not in columns:
-        conn.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}')
-
-
 def init_db():
     """Create the procurement schema idempotently."""
     with ledger_store.get_conn() as conn:
         now = _now()
+        fresh_schema = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'procurement_projects'"
+        ).fetchone() is None
         conn.executescript(PROCUREMENT_SCHEMA_SQL)
+        if fresh_schema:
+            conn.execute(SCHEMA_VERSION_INSERT_SQL, (CURRENT_SCHEMA_VERSION, now))
+            return
         conn.execute(SCHEMA_VERSION_INSERT_SQL, (1, now))
-        for table_name, column_name, column_sql in V2_COLUMN_MIGRATIONS:
-            _ensure_column(conn, table_name, column_name, column_sql)
-        conn.execute(SCHEMA_VERSION_INSERT_SQL, (2, now))
-        conn.execute(V3_CONTRACT_REFS_SQL)
-        conn.execute(V3_CONTRACT_REFS_INDEX_SQL)
-        conn.execute(SCHEMA_VERSION_INSERT_SQL, (3, now))
+    run_versioned_migrations(
+        ledger_store.get_conn,
+        current_version=get_schema_version(),
+        steps=(
+            MigrationStep(2, _migrate_v2),
+            MigrationStep(3, _migrate_v3),
+            MigrationStep(4, _migrate_v4),
+        ),
+        namespace='procurement',
+        record_version=_record_schema_version,
+    )
 
 
-def create_project(data):
+def _migrate_v2(conn):
+    for table_name, column_name, column_sql in V2_COLUMN_MIGRATIONS:
+        ensure_column(conn, table_name, column_name, column_sql)
+
+
+def _migrate_v3(conn):
+    conn.execute(V3_CONTRACT_REFS_SQL)
+    conn.execute(V3_CONTRACT_REFS_INDEX_SQL)
+
+
+def _migrate_v4(conn):
+    for statement in V4_INDEX_STATEMENTS:
+        conn.execute(statement)
+
+
+def _record_schema_version(conn, version):
+    conn.execute(SCHEMA_VERSION_INSERT_SQL, (version, _now()))
+
+
+def get_schema_version():
+    """Return the installed procurement schema version without creating tables."""
+    return read_schema_version(ledger_store.DB_PATH, 'procurement_schema_version')
+
+
+def needs_migration():
+    return get_schema_version() < CURRENT_SCHEMA_VERSION
+
+
+def create_project(data, *, conn=None):
     now = _now()
-    with ledger_store.get_conn() as conn:
-        cur = conn.execute(
+    def _insert(connection):
+        cur = connection.execute(
             """INSERT INTO procurement_projects
                (project_no, project_name, purchase_method, demand_department, owner,
                 budget_minor, target_price_minor, currency, delivery_place,
@@ -98,8 +125,13 @@ def create_project(data):
             ),
         )
         project_id = cur.lastrowid
-        _audit(conn, 'project', project_id, 'create', after=data)
+        _audit(connection, 'project', project_id, 'create', after=data)
         return project_id
+
+    if conn is not None:
+        return _insert(conn)
+    with ledger_store.get_conn() as managed_conn:
+        return _insert(managed_conn)
 
 
 def update_project(project_id, data):
@@ -298,6 +330,18 @@ def get_quote_items(quote_id):
     return quote_jobs.get_quote_items(ledger_store.get_conn, quote_id)
 
 
+def update_quote(quote_id, header, items):
+    return quote_jobs.update_quote(
+        ledger_store.get_conn, _audit, _now, quote_id, header, items
+    )
+
+
+def delete_quote(quote_id):
+    return quote_jobs.delete_quote(
+        ledger_store.get_conn, _audit, _now, quote_id
+    )
+
+
 def create_comparison_run(project_id, quote_ids, rule_config, results):
     return comparison_workflow.create_comparison_run(
         ledger_store.get_conn, _audit, _now, project_id, quote_ids, rule_config, results
@@ -425,18 +469,36 @@ def mark_data_sheet_in_editor(sheet_id):
     return award_contracts.mark_data_sheet_in_editor(ledger_store.get_conn, _now, sheet_id)
 
 
-def complete_contract_link(sheet_id, contract_id):
-    return award_contracts.complete_contract_link(
-        ledger_store.get_conn, _audit, _now, sheet_id, contract_id
+def complete_contract_link(sheet_id, contract_id, *, conn=None):
+    link_id = award_contracts.complete_contract_link(
+        ledger_store.get_conn, _audit, _now, sheet_id, contract_id,
+        connection=conn,
+    )
+    ledger_store.sync_contract_items_from_procurement(
+        contract_id, conn=conn, strict=False
+    )
+    return link_id
+
+
+def add_contract_ref(
+    project_id, contract_id, source_type='direct_contract', source_id=None, *, conn=None
+):
+    return award_contracts.add_contract_ref(
+        ledger_store.get_conn, _audit, _now, project_id, contract_id,
+        source_type=source_type, source_id=source_id, connection=conn,
     )
 
 
-def add_contract_ref(project_id, contract_id, source_type='direct_contract', source_id=None):
-    return award_contracts.add_contract_ref(
+def remove_contract_ref(project_id, contract_id, restore_status=None):
+    return award_contracts.remove_contract_ref(
         ledger_store.get_conn, _audit, _now, project_id, contract_id,
-        source_type=source_type, source_id=source_id,
+        restore_status=restore_status,
     )
 
 
 def get_project_contract_links(project_id):
     return award_contracts.get_project_contract_links(ledger_store.get_conn, project_id)
+
+
+def contract_has_refs(contract_id):
+    return award_contracts.contract_has_refs(ledger_store.get_conn, contract_id)

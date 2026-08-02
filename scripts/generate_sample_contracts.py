@@ -2,7 +2,10 @@
 """
 Generate 10 test contracts from template1 and template2, then verify all features.
 """
-import json, os, sys, shutil, uuid, time
+import os
+import sys
+import shutil
+import uuid
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -192,7 +195,7 @@ def make_values(fields, company, product, idx, tpl_idx):
                     f"大写：{num_to_chinese(total_amount*0.3)}元整，时间：{pmt_date3}。"
                 )
             elif '发票' in key:
-                values[key] = f"甲方完成单套产品交付验收后30日内，乙方应提供给甲方单套产品等额的增值税专用发票，本合同项下产品采购所涉及的13%增值税由乙方承担。"
+                values[key] = "甲方完成单套产品交付验收后30日内，乙方应提供给甲方单套产品等额的增值税专用发票，本合同项下产品采购所涉及的13%增值税由乙方承担。"
             elif '税率' in key:
                 values[key] = '13%'
             elif '合同摘要' in key or '摘要' in key:

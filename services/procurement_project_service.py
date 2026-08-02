@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
+import io
+import os
+import tempfile
+
 from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 
 import ledger_store
 import procurement_store
 from services import procurement_file_service
-from utils import helpers
+from services.office_parse_service import extract_excel_rows_isolated
 from utils.constants import (
     PROCUREMENT_METHOD_LABELS,
     PROCUREMENT_STAGE_LABELS,
     PROCUREMENT_STAGE_ORDER,
     PROCUREMENT_STATUS_LABELS,
 )
+from utils.money import to_minor, from_minor
+from utils.logger import get_logger
+from utils.security import MAX_TEXT_VALUE_LENGTH, limit_text, validate_office_archive
+from utils.template_paths import safe_template_path
 
 
+MAX_PROCUREMENT_IMPORT_ROWS = 1000
+MAX_PROCUREMENT_QUANTITY = Decimal('1000000000000')
 STATUS_TRANSITIONS = {
     'draft': {'documents_ready', 'inquiry_sent', 'quotes_received', 'archived'},
     'documents_ready': {'draft', 'inquiry_sent', 'quotes_received', 'archived'},
@@ -56,33 +66,78 @@ STAGE_ACTIONS = {
 }
 
 
-def money_to_minor(value, label='金额', allow_empty=True):
-    raw = str(value or '').replace(',', '').strip()
-    if not raw and allow_empty:
+def list_projects(*, status='', q='', page=1):
+    return procurement_store.list_projects(
+        status=status,
+        q=q,
+        page=page,
+    )
+
+
+def project_statuses():
+    return procurement_store.PROJECT_STATUSES
+
+
+def get_project(project_id):
+    return procurement_store.get_project(project_id)
+
+
+def get_project_item(project_id, item_id):
+    item = procurement_store.get_project_item(item_id)
+    if not item or item['project_id'] != project_id:
         return None
+    return item
+
+
+def delete_item(project_id, item_id):
+    return procurement_store.delete_project_item(project_id, item_id)
+
+
+def list_suppliers(project_id):
+    return procurement_store.list_project_suppliers(project_id)
+
+
+def get_supplier(project_id, supplier_id):
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    if not supplier or supplier['project_id'] != project_id:
+        return None
+    return supplier
+
+
+def _positive_quantity(value):
     try:
-        amount = Decimal(raw)
+        quantity = Decimal(str(value or '').strip())
     except InvalidOperation as exc:
-        raise ValueError(f'{label}格式无效') from exc
-    if amount < 0:
-        raise ValueError(f'{label}不能为负数')
-    return int((amount * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+        raise ValueError('数量格式无效') from exc
+    if not quantity.is_finite():
+        raise ValueError('数量必须是有限数值')
+    if quantity <= 0:
+        raise ValueError('数量必须大于 0')
+    if quantity > MAX_PROCUREMENT_QUANTITY:
+        raise ValueError('数量超出允许范围')
+    return quantity
+
+
+def money_to_minor(value, label='金额', allow_empty=True):
+    return to_minor(value, allow_none=allow_empty)
 
 
 def minor_to_money(value):
-    if value is None:
-        return ''
-    return f'{Decimal(int(value)) / 100:.2f}'
+    return from_minor(value)
 
 
-def _next_project_no():
+def _next_project_no(conn=None):
     prefix = 'CG-' + date.today().strftime('%Y%m%d') + '-'
-    with ledger_store.get_conn() as conn:
-        conn.execute('BEGIN IMMEDIATE')
-        rows = conn.execute(
+    def _read(connection):
+        return connection.execute(
             'SELECT project_no FROM procurement_projects WHERE project_no LIKE ? ORDER BY project_no DESC LIMIT 1',
             (prefix + '%',),
         ).fetchone()
+    if conn is None:
+        with ledger_store.get_conn() as managed_conn:
+            rows = _read(managed_conn)
+    else:
+        rows = _read(conn)
     if not rows:
         return prefix + '0001'
     try:
@@ -97,9 +152,9 @@ def create_project(form):
     name = str(form.get('project_name') or '').strip()
     if not name:
         raise ValueError('项目名称不能为空')
-    project_no = str(form.get('project_no') or '').strip() or _next_project_no()
+    submitted_project_no = str(form.get('project_no') or '').strip()
     data = {
-        'project_no': project_no,
+        'project_no': submitted_project_no,
         'project_name': name,
         'purchase_method': str(form.get('purchase_method') or 'competitive_negotiation').strip(),
         'demand_department': str(form.get('demand_department') or '').strip(),
@@ -115,12 +170,19 @@ def create_project(form):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            if attempt > 0:
-                project_no = _next_project_no()
-                data['project_no'] = project_no
-            project_id = procurement_store.create_project(data)
+            if submitted_project_no:
+                project_id = procurement_store.create_project(data)
+            else:
+                with ledger_store.get_conn() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    data['project_no'] = _next_project_no(conn)
+                    project_id = procurement_store.create_project(
+                        data, conn=conn
+                    )
             break
         except sqlite3.IntegrityError:
+            if submitted_project_no:
+                raise ValueError('项目编号已存在')
             if attempt == max_retries - 1:
                 raise ValueError('创建项目失败，请稍后重试')
     project = procurement_store.get_project(project_id)
@@ -176,6 +238,12 @@ def _stage_completion(project):
     }
 
 
+def _stage_applicable(project, stage):
+    if project.get('purchase_method') == 'single_source' and stage == 'comparison':
+        return False
+    return True
+
+
 def _workflow_skips(project_id):
     skipped = {}
     for event in procurement_store.list_project_audit_events(project_id, actions=['workflow_jump']):
@@ -198,6 +266,8 @@ def _missing_before(project, target_stage):
             break
         if stage == 'project':
             continue
+        if not _stage_applicable(project, stage):
+            continue
         if not completion.get(stage):
             missing.append(stage)
     return missing
@@ -211,6 +281,8 @@ def build_workflow_view(project_id):
     skipped = _workflow_skips(project_id)
     recommended_key = None
     for stage in PROCUREMENT_STAGE_ORDER:
+        if not _stage_applicable(project, stage):
+            continue
         if not completion.get(stage) and stage not in skipped:
             recommended_key = stage
             break
@@ -219,10 +291,14 @@ def build_workflow_view(project_id):
 
     stages = []
     for stage in PROCUREMENT_STAGE_ORDER:
+        applicable = _stage_applicable(project, stage)
         done = completion.get(stage, False)
         skipped_info = skipped.get(stage)
-        missing_before = _missing_before(project, stage)
-        if done:
+        missing_before = _missing_before(project, stage) if applicable else []
+        requires_skip_note = bool(missing_before and not done and not skipped_info)
+        if not applicable:
+            status = 'not_applicable'
+        elif done:
             status = 'done'
         elif skipped_info:
             status = 'skipped'
@@ -236,11 +312,13 @@ def build_workflow_view(project_id):
             'key': stage,
             'label': PROCUREMENT_STAGE_LABELS.get(stage, stage),
             'status': status,
+            'applicable': applicable,
             'done': done,
             'skipped': bool(skipped_info),
             'skip_note': (skipped_info or {}).get('note', ''),
             'missing_before': missing_before,
             'missing_labels': [PROCUREMENT_STAGE_LABELS.get(item, item) for item in missing_before],
+            'requires_skip_note': requires_skip_note,
             'action': STAGE_ACTIONS.get(stage, {}),
         })
     return {
@@ -260,15 +338,25 @@ def jump_to_stage(project_id, target_stage, note=''):
     project = project_detail(project_id)
     if not project:
         raise ValueError('采购项目不存在')
+    if not _stage_applicable(project, target_stage):
+        return target_stage
     if target_stage == 'negotiation' and not project.get('suppliers'):
         raise ValueError('进入谈判前至少需要添加一个候选供应商')
     note = str(note or '').strip()
+    completion = _stage_completion(project)
+    skipped = _workflow_skips(project_id)
     missing = _missing_before(project, target_stage)
+    target_already_available = completion.get(target_stage) or target_stage in skipped
+    if target_already_available:
+        missing = []
     if missing and not note:
         raise ValueError('跳过前置环节时需要填写原因')
     before_status = project.get('status') or ''
     next_status = STAGE_STATUS_MAP.get(target_stage, before_status)
-    procurement_store.transition_project_status(project_id, next_status, note=note)
+    if target_already_available:
+        next_status = before_status
+    if next_status != before_status:
+        procurement_store.transition_project_status(project_id, next_status, note=note)
     procurement_store.record_workflow_jump(
         project_id, target_stage, missing, note=note,
         before_status=before_status, after_status=next_status,
@@ -285,12 +373,7 @@ def add_item(project_id, form):
         raise ValueError('物资名称不能为空')
     if not unit:
         raise ValueError('单位不能为空')
-    try:
-        quantity = Decimal(str(form.get('quantity') or '').strip())
-    except InvalidOperation as exc:
-        raise ValueError('数量格式无效') from exc
-    if quantity <= 0:
-        raise ValueError('数量必须大于 0')
+    quantity = _positive_quantity(form.get('quantity'))
     normalized = format(quantity.normalize(), 'f')
     return procurement_store.add_project_item(project_id, {
         'item_name': item_name,
@@ -309,12 +392,7 @@ def update_item(project_id, item_id, form):
     unit = str(form.get('unit') or '').strip()
     if not item_name or not unit:
         raise ValueError('物资名称和单位不能为空')
-    try:
-        quantity = Decimal(str(form.get('quantity') or '').strip())
-    except InvalidOperation as exc:
-        raise ValueError('数量格式无效') from exc
-    if quantity <= 0:
-        raise ValueError('数量必须大于 0')
+    quantity = _positive_quantity(form.get('quantity'))
     procurement_store.update_project_item(project_id, item_id, {
         'item_name': item_name,
         'spec_model': str(form.get('spec_model') or '').strip(),
@@ -331,26 +409,28 @@ def add_items_from_rows(project_id, rows):
     parsed = []
     errors = []
     for row_number, row in enumerate(rows, start=1):
+        if row_number > MAX_PROCUREMENT_IMPORT_ROWS:
+            raise ValueError(f'采购明细一次最多导入 {MAX_PROCUREMENT_IMPORT_ROWS} 行')
         values = list(row) + [''] * 8
         if not any(str(value or '').strip() for value in values):
             continue
-        item_name = str(values[0] or '').strip()
-        unit = str(values[4] or '').strip()
+        item_name = limit_text(values[0], MAX_TEXT_VALUE_LENGTH).strip()
+        unit = limit_text(values[4], 120).strip()
         try:
-            quantity = Decimal(str(values[3] or '').strip())
-        except InvalidOperation:
-            errors.append(f'第 {row_number} 行数量格式无效')
+            quantity = _positive_quantity(values[3])
+        except ValueError as exc:
+            errors.append(f'第 {row_number} 行{exc}')
             continue
-        if not item_name or not unit or quantity <= 0:
+        if not item_name or not unit:
             errors.append(f'第 {row_number} 行物资名称、正数数量和单位为必填项')
             continue
         parsed.append({
-            'item_name': item_name, 'spec_model': str(values[1] or '').strip(),
-            'drawing_no': str(values[2] or '').strip(),
+            'item_name': item_name, 'spec_model': limit_text(values[1], 1000).strip(),
+            'drawing_no': limit_text(values[2], 500).strip(),
             'quantity_text': format(quantity.normalize(), 'f'), 'unit': unit,
-            'required_delivery_date': str(values[5] or '').strip(),
-            'technical_requirement': str(values[6] or '').strip(),
-            'remark': str(values[7] or '').strip(),
+            'required_delivery_date': limit_text(values[5], 120).strip(),
+            'technical_requirement': limit_text(values[6], MAX_TEXT_VALUE_LENGTH).strip(),
+            'remark': limit_text(values[7], 2000).strip(),
         })
     if errors:
         raise ValueError('；'.join(errors[:20]))
@@ -360,18 +440,46 @@ def add_items_from_rows(project_id, rows):
 
 
 def add_items_from_paste(project_id, text):
-    rows = [line.split('\t') for line in str(text or '').splitlines()]
+    rows = (line.rstrip('\r\n').split('\t') for line in io.StringIO(str(text or '')))
     return add_items_from_rows(project_id, rows)
 
 
 def add_items_from_excel(project_id, file_storage):
-    from openpyxl import load_workbook
-    workbook = load_workbook(file_storage.stream, data_only=True, read_only=True)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if rows and str(rows[0][0] or '').strip() in {'物资名称', '产品名称', '标的名称'}:
-        rows = rows[1:]
-    return add_items_from_rows(project_id, rows)
+    filename = str(getattr(file_storage, 'filename', '') or '')
+    if not filename.lower().endswith('.xlsx'):
+        raise ValueError('采购明细批量导入仅支持 .xlsx 格式')
+    temp_path = ''
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as temp_file:
+            temp_path = temp_file.name
+        file_storage.save(temp_path)
+        validate_office_archive(temp_path)
+        try:
+            extracted_rows = extract_excel_rows_isolated(
+                temp_path,
+                max_rows=MAX_PROCUREMENT_IMPORT_ROWS + 1,
+                max_columns=50,
+            )
+        except ValueError as exc:
+            if str(MAX_PROCUREMENT_IMPORT_ROWS + 1) in str(exc):
+                raise ValueError(
+                    f'一次最多导入 {MAX_PROCUREMENT_IMPORT_ROWS} 条采购明细'
+                ) from exc
+            raise
+        first = extracted_rows[0] if extracted_rows else None
+        if first is None:
+            raise ValueError('没有可导入的采购明细')
+        if str(first[0] or '').strip() not in {'物资名称', '产品名称', '标的名称'}:
+            rows = extracted_rows
+        else:
+            rows = extracted_rows[1:]
+        return add_items_from_rows(project_id, rows)
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                get_logger().debug('Procurement import temp file already absent: %s', temp_path)
 
 
 def add_supplier(project_id, form):
@@ -402,11 +510,22 @@ def update_supplier(project_id, supplier_id, form):
     })
 
 
-def prepare_direct_contract_session(project_id, template_filename):
+def delete_supplier(project_id, supplier_id):
+    relative_paths = procurement_store.delete_project_supplier(project_id, supplier_id)
+    for relative_path in relative_paths:
+        try:
+            procurement_file_service.absolute_path(relative_path).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            get_logger().warning(
+                '删除供应商临时报价文件失败: %s', relative_path, exc_info=True
+            )
+
+
+def prepare_direct_contract_session(project_id, template_filename, paths):
     project = project_detail(project_id)
     if not project:
         raise ValueError('采购项目不存在')
-    path = helpers.safe_template_path(template_filename)
+    path = safe_template_path(template_filename, paths)
     primary_supplier = (project.get('suppliers') or [{}])[0]
     amount_minor = project.get('target_price_minor') or project.get('budget_minor') or 0
     payload = {

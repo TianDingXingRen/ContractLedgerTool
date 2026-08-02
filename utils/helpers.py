@@ -1,139 +1,133 @@
-"""Shared helpers: session, path helpers, and autostart.
+"""Deprecated compatibility facade for historical helper imports.
 
-Path variables (UPLOAD_FOLDER, BASE_DIR, etc.) are set by app.py at startup.
+New code must import from the owning module directly.  These re-exports are
+scheduled for removal after 2026-12-31:
 
-Most business logic has been split to:
-  - utils.labels            → status label constants (re-exports from utils.constants)
-  - utils.field_utils       → key generation, parsing, marker detection, table normalization
-  - utils.generation_utils  → calculations, contract summary, ledger, batch, payment helpers
-  - utils.autostart         → Windows 自启动管理
+* field parsing and normalization: :mod:`utils.field_utils`
+* generation helpers: :mod:`utils.generation_utils`
+* labels: :mod:`utils.labels`
+* autostart: :mod:`utils.autostart`
+* session persistence: :mod:`utils.session_store`
+* template/upload paths: :mod:`utils.template_paths`
+
+The legacy path attributes are dynamically resolved from the immutable
+``RuntimePaths`` object.  ``runtime.context.apply_runtime_context`` no longer
+mutates this module.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import re
-import sys
-import subprocess
-import threading
-import time as _time
 from typing import Any
 
-import template_def
-
-from utils.security import (
-    path_within, safe_join_file, bounded_int,
+from runtime.app_state import app_state
+from utils.autostart import (  # noqa: F401
+    AUTOSTART_LAUNCHER_NAME,
+    AUTOSTART_LEGACY_LAUNCHER_NAMES,
+    AUTOSTART_TASK_NAME,
+    autostart_status,
+    disable_autostart,
+    enable_autostart,
 )
-from utils.logger import get_logger
-from utils.labels import (
-    CONTRACT_STATUS_LABELS,
-    CONFIRM_STATUS_LABELS,
-    PAYMENT_STATUS_LABELS,
-    CONFIDENCE_LABELS,
-    PROCUREMENT_STATUS_LABELS,
-    PROCUREMENT_METHOD_LABELS,
-    PROCUREMENT_STAGE_ORDER,
-    PROCUREMENT_STAGE_LABELS,
-    PROCUREMENT_STAGE_STATUS_LABELS,
-    CLARIFICATION_STATUS_LABELS,
-    QUOTE_STATUS_LABELS,
-    QUOTE_IMPORT_STATUS_LABELS,
-)
-# ── Re-export from sub-modules for backward compatibility ──
-from utils.field_utils import (
-    field_key_from_label, unique_key, safe_col_key,
-    safe_filename_part, parse_number, normalize_date,
-    to_calc_number, float_or_none, int_or_none, normalize_number_field_value,
-    detect_markers, filter_table_rows,
-    normalize_table_columns, apply_submitted_table_columns,
+from utils.field_utils import (  # noqa: F401
+    apply_submitted_table_columns,
+    detect_markers,
+    field_key_from_label,
+    filter_table_rows,
+    float_or_none,
+    int_or_none,
+    normalize_date,
+    normalize_number_field_value,
+    normalize_table_columns,
+    parse_number,
     parse_submitted_field_values,
+    safe_col_key,
+    safe_filename_part,
+    to_calc_number,
+    unique_key,
 )
-from utils.generation_utils import (
-    calc_context, recalculate_scalar_fields, recalculate_table_fields,
-    prepare_generation_values,
-    infer_contract_summary, parse_contract_classification,
-    create_ledger_record, docx_write_order,
+from utils.generation_utils import (  # noqa: F401
+    calc_context,
+    can_bulk_confirm_payment,
+    contract_number_keys,
+    counterparty_batch_keys,
+    create_ledger_record,
+    docx_write_order,
     generate_docx_document,
-    counterparty_batch_keys, contract_number_keys, next_month_ym, next_month_range,
-    has_payment_content, can_bulk_confirm_payment,
+    has_payment_content,
+    infer_contract_summary,
+    next_month_range,
+    next_month_ym,
+    parse_contract_classification,
+    prepare_generation_values,
+    recalculate_scalar_fields,
+    recalculate_table_fields,
     validate_template_source_bindings,
 )
-# ── Re-export from autostart module ──
-from utils.autostart import (
-    autostart_status, enable_autostart, disable_autostart,
-    AUTOSTART_TASK_NAME, AUTOSTART_LAUNCHER_NAME,
-    AUTOSTART_LEGACY_LAUNCHER_NAMES,
+from utils.labels import (  # noqa: F401
+    CLARIFICATION_STATUS_LABELS,
+    CONFIDENCE_LABELS,
+    CONFIRM_STATUS_LABELS,
+    CONTRACT_STATUS_LABELS,
+    PAYMENT_AMOUNT_BASIS_LABELS,
+    PAYMENT_PARSE_STATUS_LABELS,
+    PAYMENT_REASON_LABELS,
+    PAYMENT_STATUS_LABELS,
+    PROCUREMENT_METHOD_LABELS,
+    PROCUREMENT_STAGE_LABELS,
+    PROCUREMENT_STAGE_ORDER,
+    PROCUREMENT_STAGE_STATUS_LABELS,
+    PROCUREMENT_STATUS_LABELS,
+    QUOTE_IMPORT_STATUS_LABELS,
+    QUOTE_STATUS_LABELS,
+)
+from utils.security import path_within  # noqa: F401
+from utils.session_store import (
+    load_session_data as _load_session_data,
+    save_session_data as _save_session_data,
+)
+from utils.template_paths import (
+    safe_template_path as _safe_template_path,
+    safe_uploaded_docx_path as _safe_uploaded_docx_path,
+    template_path_from_session as _template_path_from_session,
+    validate_stored_docx as _validate_stored_docx,
 )
 
-# ── Paths set by app.py at startup ──
-UPLOAD_FOLDER = None
-OUTPUT_FOLDER = None
-SESSION_FOLDER = None
-BASE_DIR = None
-
-
-# ═══════════════════════════════════════════════════════
-#  Session helpers
-# ═══════════════════════════════════════════════════════
 
 def save_session_data(sid: str, data: dict[str, Any]) -> None:
-    if SESSION_FOLDER is None:
-        raise RuntimeError('SESSION_FOLDER 未初始化，请先调用 init_runtime()')
-    path = safe_join_file(SESSION_FOLDER, f'{sid}.json', allowed_ext={'.json'})
-    tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    return _save_session_data(sid, data, app_state.paths)
 
 
 def load_session_data(sid: str) -> dict[str, Any]:
-    if SESSION_FOLDER is None:
-        raise RuntimeError('SESSION_FOLDER 未初始化，请先调用 init_runtime()')
-    path = safe_join_file(SESSION_FOLDER, f'{sid}.json', allowed_ext={'.json'})
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return _load_session_data(sid, app_state.paths)
 
-
-# ═══════════════════════════════════════════════════════
-#  Path helpers
-# ═══════════════════════════════════════════════════════
 
 def safe_uploaded_docx_path(filename: str) -> str:
-    if UPLOAD_FOLDER is None:
-        raise RuntimeError('UPLOAD_FOLDER 未初始化，请先调用 init_runtime()')
-    return safe_join_file(UPLOAD_FOLDER, filename, allowed_ext={'.docx'})
+    return _safe_uploaded_docx_path(filename, app_state.paths)
 
 
 def safe_template_path(name: str) -> str:
-    filename = os.path.basename(name or '')
-    if not filename.endswith('.contract-template'):
-        raise ValueError('模板文件名无效')
-    return safe_join_file(template_def.TEMPLATES_DIR, filename, allowed_ext={'.contract-template'})
+    return _safe_template_path(name, app_state.paths)
 
 
 def validate_stored_docx(filename: str) -> str:
-    if not filename:
-        return ''
-    path = safe_uploaded_docx_path(filename)
-    if not os.path.isfile(path):
-        raise ValueError('模板源文件不存在')
-    return os.path.basename(filename)
+    return _validate_stored_docx(filename, app_state.paths)
 
 
 def template_path_from_session(data: dict[str, Any]) -> str:
-    template_path_data = data.get('template_path', '')
-    if template_path_data:
-        path = os.path.abspath(template_path_data)
-        if path_within(template_def.TEMPLATES_DIR, path) and os.path.exists(path):
-            return path
+    return _template_path_from_session(data, app_state.paths)
 
-    template_filename = data.get('template_filename', '')
-    if template_filename:
-        try:
-            path = safe_template_path(template_filename)
-        except ValueError:
-            return ''
-        if os.path.exists(path):
-            return path
-    return ''
+
+_LEGACY_PATH_ATTRIBUTES = {
+    'UPLOAD_FOLDER': 'uploads_dir',
+    'OUTPUT_FOLDER': 'output_dir',
+    'SESSION_FOLDER': 'sessions_dir',
+    'BASE_DIR': 'base_dir',
+}
+
+
+def __getattr__(name: str):
+    """Resolve legacy read-only path names without module-level copies."""
+    property_name = _LEGACY_PATH_ATTRIBUTES.get(name)
+    if property_name is None:
+        raise AttributeError(name)
+    return getattr(app_state, property_name)

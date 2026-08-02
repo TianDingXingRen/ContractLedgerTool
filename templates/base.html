@@ -1,43 +1,47 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light" x-data="{ theme: localStorage.getItem('theme') || 'light' }" x-init="$el.dataset.theme = theme; $watch('theme', v => { $el.dataset.theme = v; localStorage.setItem('theme', v); })">
+<html lang="zh-CN" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-    <title>{% block title %}合同管理工具{% endblock %}</title>
-    <link href="{{ url_for('static', filename='vendor/daisyui-full.min.css') }}" rel="stylesheet">
-    <script src="{{ url_for('static', filename='vendor/tailwindcss.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/base.js') }}"></script>
-    <script defer src="{{ url_for('static', filename='vendor/alpine.min.js') }}"></script>
-    <script defer src="{{ url_for('static', filename='js/icons.js') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ static_url('brand/procurement-platform-icon.png') }}">
+    <title>{% block title %}采购业务平台{% endblock %}</title>
+    <link href="{{ static_url('css/app.min.css') }}" rel="stylesheet">
+    <script src="{{ static_url('js/api-client.js') }}"></script>
+    <script src="{{ static_url('js/app-shell.js') }}"></script>
+    <script defer src="{{ static_url('js/ui-drawer.js') }}"></script>
+    <script defer src="{{ static_url('vendor/alpine.min.js') }}"></script>
+    <script defer src="{{ static_url('js/icons.js') }}"></script>
+    <link rel="stylesheet" href="{{ static_url('style.css') }}">
 </head>
 <body class="min-h-screen bg-base-200">
-<aside class="sp" id="sp"><div class="slw"><div class="sli">CT</div><a href="{{ url_for('index') }}" class="slt">合同生成工具</a></div>
+<aside class="sp" id="sp"><div class="slw"><a href="{{ url_for('contracts.index') }}" class="sli" aria-label="返回采购业务平台首页"><img src="{{ static_url('brand/procurement-platform-icon.png') }}" alt="" width="32" height="32"></a><a href="{{ url_for('contracts.index') }}" class="slt">采购业务平台</a></div>
 <nav class="snw">
 <div class="nsw"><div class="nst">主要功能</div>
-<a href="{{ url_for('index') }}" class="nl {{ 'act' if request.endpoint == 'index' }}"><i data-lucide="layout-grid"></i> 工作台</a>
-<a href="{{ url_for('procurement_projects') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('procurement_') }}"><i data-lucide="briefcase-business"></i> 采购前置</a>
-<a href="{{ url_for('procurement_history_prices') }}" class="nl {{ 'act' if request.endpoint == 'procurement_history_prices' }}"><i data-lucide="chart-no-axes-combined"></i> 历史价格</a>
-<a href="{{ url_for('list_templates') }}" class="nl {{ 'act' if request.endpoint in ('list_templates','editor','create_template','template_editor','template_versions') }}"><i data-lucide="pen-line"></i> 合同生成</a>
-<a href="{{ url_for('contract_ledger') }}" class="nl {{ 'act' if request.endpoint in ('contract_ledger','contract_detail') }}"><i data-lucide="book-open"></i> 合同台账</a>
-<a href="{{ url_for('payment_plan_list') }}" class="nl {{ 'act' if request.endpoint == 'payment_plan_list' }}"><i data-lucide="calendar-days"></i> 付款计划</a>
+<a href="{{ url_for('contracts.index') }}" class="nl {{ 'act' if request.endpoint == 'contracts.index' }}"><i data-lucide="layout-grid"></i> 工作台</a>
+<a href="{{ url_for('procurement.procurement_projects') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('procurement.') }}"><i data-lucide="briefcase-business"></i> 采购前置</a>
+<a href="{{ url_for('procurement.procurement_history_prices') }}" class="nl {{ 'act' if request.endpoint == 'procurement.procurement_history_prices' }}"><i data-lucide="chart-no-axes-combined"></i> 历史价格</a>
+<a href="{{ url_for('templates.list_templates') }}" class="nl {{ 'act' if request.endpoint in ('templates.list_templates','contracts.editor','templates.create_template','templates.template_editor','templates.template_versions') }}"><i data-lucide="pen-line"></i> 合同生成</a>
+<a href="{{ url_for('contracts.contract_ledger') }}" class="nl {{ 'act' if request.endpoint in ('contracts.contract_ledger','contracts.contract_detail') }}"><i data-lucide="book-open"></i> 合同台账</a>
+<a href="{{ url_for('payments.payment_plan_list') }}" class="nl {{ 'act' if request.endpoint == 'payments.payment_plan_list' }}"><i data-lucide="calendar-days"></i> 付款计划</a>
+<a href="{{ url_for('production.production_notice_list') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('production.production_notice') }}"><i data-lucide="send"></i> 投产通知</a>
+<a href="{{ url_for('invoices.invoice_list') }}" class="nl {{ 'act' if request.endpoint and request.endpoint.startswith('invoices.invoice_') }}"><i data-lucide="receipt-text"></i> 发票管理</a>
 </div>
 <div class="nsw"><div class="nst">资源管理</div>
-<a href="{{ url_for('excel_bill_page') }}" class="nl {{ 'act' if request.endpoint == 'excel_bill_page' }}"><i data-lucide="file-spreadsheet"></i> Excel 单据</a>
+<a href="{{ url_for('excel_bill.excel_bill_page') }}" class="nl {{ 'act' if request.endpoint == 'excel_bill.excel_bill_page' }}"><i data-lucide="file-spreadsheet"></i> Excel 单据</a>
 </div>
 <div class="nsw"><div class="nst">系统</div>
-<a href="{{ url_for('diagnostics') }}" class="nl {{ 'act' if request.endpoint == 'diagnostics' }}"><i data-lucide="activity"></i> 系统诊断</a>
-<a href="{{ url_for('backups') }}" class="nl {{ 'act' if request.endpoint == 'backups' }}"><i data-lucide="database-backup"></i> 备份管理</a>
-<a href="{{ url_for('contract_trash') }}" class="nl {{ 'act' if request.endpoint == 'contract_trash' }}"><i data-lucide="alert-triangle"></i> 回收站</a>
+<a href="{{ url_for('settings.diagnostics') }}" class="nl {{ 'act' if request.endpoint == 'settings.diagnostics' }}"><i data-lucide="activity"></i> 系统诊断</a>
+<a href="{{ url_for('settings.backups') }}" class="nl {{ 'act' if request.endpoint == 'settings.backups' }}"><i data-lucide="database-backup"></i> 备份管理</a>
+<a href="{{ url_for('contracts.contract_trash') }}" class="nl {{ 'act' if request.endpoint == 'contracts.contract_trash' }}"><i data-lucide="alert-triangle"></i> 回收站</a>
 </div>
 </nav>
 <div class="sf"><div style="display:flex;align-items:center;gap:7px;color:rgba(255,255,255,0.3);font-size:11px;font-weight:450"><div style="width:6px;height:6px;border-radius:3px;background:#34C759;box-shadow:0 0 6px rgba(52,199,89,0.4)"></div> 运行中</div></div>
 </aside>
 
 <div class="tf">
-<div style="display:flex;align-items:center;gap:12px"><button class="stb" onclick="document.getElementById('sp').classList.toggle('open')"><i data-lucide="menu" style="width:20px;height:20px"></i></button><div class="tbr">合同生成工具 / <strong>{% block breadcrumb %}工作台{% endblock %}</strong></div></div>
-<div style="display:flex;align-items:center;gap:8px"><button class="bgx" title="切换暗色模式" @click="theme = theme === 'light' ? 'dark' : 'light'"><i :data-lucide="theme === 'light' ? 'moon' : 'sun'" style="width:15px;height:15px"></i></button><a href="{{ url_for('diagnostics') }}" class="bgx"><i data-lucide="info" style="width:15px;height:15px"></i></a></div>
+<div style="display:flex;align-items:center;gap:12px"><button class="stb" type="button" data-shell-action="toggle-sidebar" aria-label="打开或关闭导航菜单"><i data-lucide="menu" style="width:20px;height:20px"></i></button><div class="tbr">采购业务平台 / <strong>{% block breadcrumb %}工作台{% endblock %}</strong></div></div>
+<div style="display:flex;align-items:center;gap:8px"><button class="bgx" type="button" data-shell-action="toggle-theme" aria-label="切换暗色模式" aria-pressed="false" title="切换暗色模式"><i data-theme-icon data-lucide="moon" style="width:15px;height:15px"></i></button><a href="{{ url_for('settings.diagnostics') }}" class="bgx" aria-label="打开系统诊断" title="系统诊断"><i data-lucide="info" style="width:15px;height:15px"></i></a></div>
 </div>
 <div class="ma">
 

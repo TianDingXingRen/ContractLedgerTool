@@ -1,5 +1,7 @@
 """Schema SQL and lightweight migrations for procurement persistence."""
 
+CURRENT_SCHEMA_VERSION = 4
+
 PROCUREMENT_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS procurement_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -369,6 +371,10 @@ CREATE INDEX IF NOT EXISTS idx_procurement_audit_entity
     ON procurement_audit_events(entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_procurement_contract_refs_project
     ON procurement_contract_refs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_procurement_project_updated
+    ON procurement_projects(updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_project_files_created
+    ON project_files(project_id, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS procurement_schema_version (
     version INTEGER PRIMARY KEY,
@@ -408,3 +414,11 @@ V3_CONTRACT_REFS_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_procurement_contract_refs_project
    ON procurement_contract_refs(project_id, created_at DESC)
 """
+
+
+V4_INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS idx_procurement_project_updated "
+    "ON procurement_projects(updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_project_files_created "
+    "ON project_files(project_id, created_at DESC, id DESC)",
+)

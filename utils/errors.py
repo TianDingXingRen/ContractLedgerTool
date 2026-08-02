@@ -63,3 +63,36 @@ def safe_parse_error(exc=None, log_msg='', status_code=400):
     if exc is not None:
         _log.error('%s: %s', log_msg, exc, exc_info=True)
     return GENERIC_PARSE_ERROR, status_code
+
+
+# ── 采购模块错误处理辅助 ──
+
+_USER_FACING_ERRORS = (ValueError, FileNotFoundError)
+
+
+def classified_error_message(error, logger=None):
+    """分类错误：返回 (message, is_system_error)。
+
+    ValueError/FileNotFoundError 视为用户可见错误，异常详情直接展示；
+    其他 Exception 视为系统错误，仅返回通用消息并记录日志。
+    """
+    if isinstance(error, _USER_FACING_ERRORS):
+        return str(error), False
+    if isinstance(error, Exception):
+        return GENERIC_ERROR, True
+    return str(error), False
+
+
+def log_form_error(context, error, logger=None):
+    """统一记录操作错误日志，按严重程度区分。
+
+    返回 (message, is_system_error)。系统错误打印 ERROR（含堆栈），
+    用户错误打印 INFO。
+    """
+    message, is_system = classified_error_message(error)
+    log = logger or _log
+    if is_system:
+        log.error('%s: %s', context, error, exc_info=True)
+    else:
+        log.info('%s: %s', context, error)
+    return message, is_system

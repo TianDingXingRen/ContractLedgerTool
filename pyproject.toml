@@ -8,6 +8,46 @@ addopts = [
     "--color=yes",
 ]
 markers = [
+    "fast: 快速单元与静态回归测试",
+    "integration: 跨存储、路由与文件系统集成测试",
+    "ui: 浏览器和前端交互测试",
+    "packaging: 桌面打包与隔离运行检查",
     "slow: 慢速测试",
     "e2e: 端到端测试（需要完整环境）",
+    "performance: 性能预算测试（必须在无 coverage 插桩下运行）",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"demo_flow_data.py" = ["E402"]
+"tests/test_docx_regression.py" = ["E702"]
+"tests/test_full_functional_run.py" = ["E702"]
+"tests/test_ledger_crud.py" = ["E701", "E702"]
+"tests/test_samples_run.py" = ["E701", "E702"]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    ".pytest_basetemp_*/*",
+    "build/*",
+    "*/build/*",
+    "build_*.py",
+    "_pyinstaller_common.py",
+    "conftest.py",
+    "demo_flow_data.py",
+    "design/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+fail_under = 72
+show_missing = true
+skip_covered = true
+omit = [
+    "build/*",
+    "*/build/*",
+]
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
 ]

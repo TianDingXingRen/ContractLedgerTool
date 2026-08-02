@@ -14,10 +14,12 @@ from utils.field_utils import (
     to_calc_number, parse_number, normalize_date,
     apply_submitted_table_columns, parse_submitted_field_values,
 )
+from utils.keyword_maps import (
+    find_scalar_semantic,
+)
 from utils.logger import get_logger
 from utils.security import (
-    MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, MAX_BATCH_CONTRACTS,
-    MAX_PLAN_ROWS, MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH,
+    MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH,
     bounded_int, limit_text,
 )
 from utils.constants import FieldType
@@ -112,15 +114,16 @@ def recalculate_scalar_fields(fields, field_values):
         key = field.get('key')
         formula = field.get('formula', '')
         try:
-            value = field_eval.safe_eval(formula, calc_context(fields, field_values))
+            value = field_eval.safe_eval_decimal(formula, calc_context(fields, field_values))
             decimals = int(field.get('decimal_places', 2))
-            field_values[key] = str(field_eval.format_number(value, decimals))
+            field_values[key] = field_eval.format_number_text(value, decimals)
         except (field_eval.FormulaError, ValueError, TypeError) as e:
             errors.append(f'{field.get("label", key)} 公式计算失败：{e}')
     return errors
 
 
 def recalculate_table_fields(fields, field_values):
+    errors = []
     for field in fields:
         if field.get('field_type') != FieldType.TABLE:
             continue
@@ -128,7 +131,7 @@ def recalculate_table_fields(fields, field_values):
         if not isinstance(rows_data, list):
             rows_data = []
         columns = field.get('columns', [])
-        for row in rows_data:
+        for row_index, row in enumerate(rows_data, start=1):
             if not isinstance(row, dict):
                 continue
             for col in columns:
@@ -144,11 +147,16 @@ def recalculate_table_fields(fields, field_values):
                         if not ck:
                             continue
                         ctx[ck] = to_calc_number(row.get(ck, '0'))
-                    result = field_eval.safe_eval(col['formula'], ctx)
+                    result = field_eval.safe_eval_decimal(col['formula'], ctx)
                     decimals = int(col.get('decimal_places', 2))
-                    row[col_key] = field_eval.format_number(result, decimals)
-                except (field_eval.FormulaError, ValueError, TypeError):
-                    row[col_key] = '?'
+                    row[col_key] = field_eval.format_number_text(result, decimals)
+                except (field_eval.FormulaError, ValueError, TypeError) as exc:
+                    row[col_key] = ''
+                    errors.append(
+                        f'{field.get("label", field.get("key", "表格"))}第 {row_index} 行'
+                        f'“{col.get("label", col_key)}”公式计算失败：{exc}'
+                    )
+    return errors
 
 
 def prepare_generation_values(fields, form, allow_empty_keys=None):
@@ -160,7 +168,9 @@ def prepare_generation_values(fields, form, allow_empty_keys=None):
     errors.extend(parse_errors)
     if errors:
         return field_values, errors
-    recalculate_table_fields(fields, field_values)
+    errors.extend(recalculate_table_fields(fields, field_values))
+    if errors:
+        return field_values, errors
     errors.extend(recalculate_scalar_fields(fields, field_values))
     return field_values, errors
 
@@ -169,49 +179,37 @@ def prepare_generation_values(fields, form, allow_empty_keys=None):
 #  Contract generation helpers
 # ═══════════════════════════════════════════════════════
 
-def _value_by_keywords(fields, field_values, keywords, numeric=False, date_value=False):
+def _find_field_by_semantic(fields, semantic_name):
     for field in fields:
         if field.get('field_type') == 'table':
             continue
-        key = field.get('key', '')
-        label = field.get('label', '')
-        haystack = f'{key} {label}'.lower()
-        if not any(kw.lower() in haystack for kw in keywords):
-            continue
-        raw = field_values.get(key, '')
-        if numeric:
-            parsed = parse_number(raw)
-            if parsed is not None:
-                return parsed
-        elif date_value:
-            parsed = normalize_date(raw)
-            if parsed:
-                return parsed
-        elif str(raw).strip():
-            return str(raw).strip()
+        label = str(field.get('label') or '')
+        key = str(field.get('key') or '')
+        if find_scalar_semantic(label, key) == semantic_name:
+            return field
     return None
 
 
+def _value_by_semantic(fields, field_values, semantic_name, numeric=False, date_value=False):
+    field = _find_field_by_semantic(fields, semantic_name)
+    if not field:
+        return None
+    raw = field_values.get(field['key'], '')
+    if numeric:
+        parsed = parse_number(raw)
+        return parsed if parsed is not None else None
+    if date_value:
+        return normalize_date(raw) or None
+    return str(raw).strip() or None
+
+
 def infer_contract_summary(tpl, fields, field_values):
-    amount = _value_by_keywords(fields, field_values, [
-        '合同金额', '总金额', '合同总价', '总价', '价款', '金额', '合计',
-        'amount', 'total'
-    ], numeric=True)
-    sign_date = _value_by_keywords(fields, field_values, [
-        '签订日期', '签约日期', '签署日期', '日期', 'sign_date'
-    ], date_value=True)
-    contract_no = _value_by_keywords(fields, field_values, [
-        '合同编号', '合同号', '编号', 'contract_no'
-    ])
-    title = _value_by_keywords(fields, field_values, [
-        '合同名称', '项目名称', '标题', 'title'
-    ])
-    counterparty = _value_by_keywords(fields, field_values, [
-        '对方', '供应商', '供方', '卖方', '乙方', '客户', 'counterparty'
-    ])
-    owner = _value_by_keywords(fields, field_values, [
-        '负责人', '经办人', '业务员', 'owner'
-    ])
+    amount = _value_by_semantic(fields, field_values, 'amount', numeric=True)
+    sign_date = _value_by_semantic(fields, field_values, 'sign_date', date_value=True)
+    contract_no = _value_by_semantic(fields, field_values, 'contract_no')
+    title = _value_by_semantic(fields, field_values, 'title')
+    counterparty = _value_by_semantic(fields, field_values, 'counterparty')
+    owner = _value_by_semantic(fields, field_values, 'owner')
     if not contract_no:
         contract_no = 'HT' + datetime.now().strftime('%Y%m%d%H%M%S') + secrets.token_hex(4)  # 8位随机后缀防碰撞
     return {
@@ -258,12 +256,8 @@ def parse_contract_classification(form):
     }
 
 
-def create_ledger_record(tpl, fields, field_values, output_path, classification=None):
-    """创建合同台账记录（合同 + 付款计划在同一事务中完成）。
-
-    先提取付款计划文本（DOCX 读取在事务外完成），
-    然后在单个数据库事务中创建合同记录和付款计划。
-    """
+def prepare_ledger_record(tpl, fields, field_values, document_path, classification=None):
+    """Build the ledger summary and extracted plans without opening a transaction."""
     summary = infer_contract_summary(tpl, fields, field_values)
     if classification:
         summary.update({
@@ -273,18 +267,55 @@ def create_ledger_record(tpl, fields, field_values, output_path, classification=
         })
     # 付款计划提取在事务外完成（需要读取 DOCX 文件）
     try:
-        doc_text = payment_extractor.extract_docx_text(output_path)
+        doc_text = payment_extractor.extract_docx_text(document_path)
         plans = payment_extractor.extract_payment_plans(
             doc_text,
             contract_amount=summary.get('amount'),
             sign_date=summary.get('sign_date') or '',
         )
     except Exception:
-        get_logger().error('Payment text extraction failed for %s', output_path, exc_info=True)
+        get_logger().error('Payment text extraction failed for %s', document_path, exc_info=True)
         plans = []
+    return summary, plans
+
+
+def prepare_ledger_payments(
+    tpl, fields, field_values, document_path, classification=None
+):
+    """Build a ledger summary plus separated payment plans and rules."""
+    summary = infer_contract_summary(tpl, fields, field_values)
+    if classification:
+        summary.update({
+            'project_name': classification.get('project_name') or '',
+            'coverage_start': classification.get('coverage_start'),
+            'coverage_end': classification.get('coverage_end'),
+        })
+    try:
+        blocks = payment_extractor.extract_docx_blocks(document_path)
+        extraction = payment_extractor.extract_payment_items(
+            blocks,
+            contract_amount=summary.get('amount'),
+            sign_date=summary.get('sign_date') or '',
+        )
+        return summary, extraction.plans, extraction.rules
+    except Exception:
+        get_logger().error(
+            'Payment rule extraction failed for %s', document_path, exc_info=True
+        )
+        return summary, [], []
+
+
+def create_ledger_record(
+    tpl, fields, field_values, output_path, classification=None, *, conn=None,
+    document_path=None,
+):
+    """Create one contract and its payment plans in the supplied transaction."""
+    summary, plans, rules = prepare_ledger_payments(
+        tpl, fields, field_values, document_path or output_path, classification
+    )
     # 合同创建与付款计划插入在同一事务中完成
     contract_id, plan_count = ledger_store.create_contract_with_plans(
-        summary, field_values, output_path, plans,
+        summary, field_values, output_path, plans, conn=conn, rules=rules,
     )
     if plan_count:
         get_logger().info('Created contract %d with %d payment plans', contract_id, plan_count)
@@ -342,7 +373,7 @@ def generate_docx_document(tpl_data, fields, field_values, source_docx, output_p
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                 except OSError:
-                    pass
+                    get_logger().warning('无法删除合同生成临时文件: %s', tmp_path, exc_info=True)
     else:
         docx_builder.generate_from_scratch(tpl_data, field_values, output_path)
     return errors, output_path
@@ -366,31 +397,27 @@ def counterparty_batch_keys(fields, submitted_key=''):
                         keys.append(key)
         return list(dict.fromkeys(keys))
 
-    keywords = [
-        '对方单位', '对方名称', '供应商', '供方', '卖方',
-        '乙方单位名称', '乙方名称', '乙方', '对方', '客户名称', 'counterparty',
-    ]
     for field in fields:
         if field.get('field_type') == 'table':
             continue
-        haystack = f'{field.get("label", "")} {field.get("key", "")}'
-        if any(keyword in haystack for keyword in keywords):
-            key = field.get('key')
+        label = str(field.get('label') or '')
+        key = str(field.get('key') or '')
+        if find_scalar_semantic(label, key) == 'counterparty':
             if key:
                 keys.append(key)
     return list(dict.fromkeys(keys))
 
 
 def contract_number_keys(fields):
-    """识别批量生成时需要追加序号的合同编号字段。"""
     keys = []
     for field in fields:
         if field.get('field_type') == 'table':
             continue
-        haystack = f'{field.get("label", "")} {field.get("key", "")}'.lower()
-        if any(keyword in haystack for keyword in ('合同编号', '合同号', 'contract_no')):
-            if field.get('key'):
-                keys.append(field['key'])
+        label = str(field.get('label') or '')
+        key = str(field.get('key') or '')
+        if find_scalar_semantic(label, key) == 'contract_no':
+            if key:
+                keys.append(key)
     return keys
 
 
@@ -435,7 +462,10 @@ def has_payment_content(row):
 
 
 def can_bulk_confirm_payment(plan):
-    if (plan.get('confidence') or 'low') == 'low':
+    parse_status = str(plan.get('parse_status') or '').strip()
+    if parse_status in {'conflict', 'unsupported'}:
+        return False
+    if not parse_status and (plan.get('confidence') or 'low') == 'low':
         return False
     if plan.get('due_amount') is None and plan.get('ratio') is None:
         return False

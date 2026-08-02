@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}谈判预案{% endblock %}
+{% block breadcrumb %}采购前置 / 谈判预案{% endblock %}
+{% block content %}
+<div class="flex flex-col md:flex-row justify-between gap-3 mb-5">
+  <div>
+    <h1 class="text-2xl font-bold">谈判预案</h1>
+    <p class="text-sm text-base-content/50">{{ view['project'].project_no }} / {{ view['project'].project_name }}</p>
+  </div>
+  <div class="flex gap-2">
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=view['project'].id) }}">返回项目</a>
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation', project_id=view['project'].id) }}">谈判记录</a>
+  </div>
+</div>
+
+{% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
+
+<form method="post" class="grid gap-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <section class="apple-section">
+    <div class="apple-section-header">
+      <span class="apple-section-title">基本信息</span>
+      <span class="text-xs text-base-content/50">{{ plan.purchase_method_label }}</span>
+    </div>
+    <div class="apple-section-body grid grid-cols-1 md:grid-cols-2 gap-3">
+      <label class="form-control gap-2 md:col-span-2">
+        <span class="label-text text-xs">标题</span>
+        <input class="input input-bordered input-sm" required name="title" value="{{ plan.title }}">
+      </label>
+      <label class="form-control gap-2 md:col-span-2">
+        <span class="label-text text-xs">生成文件名</span>
+        <input class="input input-bordered input-sm" name="filename" value="{{ plan.filename }}" placeholder="例如：某项目谈判预案.docx">
+      </label>
+      <label class="form-control gap-2 md:col-span-2">
+        <span class="label-text text-xs">采购需求</span>
+        <input class="input input-bordered input-sm" required name="purchase_requirement" value="{{ plan.purchase_requirement }}">
+      </label>
+      <label class="form-control gap-2">
+        <span class="label-text text-xs">编号</span>
+        <input class="input input-bordered input-sm" required name="request_no" value="{{ plan.request_no }}">
+      </label>
+      <label class="form-control gap-2">
+        <span class="label-text text-xs">固定资产</span>
+        <select class="select select-bordered select-sm" name="fixed_asset">
+          {% for value in ['否', '是'] %}
+          <option value="{{ value }}" {% if plan.fixed_asset == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="form-control gap-2 md:col-span-2">
+        <span class="label-text text-xs">项目背景</span>
+        <textarea class="textarea textarea-bordered" rows="4" required name="project_background">{{ plan.project_background }}</textarea>
+      </label>
+    </div>
+  </section>
+
+  <section class="apple-section">
+    <div class="apple-section-header">
+      <span class="apple-section-title">采购标的</span>
+      <span class="text-xs text-base-content/50">{{ view['items']|length }} 项</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="apple-table">
+        <thead><tr><th>#</th><th>产品名称</th><th>图代号</th><th>数量</th><th>单位</th><th>备注</th></tr></thead>
+        <tbody>
+          {% for item in view['items'] %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ item.item_name }}</td>
+            <td>{{ item.drawing_no or item.spec_model or '-' }}</td>
+            <td>{{ item.quantity_text }}</td>
+            <td>{{ item.unit }}</td>
+            <td>{{ item.remark or item.technical_requirement or '-' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" style="text-align:center;padding:28px;color:var(--apple-text3)">请先补录采购明细。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="apple-section">
+    <div class="apple-section-header"><span class="apple-section-title">谈判安排</span></div>
+    <div class="apple-section-body grid grid-cols-1 gap-3">
+      <label class="form-control gap-2">
+        <span class="label-text text-xs">生产周期要求</span>
+        <textarea class="textarea textarea-bordered" rows="2" required name="delivery_requirement">{{ plan.delivery_requirement }}</textarea>
+      </label>
+      <label class="form-control gap-2">
+        <span class="label-text text-xs">目标价格</span>
+        <textarea class="textarea textarea-bordered" rows="3" required name="target_price_note">{{ plan.target_price_note }}</textarea>
+      </label>
+      <label class="form-control gap-2">
+        <span class="label-text text-xs">报价轮次</span>
+        <textarea class="textarea textarea-bordered" rows="2" required name="quote_round_note">{{ plan.quote_round_note }}</textarea>
+      </label>
+      <label class="form-control gap-2">
+        <span class="label-text text-xs">评价方案</span>
+        <textarea class="textarea textarea-bordered" rows="5" required name="evaluation_plan">{{ plan.evaluation_plan }}</textarea>
+      </label>
+    </div>
+  </section>
+
+  <div class="flex justify-end gap-2">
+    <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_negotiation', project_id=view['project'].id) }}">取消</a>
+    <button class="apple-btn apple-btn-primary" type="submit" {% if not view['items'] %}disabled{% endif %}>生成 Word</button>
+  </div>
+</form>
+{% endblock %}

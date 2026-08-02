@@ -2,36 +2,109 @@
 
 import json
 import os
-import shutil
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from contextvars import ContextVar
+from functools import partial
 
-from utils.logger import get_logger
-from utils.security import path_within as _path_within
-from utils.constants import (
-    ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel,
+from database.connection_factory import checkpoint_wal, query_snapshot, transaction
+from database.migration_runner import (
+    MigrationStep,
+    ensure_column,
+    local_now as _now,
+    read_schema_version,
+    run_versioned_migrations,
 )
+from utils.logger import get_logger
+from core.maintenance_gate import maintenance_gate
+from utils.constants import ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel
+from . import backups as backup_ops
 from . import dashboard_queries
+from . import document_paths
+from . import generation_jobs
 from . import list_queries
+from . import money_fields
+from . import payment_reports
 from . import project_reports
-from .schema import LEDGER_SCHEMA_SQL, MIGRATIONS, SCHEMA_VERSION_SQL
+from .contract_lifecycle import ContractLifecycleRepository
+from .contract_items import ContractItemRepository
+from .contract_serials import ContractSerialRepository
+from .contract_updates import ContractUpdateRepository
+from .invoices import InvoiceRepository
+from .payment_plans import PaymentPlanRepository
+from .payment_rules import PaymentRuleRepository
+from .production_notices import ProductionNoticeRepository
+from .schema import CURRENT_SCHEMA_VERSION, DOCUMENT_PATH_MIGRATION_VERSION, FRESH_DATABASE_INDEX_SQL, LEDGER_INDEX_SQL, LEDGER_TABLE_SQL, MIGRATION_BACKFILLS, MIGRATIONS, SCHEMA_VERSION_SQL
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _data_dir():
+    try:
+        from runtime.app_state import app_state
+        if app_state.is_configured():
+            return app_state.data_dir
+    except Exception:
+        get_logger().debug('读取运行时数据目录失败，回退到默认目录', exc_info=True)
+    return os.path.join(BASE_DIR, 'data')
+
+
+def _db_path():
+    try:
+        from runtime.app_state import app_state
+        if app_state.is_configured():
+            return app_state.database_file
+    except Exception:
+        get_logger().debug('读取运行时数据库路径失败，回退到默认路径', exc_info=True)
+    return os.path.join(_data_dir(), 'contracts.db')
+
+
+def _backup_dir():
+    try:
+        from runtime.app_state import app_state
+        if app_state.is_configured():
+            return app_state.backups_dir
+    except Exception:
+        get_logger().debug('读取运行时备份目录失败，回退到默认目录', exc_info=True)
+    return os.path.join(_data_dir(), 'backups')
+
+
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 DB_PATH = os.path.join(DATA_DIR, 'contracts.db')
 BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
 
+_ACTIVE_CONNECTION = ContextVar('ledger_active_connection', default=None)
+
 # 所有允许的状态值（从 Enum 自动导出）
 CONTRACT_STATUSES = {s.value for s in ContractStatus}
+CONTRACT_ORIGINS = {'generated', 'imported'}
 PAYMENT_TYPES = {'conditional', 'fixed_date'}
 CONFIRM_STATUSES = {s.value for s in ConfirmStatus}
 PAYMENT_STATUSES = {s.value for s in PaymentStatus}
 CONFIDENCE_LEVELS = {c.value for c in ConfidenceLevel}
 
+# 可更新的合同字段
+CONTRACT_UPDATE_FIELDS = [
+    'contract_no', 'title', 'counterparty', 'amount', 'sign_date',
+    'expiry_date', 'owner', 'status', 'project_name',
+    'coverage_start', 'coverage_end',
+]
 
-def _now():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+# 可更新的付款计划字段
+PLAN_UPDATE_FIELDS = [
+    'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
+    'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
+    'paid_amount', 'paid_date', 'condition_text', 'source_text',
+    'confidence', 'confirm_status', 'payment_status', 'remark',
+    'contract_serial_id',
+]
+
+# 付款计划字段对应的校验器
+PLAN_FIELD_VALIDATORS = {
+    'payment_type': (PAYMENT_TYPES, '付款类型'),
+    'confidence': (CONFIDENCE_LEVELS, '置信度'),
+    'confirm_status': (CONFIRM_STATUSES, '确认状态'),
+    'payment_status': (PAYMENT_STATUSES, '付款状态'),
+}
 
 
 def _validate_choice(value, allowed, label):
@@ -42,32 +115,98 @@ def _validate_choice(value, allowed, label):
     return value
 
 
+def _runtime_base_dir():
+    return document_paths.runtime_base_dir(DATA_DIR, DB_PATH)
+
+
+def portable_docx_path(path):
+    """Return a runtime-relative path when the document belongs to this install."""
+    return document_paths.to_portable(path, _runtime_base_dir())
+
+
+def resolve_docx_path(path):
+    """Resolve stored relative paths and rebase legacy absolute output paths."""
+    return document_paths.resolve(path, _runtime_base_dir())
+
+
+def create_generation_job(job_id, output_path, staging_path):
+    return generation_jobs.create(
+        get_conn, portable_docx_path, job_id, output_path, staging_path
+    )
+
+
+def update_generation_job(job_id, state, **kwargs):
+    return generation_jobs.update(get_conn, job_id, state, **kwargs)
+
+
+def get_generation_job(job_id):
+    return generation_jobs.get(get_conn, job_id)
+
+
+def list_unfinished_generation_jobs():
+    return generation_jobs.list_unfinished(get_conn)
+
+
+def get_generation_job_state_counts():
+    return generation_jobs.state_counts(get_conn)
+
+
+def prune_generation_job_history(updated_before):
+    return generation_jobs.prune_history(get_conn, updated_before)
+
+
+_amount_pair = money_fields.amount_pair
+
+
+def _normalize_docx_paths_in_db(conn):
+    return document_paths.normalize_contract_paths(conn, _runtime_base_dir())
+
+
 @contextmanager
 def get_conn():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute('PRAGMA foreign_keys = ON')
-    conn.row_factory = sqlite3.Row
-    try:
+    active = _ACTIVE_CONNECTION.get()
+    with transaction(DB_PATH, directory=DATA_DIR, existing=active) as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def init_db():
+    fresh_database = not os.path.isfile(DB_PATH) or os.path.getsize(DB_PATH) == 0
     with get_conn() as conn:
-        conn.executescript(LEDGER_SCHEMA_SQL)
+        conn.executescript(LEDGER_TABLE_SQL)
+        _ensure_legacy_contract_columns(conn)
+        conn.executescript(LEDGER_INDEX_SQL)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute(SCHEMA_VERSION_SQL)
-    # 确保迁移在 init 后立即执行
+        if fresh_database:
+            conn.executescript(FRESH_DATABASE_INDEX_SQL)
+            conn.execute(
+                'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
+                (CURRENT_SCHEMA_VERSION, _now()),
+            )
+            return
+    # Existing databases are upgraded only after the compatibility columns and
+    # base indexes required by the migration runner are available.
     run_migrations()
 
 
 # ── Migrations ──
+
+LEGACY_CONTRACT_COLUMNS = {
+    'deleted_at': "TEXT DEFAULT ''",
+    'expiry_date': "TEXT DEFAULT ''",
+    'project_name': "TEXT DEFAULT ''",
+    'coverage_start': 'INTEGER',
+    'coverage_end': 'INTEGER',
+    'record_origin': "TEXT NOT NULL DEFAULT 'generated' CHECK(record_origin IN ('generated','imported'))",
+    'original_filename': "TEXT DEFAULT ''",
+    'source_sha256': "TEXT DEFAULT ''",
+}
+
+
+def _ensure_legacy_contract_columns(conn):
+    """Repair pre-migration contract tables before indexes are created."""
+    for column, definition in LEGACY_CONTRACT_COLUMNS.items():
+        ensure_column(conn, 'contracts', column, definition)
 
 def _deduplicate_contract_numbers(conn):
     """迁移唯一索引前，为历史重复编号生成可追溯的新编号。"""
@@ -109,51 +248,94 @@ def _deduplicate_contract_numbers(conn):
             )
 
 
-def run_migrations():
-    # 先读取当前版本（只读，不需要事务保护）
-    with get_conn() as conn:
-        cur = conn.execute('SELECT MAX(version) FROM schema_version')
-        row = cur.fetchone()
-        current = row[0] if row and row[0] is not None else 0
+def get_schema_version():
+    """Return the installed ledger schema version without changing the database."""
+    return read_schema_version(DB_PATH, 'schema_version')
 
-    # 每个迁移版本使用独立事务，避免后续版本失败时回滚已成功的迁移
-    for version, forward_sql, rollback_sql in MIGRATIONS:
-        if version <= current:
-            continue
-        with get_conn() as conn:
-            try:
-                if version == 8:
-                    _deduplicate_contract_numbers(conn)
-                conn.execute(forward_sql)
-            except sqlite3.OperationalError as e:
-                # 新 init_db 已在 CREATE TABLE 中包含该列，跳过重复添加
-                if 'duplicate column name' in str(e).lower() or 'already exists' in str(e).lower():
-                    get_logger().info('迁移 v%d 列已存在（来自 init_db），跳过', version)
-                else:
-                    raise
-            except Exception as e:
-                get_logger().error('数据库迁移 v%d 失败: %s', version, e)
-                if rollback_sql:
-                    try:
-                        conn.execute(rollback_sql)
-                        get_logger().warning('已回滚迁移 v%d', version)
-                    except Exception as rb_e:
-                        get_logger().error('回滚迁移 v%d 失败: %s', version, rb_e)
-                raise
-            conn.execute(
-                'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
-                (version, _now()),
-            )
+
+@contextmanager
+def read_snapshot():
+    """Reuse one query-only SQLite snapshot across nested store calls."""
+    active = _ACTIVE_CONNECTION.get()
+    with query_snapshot(DB_PATH, directory=DATA_DIR, existing=active) as conn:
+        if active is not None:
+            yield conn
+            return
+        token = _ACTIVE_CONNECTION.set(conn)
+        try:
+            yield conn
+        finally:
+            _ACTIVE_CONNECTION.reset(token)
+
+
+def needs_migration():
+    return get_schema_version() < CURRENT_SCHEMA_VERSION
+
+
+def run_migrations():
+    steps = [
+        MigrationStep(
+            version,
+            partial(
+                _apply_ledger_migration,
+                version=version,
+                forward_sql=forward_sql,
+            ),
+        )
+        for version, forward_sql, _rollback_sql in MIGRATIONS
+    ]
+    run_versioned_migrations(
+        get_conn,
+        current_version=get_schema_version(),
+        steps=steps,
+        namespace='ledger',
+        record_version=_record_ledger_version,
+        on_error=lambda version, exc: get_logger().error(
+            '数据库迁移 v%d 失败: %s', version, exc
+        ),
+    )
+
+
+def _apply_ledger_migration(conn, *, version, forward_sql):
+    if version == 8:
+        _deduplicate_contract_numbers(conn)
+    if version == 17:
+        import_columns = {
+            'record_origin': (
+                "TEXT NOT NULL DEFAULT 'generated' "
+                "CHECK(record_origin IN ('generated','imported'))"
+            ),
+            'original_filename': "TEXT DEFAULT ''",
+            'source_sha256': "TEXT DEFAULT ''",
+        }
+        for column, definition in import_columns.items():
+            ensure_column(conn, 'contracts', column, definition)
+    try:
+        conn.execute(forward_sql)
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        if 'duplicate column name' in message or 'already exists' in message:
+            get_logger().info('迁移 v%d 列已存在（来自 init_db），跳过', version)
+        else:
+            raise
+    backfill_sql = MIGRATION_BACKFILLS.get(version)
+    if backfill_sql:
+        conn.execute(backfill_sql)
+    if version == DOCUMENT_PATH_MIGRATION_VERSION:
+        _normalize_docx_paths_in_db(conn)
+
+
+def _record_ledger_version(conn, version):
+    conn.execute(
+        'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
+        (version, _now()),
+    )
 
 
 def close_connections():
     """Checkpoint WAL to prevent data loss on unclean shutdown."""
-    if not os.path.isfile(DB_PATH):
-        return
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        conn.close()
+        checkpoint_wal(DB_PATH)
     except Exception:
         get_logger().warning('WAL checkpoint 失败', exc_info=True)
 
@@ -161,170 +343,105 @@ def close_connections():
 # ── Backup ──
 
 def get_all_docx_paths():
-    """获取所有合同的 docx_path 列表（轻量查询，仅返回路径字段）。
-    用于文件清理时保护台账引用的文件不被删除。
-    """
-    if not os.path.isfile(DB_PATH):
-        return []
-    try:
-        with get_conn() as conn:
-            rows = conn.execute(
-                'SELECT docx_path FROM contracts WHERE docx_path IS NOT NULL AND docx_path != \'\''
-            ).fetchall()
-        return [row[0] for row in rows]
-    except Exception:
-        get_logger().warning('无法查询合同 docx 路径', exc_info=True)
-        return []
+    return [
+        resolve_docx_path(path)
+        for path in backup_ops.get_all_docx_paths(get_conn, DB_PATH)
+    ]
 
 
 def _check_db_integrity(quick=True):
-    """数据库完整性检查。quick=True 使用 quick_check（快速），False 使用 integrity_check（彻底）。"""
-    if not os.path.isfile(DB_PATH):
-        return False
-    pragma = 'PRAGMA quick_check' if quick else 'PRAGMA integrity_check'
-    try:
-        with get_conn() as conn:
-            row = conn.execute(pragma).fetchone()
-            return row is not None and row[0] == 'ok'
-    except Exception:
-        return False
+    return backup_ops.check_db_integrity(get_conn, DB_PATH, quick=quick)
 
 
 def backup_database(max_backups=7):
-    """使用 SQLite backup API 原子备份数据库到 backups/ 目录。
-
-    保留最近 N 份不同日期的备份。同一天只保留一份。
-    备份前执行 integrity_check（更彻底），修复时用 restore 的 quick_check 做快速校验。
-    """
-    if not os.path.exists(DB_PATH):
-        return None
-    if not _check_db_integrity(quick=False):
-        get_logger().warning('数据库完整性检查失败，跳过备份')
-        return None
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    today = date.today().strftime('%Y-%m-%d')
-    backup_path = os.path.join(BACKUP_DIR, f'contracts_{today}.db')
-    if not os.path.exists(backup_path):
-        # 使用 SQLite online backup API（原子、一致、不阻塞写入）
-        src = sqlite3.connect(DB_PATH)
-        try:
-            src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-            dst = sqlite3.connect(backup_path)
-            try:
-                src.backup(dst)
-            finally:
-                dst.close()
-        except Exception:
-            get_logger().warning('SQLite backup API 失败，回退到文件复制', exc_info=True)
-            # 回退：必须在 backup API 失败时仍尝试复制
-            try:
-                shutil.copy2(DB_PATH, backup_path)
-            except Exception:
-                get_logger().error('数据库备份完全失败', exc_info=True)
-                return None
-        finally:
-            src.close()
-    backups = sorted(
-        [f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')],
-        reverse=True,
-    )
-    for old in backups[max_backups:]:
-        os.remove(os.path.join(BACKUP_DIR, old))
-    return backup_path
+    return backup_ops.backup_database(get_conn, DB_PATH, BACKUP_DIR, max_backups=max_backups)
 
 
 def list_backups():
-    """List database backups newest first."""
-    if not os.path.isdir(BACKUP_DIR):
-        return []
-    rows = []
-    for fname in os.listdir(BACKUP_DIR):
-        if not fname.endswith('.db'):
-            continue
-        path = os.path.abspath(os.path.join(BACKUP_DIR, fname))
-        if not _path_within(BACKUP_DIR, path):
-            continue
-        stat = os.stat(path)
-        rows.append({
-            'filename': fname,
-            'path': path,
-            'size': stat.st_size,
-            'mtime': stat.st_mtime,
-            'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-        })
-    rows.sort(key=lambda item: (item['mtime'], item['filename']), reverse=True)
-    return rows
+    return backup_ops.list_backups(BACKUP_DIR)
 
 
 def create_backup(label='manual'):
-    """Create a timestamped database backup using SQLite backup API (atomic)."""
-    if not os.path.exists(DB_PATH):
-        raise FileNotFoundError('数据库文件不存在')
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    safe_label = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in str(label or 'manual'))[:32]
-    stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    backup_path = os.path.abspath(os.path.join(BACKUP_DIR, f'contracts_{stamp}_{safe_label}.db'))
-    if not _path_within(BACKUP_DIR, backup_path):
-        raise ValueError('备份路径无效')
-    # 使用 SQLite backup API（原子、一致、不阻塞写入）
-    src = sqlite3.connect(DB_PATH)
-    try:
-        src.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        dst = sqlite3.connect(backup_path)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    except Exception:
-        get_logger().warning('SQLite backup API 失败，回退到文件复制', exc_info=True)
-        try:
-            shutil.copy2(DB_PATH, backup_path)
-        except Exception:
-            get_logger().error('数据库手动备份完全失败', exc_info=True)
-            raise
-    finally:
-        src.close()
-    return {
-        'filename': os.path.basename(backup_path),
-        'path': backup_path,
-        'size': os.path.getsize(backup_path),
-    }
+    return backup_ops.create_backup(DB_PATH, BACKUP_DIR, label=label)
 
 
 def backup_path(filename):
-    name = os.path.basename(filename or '')
-    if not name.endswith('.db'):
-        raise FileNotFoundError('备份文件不存在')
-    path = os.path.abspath(os.path.join(BACKUP_DIR, name))
-    if not _path_within(BACKUP_DIR, path) or not os.path.isfile(path):
-        raise FileNotFoundError('备份文件不存在')
-    return path
+    return backup_ops.backup_path(BACKUP_DIR, filename)
 
 
 def restore_backup(filename):
-    """Restore a database backup. The current DB is backed up before replacement.
-    Validates the source file before overwriting."""
-    src = backup_path(filename)
-    src_conn = None
-    try:
-        src_conn = sqlite3.connect(src)
-        row = src_conn.execute('PRAGMA quick_check').fetchone()
-        if row is None or row[0] != 'ok':
-            raise ValueError(f'备份文件校验失败: {row[0] if row else "无法读取"}')
-    except sqlite3.DatabaseError as e:
-        raise ValueError(f'备份文件不是有效的 SQLite 数据库: {e}')
-    finally:
-        if src_conn:
-            src_conn.close()
-    if os.path.exists(DB_PATH):
-        create_backup('before_restore')
-    os.makedirs(DATA_DIR, exist_ok=True)
-    shutil.copy2(src, DB_PATH)
-    return DB_PATH
+    import procurement_store
+
+    with maintenance_gate.exclusive():
+        close_connections()
+        restored, rollback = backup_ops.restore_backup(
+            DB_PATH, DATA_DIR, BACKUP_DIR, filename, create_backup
+        )
+        try:
+            init_db()
+            procurement_store.init_db()
+        except Exception:
+            get_logger().error('数据库恢复后初始化失败，正在自动回滚', exc_info=True)
+            if rollback and rollback.get('path'):
+                close_connections()
+                backup_ops.replace_database(DB_PATH, DATA_DIR, rollback['path'])
+                init_db()
+                procurement_store.init_db()
+            raise
+        return restored
 
 
 def row_to_dict(row):
-    return dict(row) if row is not None else None
+    result = money_fields.with_public_amounts(row)
+    if result is None:
+        return None
+    if 'docx_path' in result:
+        result['docx_path'] = resolve_docx_path(result.get('docx_path'))
+    return result
+
+
+_PAYMENT_PLANS = PaymentPlanRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+    validate_choice=_validate_choice,
+    payment_types=PAYMENT_TYPES,
+    confidence_levels=CONFIDENCE_LEVELS,
+    confirm_statuses=CONFIRM_STATUSES,
+    payment_statuses=PAYMENT_STATUSES,
+    update_fields=PLAN_UPDATE_FIELDS,
+    field_validators=PLAN_FIELD_VALIDATORS,
+)
+
+_PAYMENT_RULES = PaymentRuleRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+    validate_choice=_validate_choice,
+)
+
+_CONTRACT_SERIALS = ContractSerialRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+)
+_CONTRACT_UPDATES = ContractUpdateRepository(
+    get_conn=get_conn,
+    row_to_dict=row_to_dict,
+    now=_now,
+    amount_pair=_amount_pair,
+    validate_choice=_validate_choice,
+    contract_statuses=CONTRACT_STATUSES,
+    update_fields=CONTRACT_UPDATE_FIELDS,
+    contract_serials=_CONTRACT_SERIALS,
+)
+_CONTRACT_ITEMS = ContractItemRepository(get_conn=get_conn, now=_now)
+_PRODUCTION_NOTICES = ProductionNoticeRepository(
+    get_conn=get_conn,
+    now=_now,
+    payment_rules=_PAYMENT_RULES,
+)
+_INVOICES = InvoiceRepository(get_conn=get_conn, now=_now)
 
 
 def create_contract(summary, field_values, docx_path):
@@ -337,109 +454,133 @@ def create_contract(summary, field_values, docx_path):
     return contract_id
 
 
-def create_contract_with_plans(summary, field_values, docx_path, plans):
+def _create_contract_with_plans_impl(
+    conn, summary, field_values, docx_path, plans, rules=None
+):
+    now = _now()
+    status = _validate_choice(summary.get('status') or 'draft', CONTRACT_STATUSES, '合同状态')
+    record_origin = _validate_choice(
+        summary.get('record_origin') or 'generated', CONTRACT_ORIGINS, '合同来源'
+    )
+    values_json = json.dumps(field_values or {}, ensure_ascii=False, default=str)
+    amount_minor, amount = _amount_pair(summary.get('amount'))
+    stored_docx_path = portable_docx_path(docx_path)
+    cur = conn.execute(
+        """
+        INSERT INTO contracts (
+            contract_no, title, counterparty, amount, amount_minor, sign_date, owner,
+            status, template_name, docx_path, values_json, record_origin,
+            original_filename, source_sha256, expiry_date, project_name,
+            coverage_start, coverage_end, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            summary.get('contract_no'),
+            summary.get('title') or '未命名合同',
+            summary.get('counterparty'),
+            amount,
+            amount_minor,
+            summary.get('sign_date'),
+            summary.get('owner'),
+            status,
+            summary.get('template_name'),
+            stored_docx_path,
+            values_json,
+            record_origin,
+            summary.get('original_filename') or '',
+            summary.get('source_sha256') or '',
+            summary.get('expiry_date') or '',
+            summary.get('project_name') or '',
+            summary.get('coverage_start'),
+            summary.get('coverage_end'),
+            now,
+            now,
+        ),
+    )
+    contract_id = cur.lastrowid
+    if summary.get('coverage_start') is not None and summary.get('coverage_end') is not None:
+        _CONTRACT_SERIALS.sync_range(contract_id, connection=conn)
+    rule_ids = _PAYMENT_RULES.insert_many_impl(conn, contract_id, rules or [])
+    for plan in plans or []:
+        stored_plan = dict(plan)
+        fingerprint = str(stored_plan.get('rule_fingerprint') or '')
+        if fingerprint and rule_ids.get(fingerprint):
+            stored_plan['payment_rule_id'] = rule_ids[fingerprint]
+        _insert_payment_plan_impl(conn, contract_id, stored_plan)
+    return contract_id, len(plans or [])
+
+
+def create_contract_with_plans(
+    summary, field_values, docx_path, plans, conn=None, *, rules=None
+):
     """在单个事务中创建合同并批量插入付款计划，保证原子性。
 
     返回 (contract_id, plan_count)。
     """
-    now = _now()
-    status = _validate_choice(summary.get('status') or 'draft', CONTRACT_STATUSES, '合同状态')
-    values_json = json.dumps(field_values or {}, ensure_ascii=False, default=str)
     try:
-        with get_conn() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO contracts (
-                    contract_no, title, counterparty, amount, sign_date, owner,
-                    status, template_name, docx_path, values_json, expiry_date,
-                    project_name, coverage_start, coverage_end, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    summary.get('contract_no'),
-                    summary.get('title') or '未命名合同',
-                    summary.get('counterparty'),
-                    summary.get('amount'),
-                    summary.get('sign_date'),
-                    summary.get('owner'),
-                    status,
-                    summary.get('template_name'),
-                    docx_path,
-                    values_json,
-                    summary.get('expiry_date') or '',
-                    summary.get('project_name') or '',
-                    summary.get('coverage_start'),
-                    summary.get('coverage_end'),
-                    now,
-                    now,
-                ),
+        if conn is not None:
+            return _create_contract_with_plans_impl(
+                conn, summary, field_values, docx_path, plans, rules
             )
-            contract_id = cur.lastrowid
-            plan_count = 0
-            if plans:
-                for plan in plans:
-                    _insert_payment_plan_impl(conn, contract_id, plan)
-                    plan_count += 1
-            return contract_id, plan_count
+        with get_conn() as managed_conn:
+            return _create_contract_with_plans_impl(
+                managed_conn, summary, field_values, docx_path, plans, rules
+            )
     except sqlite3.IntegrityError as e:
         if 'contract_no' in str(e).lower() or 'idx_contracts_contract_no_unique' in str(e).lower():
             raise ValueError('合同编号已存在') from e
+        if 'source_sha256' in str(e).lower() or 'idx_contracts_import_sha256_unique' in str(e).lower():
+            raise ValueError('该合同文件已导入') from e
         raise
 
 
-def update_contract(contract_id, data):
-    allowed = [
-        'contract_no', 'title', 'counterparty', 'amount', 'sign_date',
-        'expiry_date', 'owner', 'status', 'project_name',
-        'coverage_start', 'coverage_end',
-    ]
-    assignments = []
-    values = []
-    for key in allowed:
-        if key in data:
-            if key == 'status':
-                data[key] = _validate_choice(data[key], CONTRACT_STATUSES, '合同状态')
-            assignments.append(f'{key} = ?')
-            values.append(data[key])
-    if not assignments:
-        return
-    now = _now()
-    assignments.append('updated_at = ?')
-    values.append(now)
-    values.append(contract_id)
-    try:
-        with get_conn() as conn:
-            # 在同一事务中读取旧值并执行更新，避免 TOCTOU 竞态
-            old_row = conn.execute(
-                'SELECT * FROM contracts WHERE id = ?', (contract_id,)
-            ).fetchone()
-            old_contract = row_to_dict(old_row)
-            conn.execute(
-                f"UPDATE contracts SET {', '.join(assignments)} WHERE id = ?",
-                values,
-            )
-            if old_contract:
-                for key in allowed:
-                    if key not in data:
-                        continue
-                    old_val = str(old_contract.get(key) or '')
-                    new_val = str(data[key] or '')
-                    if old_val != new_val:
-                        conn.execute(
-                            """INSERT INTO contract_history
-                               (contract_id, field, old_value, new_value, changed_at)
-                               VALUES (?, ?, ?, ?, ?)""",
-                            (contract_id, key, old_val, new_val, now),
-                        )
-    except sqlite3.IntegrityError as e:
-        if 'contract_no' in str(e).lower() or 'idx_contracts_contract_no_unique' in str(e).lower():
-            raise ValueError('合同编号已存在') from e
-        raise
+update_contract = _CONTRACT_UPDATES.update
 
 
 def get_contract(contract_id):
     with get_conn() as conn:
         row = conn.execute('SELECT * FROM contracts WHERE id = ?', (contract_id,)).fetchone()
+    return row_to_dict(row)
+
+
+def contract_no_exists(contract_no, exclude_id=None):
+    """Return whether a non-empty contract number is already used."""
+    contract_no = str(contract_no or '').strip()
+    if not contract_no:
+        return False
+    sql = "SELECT 1 FROM contracts WHERE contract_no = ?"
+    params = [contract_no]
+    if exclude_id is not None:
+        sql += ' AND id != ?'
+        params.append(int(exclude_id))
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchone() is not None
+
+
+def get_contract_by_contract_no(contract_no):
+    """Return the contract using an exact non-empty business number."""
+    contract_no = str(contract_no or '').strip()
+    if not contract_no:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM contracts WHERE contract_no = ? LIMIT 1',
+            (contract_no,),
+        ).fetchone()
+    return row_to_dict(row)
+
+
+def get_contract_by_source_sha256(source_sha256):
+    """Return an imported contract with the exact source bytes, including trash."""
+    digest = str(source_sha256 or '').strip().lower()
+    if not digest:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM contracts WHERE record_origin = 'imported' "
+            "AND LOWER(source_sha256) = ? LIMIT 1",
+            (digest,),
+        ).fetchone()
     return row_to_dict(row)
 
 
@@ -452,6 +593,14 @@ def list_contracts(q='', status='', page=1, per_page=20, include_deleted=False, 
     """
     return list_queries.list_contracts(
         get_conn, row_to_dict, q, status, page, per_page,
+        include_deleted=include_deleted, deleted_only=deleted_only,
+    )
+
+
+def iter_contracts(q='', status='', batch_size=500, include_deleted=False,
+                   deleted_only=False):
+    return list_queries.iter_contracts(
+        get_conn, row_to_dict, q=q, status=status, batch_size=batch_size,
         include_deleted=include_deleted, deleted_only=deleted_only,
     )
 
@@ -480,232 +629,71 @@ def get_project_progress_stats():
     return project_reports.get_project_progress_stats(get_conn, row_to_dict)
 
 
-def insert_payment_plan(contract_id, plan):
-    """插入单条付款计划（公开接口，使用独立事务）"""
-    with get_conn() as conn:
-        return _insert_payment_plan_impl(conn, contract_id, plan)
+insert_payment_plan = _PAYMENT_PLANS.insert
+insert_payment_plans = _PAYMENT_PLANS.insert_many
+_insert_payment_plan_impl = _PAYMENT_PLANS.insert_impl
+_normalize_payment_consistency = _PAYMENT_PLANS.normalize_consistency
+_append_plan_assignment = _PAYMENT_PLANS.append_assignment
+save_payment_plan_changes = _PAYMENT_PLANS.save_changes
+list_payment_plans = _PAYMENT_PLANS.list
+get_payment_plan = _PAYMENT_PLANS.get
+update_payment_plan = _PAYMENT_PLANS.update
+batch_confirm_plans = _PAYMENT_PLANS.batch_confirm
+batch_mark_plans_paid = _PAYMENT_PLANS.batch_mark_paid
+delete_payment_plan = _PAYMENT_PLANS.delete
+
+insert_payment_rules = _PAYMENT_RULES.insert_many
+list_payment_rules = _PAYMENT_RULES.list
+get_payment_rule = _PAYMENT_RULES.get
+set_payment_rule_confirm_status = _PAYMENT_RULES.set_confirm_status
+update_payment_rule_manual = _PAYMENT_RULES.update_manual
 
 
-def insert_payment_plans(contract_id, plans):
-    """批量插入付款计划 —— 在单个事务内完成，保证原子性。"""
-    if not plans:
-        return []
-    with get_conn() as conn:
-        ids = []
-        for plan in plans:
-            ids.append(_insert_payment_plan_impl(conn, contract_id, plan))
-        return ids
+create_payment_rule_event_instance = _PAYMENT_RULES.create_event_instance
 
 
-def _insert_payment_plan_impl(conn, contract_id, plan):
-    """在已有连接中插入单条付款计划（由 insert_payment_plans 调用）"""
-    plan = _normalize_payment_consistency(plan)
-    now = _now()
-    payment_type = _validate_choice(plan.get('payment_type') or 'conditional', PAYMENT_TYPES, '付款类型')
-    confidence = _validate_choice(plan.get('confidence') or 'low', CONFIDENCE_LEVELS, '置信度')
-    confirm_status = _validate_choice(plan.get('confirm_status') or 'pending', CONFIRM_STATUSES, '确认状态')
-    payment_status = _validate_choice(plan.get('payment_status') or 'unpaid', PAYMENT_STATUSES, '付款状态')
-    cur = conn.execute(
-        """
-        INSERT INTO payment_plans (
-            contract_id, phase_name, payment_type, trigger_event, trigger_days,
-            expected_trigger_date, due_date, ratio, due_amount, paid_amount,
-            paid_date, condition_text, source_text, confidence, confirm_status,
-            payment_status, remark, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            contract_id,
-            plan.get('phase_name'),
-            payment_type,
-            plan.get('trigger_event'),
-            plan.get('trigger_days'),
-            plan.get('expected_trigger_date'),
-            plan.get('due_date'),
-            plan.get('ratio'),
-            plan.get('due_amount'),
-            plan.get('paid_amount') or 0,
-            plan.get('paid_date'),
-            plan.get('condition_text'),
-            plan.get('source_text'),
-            confidence,
-            confirm_status,
-            payment_status,
-            plan.get('remark'),
-            now,
-            now,
-        ),
-    )
-    return cur.lastrowid
+list_payment_trigger_events = _PAYMENT_RULES.list_events
+list_contract_serials = _CONTRACT_SERIALS.list
+get_contract_serial = _CONTRACT_SERIALS.get
+sync_contract_serial_range = _CONTRACT_SERIALS.sync_range
+save_contract_serial_amounts = _CONTRACT_SERIALS.save_amounts
+set_contract_serial_bulk_amount = _CONTRACT_SERIALS.set_bulk_amount
+list_contract_items = _CONTRACT_ITEMS.list
+get_contract_item = _CONTRACT_ITEMS.get
+save_contract_items = _CONTRACT_ITEMS.save
+list_contract_item_history = _CONTRACT_ITEMS.history
 
 
-def _normalize_payment_consistency(plan):
-    """校验金额/日期关系，并由金额统一推导付款状态。"""
-    row = dict(plan)
-    due_amount = row.get('due_amount')
-    paid_amount = row.get('paid_amount') or 0
-    if due_amount is not None and due_amount < 0:
-        raise ValueError('应付金额不能为负数')
-    if paid_amount < 0:
-        raise ValueError('已付金额不能为负数')
-    if due_amount is not None and paid_amount > due_amount:
-        raise ValueError('已付金额不能大于应付金额')
-    if paid_amount > 0 and not str(row.get('paid_date') or '').strip():
-        raise ValueError('填写已付金额后必须填写实付日期')
-
-    if paid_amount <= 0:
-        row['payment_status'] = 'unpaid'
-        row['paid_date'] = ''
-    elif due_amount is not None and paid_amount >= due_amount:
-        row['payment_status'] = 'paid'
-    else:
-        row['payment_status'] = 'partial'
-    return row
-
-
-def save_payment_plan_changes(contract_id, changes):
-    """在一个事务中保存付款计划的新增、修改和删除。"""
-    with get_conn() as conn:
-        contract = conn.execute('SELECT id FROM contracts WHERE id = ?', (contract_id,)).fetchone()
-        if not contract:
-            raise ValueError('合同记录不存在')
-
-        for change in changes:
-            plan_id = change.get('id')
-            if change.get('delete'):
-                if plan_id:
-                    cur = conn.execute(
-                        'DELETE FROM payment_plans WHERE id = ? AND contract_id = ?',
-                        (plan_id, contract_id),
-                    )
-                    if cur.rowcount == 0:
-                        raise ValueError('付款计划不存在或不属于当前合同')
-                continue
-
-            row = _normalize_payment_consistency(change.get('data') or {})
-            if plan_id:
-                allowed = [
-                    'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
-                    'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
-                    'paid_amount', 'paid_date', 'condition_text', 'source_text',
-                    'confidence', 'confirm_status', 'payment_status', 'remark',
-                ]
-                validators = {
-                    'payment_type': (PAYMENT_TYPES, '付款类型'),
-                    'confidence': (CONFIDENCE_LEVELS, '置信度'),
-                    'confirm_status': (CONFIRM_STATUSES, '确认状态'),
-                    'payment_status': (PAYMENT_STATUSES, '付款状态'),
-                }
-                assignments = []
-                values = []
-                for key in allowed:
-                    if key not in row:
-                        continue
-                    if key in validators:
-                        row[key] = _validate_choice(row[key], *validators[key])
-                    assignments.append(f'{key} = ?')
-                    values.append(row[key])
-                assignments.append('updated_at = ?')
-                values.extend([_now(), plan_id, contract_id])
-                cur = conn.execute(
-                    f"UPDATE payment_plans SET {', '.join(assignments)} "
-                    "WHERE id = ? AND contract_id = ?",
-                    values,
-                )
-                if cur.rowcount == 0:
-                    raise ValueError('付款计划不存在或不属于当前合同')
-            else:
-                _insert_payment_plan_impl(conn, contract_id, row)
-
-
-def list_payment_plans(contract_id=None, confirm_status='', payment_status='',
-                       start_date='', end_date='', project_name='', page=0,
-                       per_page=20):
-    return list_queries.list_payment_plans(
-        get_conn, row_to_dict, contract_id=contract_id,
-        confirm_status=confirm_status, payment_status=payment_status,
-        start_date=start_date, end_date=end_date, project_name=project_name,
-        page=page, per_page=per_page,
+def sync_contract_items_from_procurement(contract_id, *, conn=None, strict=True):
+    return _CONTRACT_ITEMS.sync_from_procurement(
+        contract_id, connection=conn, strict=strict
     )
 
 
-def update_payment_plan(plan_id, data, contract_id=None):
-    allowed = [
-        'phase_name', 'payment_type', 'trigger_event', 'trigger_days',
-        'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
-        'paid_amount', 'paid_date', 'condition_text', 'source_text',
-        'confidence', 'confirm_status', 'payment_status', 'remark',
-    ]
-    validators = {
-        'payment_type': (PAYMENT_TYPES, '付款类型'),
-        'confidence': (CONFIDENCE_LEVELS, '置信度'),
-        'confirm_status': (CONFIRM_STATUSES, '确认状态'),
-        'payment_status': (PAYMENT_STATUSES, '付款状态'),
-    }
-    if not any(key in data for key in allowed):
-        return
-    with get_conn() as conn:
-        where = 'id = ?'
-        lookup_values = [plan_id]
-        if contract_id is not None:
-            where += ' AND contract_id = ?'
-            lookup_values.append(contract_id)
-        existing = conn.execute(
-            f'SELECT * FROM payment_plans WHERE {where}', lookup_values
-        ).fetchone()
-        if not existing:
-            return 0
-        merged = dict(existing)
-        merged.update({key: data[key] for key in allowed if key in data})
-        merged = _normalize_payment_consistency(merged)
-        assignments = []
-        values = []
-        for key in allowed:
-            if key not in data and key not in {'payment_status', 'paid_date'}:
-                continue
-            if key in validators:
-                merged[key] = _validate_choice(merged[key], *validators[key])
-            assignments.append(f'{key} = ?')
-            values.append(merged[key])
-        assignments.append('updated_at = ?')
-        values.append(_now())
-        values.extend(lookup_values)
-        cur = conn.execute(
-            f"UPDATE payment_plans SET {', '.join(assignments)} WHERE {where}",
-            values,
-        )
-        return cur.rowcount
+def build_monthly_payment_report(report_month):
+    return payment_reports.build_monthly_payment_report(
+        get_conn, row_to_dict, report_month
+    )
 
 
-def batch_confirm_plans(plan_ids, contract_id=None):
-    """在单个事务中批量确认付款计划，保证原子性。"""
-    if not plan_ids:
-        return 0
-    now = _now()
-    with get_conn() as conn:
-        count = 0
-        for plan_id in plan_ids:
-            where = 'id = ? AND confirm_status = ?'
-            params = [plan_id, 'pending']
-            if contract_id is not None:
-                where += ' AND contract_id = ?'
-                params.append(contract_id)
-            cur = conn.execute(
-                f"UPDATE payment_plans SET confirm_status = 'confirmed', updated_at = ? WHERE {where}",
-                [now] + params,
-            )
-            count += cur.rowcount
-        return count
+list_production_notices = _PRODUCTION_NOTICES.list
+summarize_production_notices = _PRODUCTION_NOTICES.summary
+get_production_notice = _PRODUCTION_NOTICES.get
+create_production_notice = _PRODUCTION_NOTICES.create
+save_production_notice_draft = _PRODUCTION_NOTICES.save_draft
+issue_production_notice = _PRODUCTION_NOTICES.issue
+acknowledge_production_notice = _PRODUCTION_NOTICES.acknowledge
+close_production_notice = _PRODUCTION_NOTICES.close
+cancel_production_notice = _PRODUCTION_NOTICES.cancel
+revise_production_notice = _PRODUCTION_NOTICES.revise
 
-
-def delete_payment_plan(plan_id, contract_id=None):
-    sql = 'DELETE FROM payment_plans WHERE id = ?'
-    params = [plan_id]
-    if contract_id is not None:
-        sql += ' AND contract_id = ?'
-        params.append(contract_id)
-    with get_conn() as conn:
-        conn.execute(sql, params)
+list_invoices = _INVOICES.list
+summarize_invoices = _INVOICES.summary
+get_invoice = _INVOICES.get
+save_invoice = _INVOICES.save
+add_invoice_file = _INVOICES.add_file
+get_invoice_file = _INVOICES.get_file
+delete_invoice_file = _INVOICES.delete_file
 
 
 def next_month_payment_plans(start_date, end_date):
@@ -719,6 +707,12 @@ def get_contract_stats():
     return dashboard_queries.get_contract_stats(get_conn)
 
 
+get_contract_workspace_summary = partial(
+    dashboard_queries.get_contract_workspace_summary, get_conn
+)
+summarize_payment_plans = partial(dashboard_queries.summarize_payment_plans, get_conn)
+
+
 def get_payment_stats():
     """付款统计：应付/已付/未付金额（排除已软删除的合同）"""
     return dashboard_queries.get_payment_stats(get_conn)
@@ -729,14 +723,18 @@ def get_monthly_payments(year, month):
     return dashboard_queries.get_monthly_payments(get_conn, year, month)
 
 
-def get_expiring_contracts(days=30):
+def get_expiring_contracts(days=30, limit=0):
     """获取 N 天内到期的合同（已签订/履行中，未软删除）"""
-    return dashboard_queries.get_expiring_contracts(get_conn, row_to_dict, days)
+    return dashboard_queries.get_expiring_contracts(
+        get_conn, row_to_dict, days, limit=limit
+    )
 
 
-def get_due_soon_payments(days=7):
+def get_due_soon_payments(days=7, limit=0):
     """N 天内到期、已确认、未付清的付款计划"""
-    return dashboard_queries.get_due_soon_payments(get_conn, row_to_dict, days)
+    return dashboard_queries.get_due_soon_payments(
+        get_conn, row_to_dict, days, limit=limit
+    )
 
 
 def get_recent_contracts(limit=5):
@@ -746,109 +744,43 @@ def get_recent_contracts(limit=5):
 
 # ── Soft delete / trash ──
 
+_contract_lifecycle = ContractLifecycleRepository(
+    get_conn, _now, _validate_choice, CONTRACT_STATUSES, row_to_dict,
+)
+
 def soft_delete_contract(contract_id):
     """软删除合同（设置 deleted_at 标记，不实际删除数据）"""
-    now = _now()
-    with get_conn() as conn:
-        cur = conn.execute(
-            "UPDATE contracts SET deleted_at = ?, updated_at = ? WHERE id = ? AND (deleted_at = '' OR deleted_at IS NULL)",
-            (now, now, contract_id),
-        )
-        if cur.rowcount:
-            conn.execute(
-                """INSERT INTO contract_history
-                   (contract_id, field, old_value, new_value, changed_at)
-                   VALUES (?, 'deleted_at', '', ?, ?)""",
-                (contract_id, now, now),
-            )
-        return cur.rowcount
+    return _contract_lifecycle.soft_delete(contract_id)
 
 
 def restore_contract(contract_id):
     """从回收站恢复软删除的合同"""
-    now = _now()
-    with get_conn() as conn:
-        old = conn.execute('SELECT deleted_at FROM contracts WHERE id = ?', (contract_id,)).fetchone()
-        cur = conn.execute(
-            "UPDATE contracts SET deleted_at = '', updated_at = ? WHERE id = ? AND deleted_at != '' AND deleted_at IS NOT NULL",
-            (now, contract_id),
-        )
-        if cur.rowcount:
-            conn.execute(
-                """INSERT INTO contract_history
-                   (contract_id, field, old_value, new_value, changed_at)
-                   VALUES (?, 'deleted_at', ?, '', ?)""",
-                (contract_id, old[0] if old else '', now),
-            )
-        return cur.rowcount
+    return _contract_lifecycle.restore(contract_id)
 
 
 def permanently_delete_contract(contract_id):
     """永久删除合同及其关联数据（仅限已在回收站中的合同）"""
-    with get_conn() as conn:
-        # 先确认合同已被软删除
-        row = conn.execute(
-            "SELECT id FROM contracts WHERE id = ? AND deleted_at != '' AND deleted_at IS NOT NULL",
-            (contract_id,),
-        ).fetchone()
-        if not row:
-            return 0
-        conn.execute("DELETE FROM contract_history WHERE contract_id = ?", (contract_id,))
-        conn.execute("DELETE FROM payment_plans WHERE contract_id = ?", (contract_id,))
-        cur = conn.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
-        return cur.rowcount
+    return _contract_lifecycle.permanently_delete(contract_id)
+
+
+def discard_unlinked_contract(contract_id):
+    """清理本次生成但尚未建立采购关联的合同。"""
+    return _contract_lifecycle.discard_unlinked(contract_id)
 
 
 # ── Batch operations ──
 
 def batch_delete_contracts(ids):
     """软删除多个合同（设置 deleted_at 标记，保留数据）"""
-    if not ids:
-        return 0
-    now = _now()
-    with get_conn() as conn:
-        placeholders = ','.join('?' for _ in ids)
-        cur = conn.execute(
-            f"UPDATE contracts SET deleted_at = ?, updated_at = ? WHERE id IN ({placeholders}) AND (deleted_at = '' OR deleted_at IS NULL)",
-            [now, now] + ids,
-        )
-        return cur.rowcount
+    return _contract_lifecycle.batch_delete(ids)
 
 
 def batch_update_status(ids, status):
     """Batch update contract status."""
-    if not ids:
-        return 0
-    status = _validate_choice(status, CONTRACT_STATUSES, '合同状态')
-    now = _now()
-    with get_conn() as conn:
-        placeholders = ','.join('?' for _ in ids)
-        old_rows = conn.execute(
-            f"SELECT id, status FROM contracts WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
-        cur = conn.execute(
-            f"UPDATE contracts SET status = ?, updated_at = ? WHERE id IN ({placeholders})",
-            [status, now] + ids,
-        )
-        for row in old_rows:
-            if row['status'] == status:
-                continue
-            conn.execute(
-                """INSERT INTO contract_history
-                   (contract_id, field, old_value, new_value, changed_at)
-                   VALUES (?, 'status', ?, ?, ?)""",
-                (row['id'], row['status'], status, now),
-            )
-        return cur.rowcount
+    return _contract_lifecycle.batch_update_status(ids, status)
 
 
 # ── Contract history ──
 
 def get_contract_history(contract_id):
-    with get_conn() as conn:
-        rows = conn.execute(
-            'SELECT * FROM contract_history WHERE contract_id = ? ORDER BY changed_at DESC',
-            (contract_id,),
-        ).fetchall()
-    return [row_to_dict(r) for r in rows]
+    return _contract_lifecycle.history(contract_id)

@@ -1,10 +1,13 @@
 """标签映射常量 —— 从 utils.constants 重导出（向后兼容）"""
 
-from utils.constants import (
+from utils.constants import (  # noqa: F401  # 兼容重导出
     CONTRACT_STATUS_LABELS,
     CONFIRM_STATUS_LABELS,
     PAYMENT_STATUS_LABELS,
     CONFIDENCE_LABELS,
+    PAYMENT_PARSE_STATUS_LABELS,
+    PAYMENT_REASON_LABELS,
+    PAYMENT_AMOUNT_BASIS_LABELS,
     PROCUREMENT_STATUS_LABELS,
     PROCUREMENT_METHOD_LABELS,
     PROCUREMENT_STAGE_ORDER,

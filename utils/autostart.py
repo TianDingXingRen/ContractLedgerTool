@@ -7,6 +7,7 @@ import threading
 import time as _time
 
 from utils.logger import get_logger
+from utils.subprocess_utils import hidden_window_kwargs
 
 # 模块级变量，由调用方在 app.py 初始化时设置
 BASE_DIR = None
@@ -32,6 +33,7 @@ def _run_powershell(script):
         capture_output=True,
         text=True,
         timeout=30,
+        **hidden_window_kwargs(),
     )
 
 
@@ -55,7 +57,7 @@ def _autostart_launch_parts():
         exe_path = sys.executable
         return powerShell, (
             f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
-            f'-Command "Start-Process -FilePath \'{exe_path}\' '
+            f'-Command "Start-Process -FilePath {_ps_quote(exe_path)} '
             f'-ArgumentList \'--no-browser\' -WindowStyle Hidden"'
         )
 
@@ -85,7 +87,8 @@ def _autostart_launch_parts():
         raise RuntimeError(f'自启动配置失败：找不到 app.py (BASE_DIR={BASE_DIR})')
     return powerShell, (
         f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
-        f'-Command "& \'{python_exe}\' \'{app_py}\' --host 127.0.0.1 --port 5000 --no-browser"'
+        f'-Command "& {_ps_quote(python_exe)} {_ps_quote(app_py)} '
+        f'--host 127.0.0.1 --port 5000 --no-browser"'
     )
 
 
@@ -196,8 +199,12 @@ def autostart_status():
                 startup_enabled = True
                 startup_valid = _startup_launcher_matches(candidate)
                 break
-    except Exception as e:
-        startup_error = str(e)
+    except Exception:
+        get_logger().warning(
+            '无法读取自启动文件夹状态',
+            exc_info=True,
+        )
+        startup_error = '无法读取启动文件夹状态'
     script = (
         f"$task = Get-ScheduledTask -TaskName {_ps_quote(AUTOSTART_TASK_NAME)} -ErrorAction SilentlyContinue; "
         "if ($task) { Write-Output $task.State }"
@@ -207,15 +214,23 @@ def autostart_status():
     task_error = ''
     try:
         result = _run_powershell(script)
-    except Exception as e:
-        task_error = f'无法读取计划任务状态：{e}'
+    except Exception:
+        get_logger().warning(
+            '无法读取计划任务状态',
+            exc_info=True,
+        )
+        task_error = '无法读取计划任务状态'
         result = None
     if result is not None:
         if result.returncode == 0:
             task_state = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ''
             task_enabled = task_state.lower() in {'ready', 'running'}
         else:
-            task_error = result.stderr.strip() or result.stdout.strip()
+            get_logger().warning(
+                '计划任务状态查询失败，退出码: %s',
+                result.returncode,
+            )
+            task_error = '无法读取计划任务状态'
 
     enabled_sources = []
     if task_enabled:

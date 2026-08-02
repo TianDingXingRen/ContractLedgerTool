@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-import os, tempfile, unittest
+import os
+import tempfile
+import unittest
 from docx import Document
 from docx.oxml.ns import qn
-import docx_builder, field_eval
+import docx_builder
+import field_eval
 from utils.security import MAX_TABLE_ROWS
 
 
@@ -23,12 +26,21 @@ class ParagraphReplacementTests(unittest.TestCase):
         self.assertNotIn('{甲方名称}', text)
 
     def test_no_placeholder_fallback_to_label(self):
-        p = self.doc.add_paragraph('甲方：party_a_value')
+        p = self.doc.add_paragraph('甲方：party_a')
         docx_builder.apply_text_field(self.doc,
             {'type': 'paragraph', 'body_index': 0, 'placeholder': ''},
             'test_company', '甲方名称', 'party_a')
         text = ''.join(t.text or '' for t in p._p.iter(qn('w:t')))
         self.assertIn('test_company', text)
+
+    def test_plain_text_fallback_does_not_match_embedded_short_key(self):
+        p = self.doc.add_paragraph('备注：party_a_value')
+        with self.assertRaises(docx_builder.DocxBuildError):
+            docx_builder.apply_text_field(self.doc,
+                {'type': 'paragraph', 'body_index': 0, 'placeholder': ''},
+                'test_company', '甲方名称', 'party_a')
+        text = ''.join(t.text or '' for t in p._p.iter(qn('w:t')))
+        self.assertIn('party_a_value', text)
 
     def test_body_index_out_of_range_raises(self):
         with self.assertRaises(ValueError):

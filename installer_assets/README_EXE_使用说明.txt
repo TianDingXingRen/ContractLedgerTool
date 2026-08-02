@@ -1,27 +1,19 @@
-合同管理工具 EXE 版使用说明
+合同管理工具 - 安装版说明
 
-文件：
-ContractLedgerTool.exe
+请使用：
+ContractLedgerTool_OfflineInstaller.exe
 
-使用方法：
-1. 将 ContractLedgerTool.exe 复制到目标 Windows 电脑上的任意文件夹。
-2. 双击运行 ContractLedgerTool.exe。
-3. 程序会启动本地服务，并自动打开浏览器。
-4. 默认访问地址：http://127.0.0.1:5000/
-5. 关闭程序窗口即可停止服务。
+安装方法：
+1. 双击安装器，确认或修改安装路径。
+2. 安装路径默认是：%LOCALAPPDATA%\Programs\ContractLedgerTool
+3. 安装器不允许安装到桌面；桌面只创建“合同管理工具”快捷方式。
+4. 安装、启动和日常使用均不会显示 CMD 或 PowerShell 黑色窗口。
+5. 安装完成后，后台服务会启动并打开浏览器。
 
-运行数据：
-首次运行后，exe 同目录会自动生成以下文件夹：
-- data：合同台账数据库
-- output：生成的合同和导出的付款计划
-- templates：合同模板定义
-- uploads：模板源 Word 文件
-- sessions：临时会话数据
+数据位置：
+合同台账、生成文件、模板、上传件和备份保存在安装时选择的专用目录。
+升级安装会继续使用该目录中的原有数据。
 
-说明：
-1. EXE 已内置 Python 运行环境、页面资源和“订货合同模板”。
-2. 目标电脑不需要安装 Python，也不需要联网安装依赖。
-3. 如果 5000 端口被占用，可从命令行指定端口：
-   ContractLedgerTool.exe --port 5050
-4. 如果不想自动打开浏览器，可使用：
-   ContractLedgerTool.exe --no-browser
+特别说明：
+ContractLedgerTool.exe 是安装器内部的应用组件，不应单独复制到桌面运行。
+旧便携版在桌面生成的 data、output、templates、uploads、sessions 等文件夹可能包含业务数据，确认迁移或备份完成前请勿删除。

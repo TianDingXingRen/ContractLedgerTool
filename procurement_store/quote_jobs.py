@@ -2,6 +2,31 @@
 
 import json
 
+from utils.money import SQLITE_MAX_INTEGER
+
+
+def _quote_is_award_locked(conn, quote_id):
+    return conn.execute(
+        """SELECT 1 FROM award_recommendations WHERE quote_id = ?
+           UNION ALL
+           SELECT 1 FROM award_recommendation_items
+           WHERE quote_id = ?
+              OR quote_item_id IN (
+                  SELECT id FROM supplier_quote_items WHERE quote_id = ?
+              )
+           LIMIT 1""",
+        (quote_id, quote_id, quote_id),
+    ).fetchone() is not None
+
+
+def _invalidate_comparisons(conn, project_id):
+    count = conn.execute(
+        'SELECT COUNT(*) FROM comparison_runs WHERE project_id = ?',
+        (project_id,),
+    ).fetchone()[0]
+    conn.execute('DELETE FROM comparison_runs WHERE project_id = ?', (project_id,))
+    return int(count or 0)
+
 
 def create_import_job(get_conn, now_func, data):
     with get_conn() as conn:
@@ -183,7 +208,13 @@ def list_quotes(get_conn, project_id):
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT q.*, s.supplier_name,
-                      (SELECT COUNT(*) FROM supplier_quote_items qi WHERE qi.quote_id = q.id) item_count
+                      (SELECT COUNT(*) FROM supplier_quote_items qi WHERE qi.quote_id = q.id) item_count,
+                      (EXISTS(SELECT 1 FROM award_recommendations a WHERE a.quote_id = q.id)
+                       OR EXISTS(SELECT 1 FROM award_recommendation_items ai
+                                 WHERE ai.quote_id = q.id
+                                    OR ai.quote_item_id IN (
+                                        SELECT id FROM supplier_quote_items WHERE quote_id = q.id
+                                    ))) is_locked
                FROM supplier_quotes q JOIN project_suppliers s ON s.id = q.supplier_id
                WHERE q.project_id = ? ORDER BY q.quote_round DESC, s.supplier_name""", (project_id,),
         ).fetchall()
@@ -210,7 +241,14 @@ def get_latest_quotes(get_conn, project_id):
 def get_quote(get_conn, row_to_dict, quote_id):
     with get_conn() as conn:
         row = conn.execute(
-            """SELECT q.*, s.supplier_name FROM supplier_quotes q
+            """SELECT q.*, s.supplier_name,
+                      (EXISTS(SELECT 1 FROM award_recommendations a WHERE a.quote_id = q.id)
+                       OR EXISTS(SELECT 1 FROM award_recommendation_items ai
+                                 WHERE ai.quote_id = q.id
+                                    OR ai.quote_item_id IN (
+                                        SELECT id FROM supplier_quote_items WHERE quote_id = q.id
+                                    ))) is_locked
+               FROM supplier_quotes q
                JOIN project_suppliers s ON s.id = q.supplier_id WHERE q.id = ?""",
             (quote_id,),
         ).fetchone()
@@ -224,3 +262,159 @@ def get_quote_items(get_conn, quote_id):
             (quote_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def update_quote(get_conn, audit, now_func, quote_id, header, items):
+    now = now_func()
+    with get_conn() as conn:
+        row = conn.execute(
+            'SELECT * FROM supplier_quotes WHERE id = ?', (quote_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError('供应商报价不存在')
+        if _quote_is_award_locked(conn, quote_id):
+            raise ValueError('该报价已用于成交建议，不能编辑')
+
+        stored_items = conn.execute(
+            'SELECT * FROM supplier_quote_items WHERE quote_id = ? ORDER BY line_no, id',
+            (quote_id,),
+        ).fetchall()
+        stored_by_id = {item['id']: dict(item) for item in stored_items}
+        submitted_by_id = {int(item['id']): item for item in items}
+        if len(submitted_by_id) != len(items) or set(stored_by_id) != set(submitted_by_id):
+            raise ValueError('报价明细与原导入记录不一致，请刷新后重试')
+
+        for item in items:
+            if int(item['unit_price_minor']) < 0 or int(item['amount_minor']) < 0:
+                raise ValueError('报价明细金额不能为负数')
+
+        total_amount_minor = sum(int(item['amount_minor']) for item in items)
+        if total_amount_minor < 0 or total_amount_minor > SQLITE_MAX_INTEGER:
+            raise ValueError('报价总额超出可存储范围')
+        before = {'quote': dict(row), 'items': list(stored_by_id.values())}
+        conn.execute(
+            """UPDATE supplier_quotes
+               SET quote_date = ?, quote_valid_until = ?, total_amount_minor = ?,
+                   tax_rate_bps = ?, price_basis = ?, delivery_period = ?,
+                   payment_terms = ?, warranty_period = ?, package_transport = ?,
+                   technical_deviation = ?, commercial_deviation = ?, updated_at = ?
+               WHERE id = ?""",
+            (
+                header.get('quote_date') or '', header.get('quote_valid_until') or '',
+                total_amount_minor, header.get('tax_rate_bps'), header['price_basis'],
+                header.get('delivery_period') or '', header.get('payment_terms') or '',
+                header.get('warranty_period') or '', header.get('package_transport') or '',
+                header.get('technical_deviation') or '',
+                header.get('commercial_deviation') or '', now, quote_id,
+            ),
+        )
+        for item_id, item in submitted_by_id.items():
+            conn.execute(
+                """UPDATE supplier_quote_items
+                   SET unit_price_minor = ?, amount_minor = ?, delivery_period = ?,
+                       technical_deviation = ?, commercial_deviation = ?, remark = ?
+                   WHERE id = ? AND quote_id = ?""",
+                (
+                    int(item['unit_price_minor']), int(item['amount_minor']),
+                    item.get('delivery_period') or '',
+                    item.get('technical_deviation') or '',
+                    item.get('commercial_deviation') or '', item.get('remark') or '',
+                    item_id, quote_id,
+                ),
+            )
+        invalidated = _invalidate_comparisons(conn, row['project_id'])
+        audit(
+            conn, 'supplier_quote', quote_id, 'update', before=before,
+            after={
+                'header': {**header, 'total_amount_minor': total_amount_minor},
+                'items': items,
+                'invalidated_comparison_runs': invalidated,
+            },
+        )
+        return row['project_id']
+
+
+def delete_quote(get_conn, audit, now_func, quote_id):
+    now = now_func()
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT q.*, f.relative_path AS original_relative_path
+               FROM supplier_quotes q
+               LEFT JOIN project_files f ON f.id = q.original_file_id
+               WHERE q.id = ?""",
+            (quote_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError('供应商报价不存在')
+        if _quote_is_award_locked(conn, quote_id):
+            raise ValueError('该报价已用于成交建议，不能删除')
+
+        quote = dict(row)
+        item_count = conn.execute(
+            'SELECT COUNT(*) FROM supplier_quote_items WHERE quote_id = ?',
+            (quote_id,),
+        ).fetchone()[0]
+        invalidated = _invalidate_comparisons(conn, quote['project_id'])
+        conn.execute('DELETE FROM supplier_quotes WHERE id = ?', (quote_id,))
+
+        file_deleted = False
+        if quote.get('original_file_id'):
+            file_still_used = conn.execute(
+                'SELECT 1 FROM supplier_quotes WHERE original_file_id = ? LIMIT 1',
+                (quote['original_file_id'],),
+            ).fetchone()
+            if not file_still_used:
+                file_deleted = bool(conn.execute(
+                    'DELETE FROM project_files WHERE id = ?',
+                    (quote['original_file_id'],),
+                ).rowcount)
+        if quote.get('import_job_id'):
+            conn.execute(
+                """UPDATE quote_import_jobs
+                   SET status = 'cancelled', confirmed_at = '' WHERE id = ?""",
+                (quote['import_job_id'],),
+            )
+        conn.execute(
+            """UPDATE quote_mapping_jobs SET status = 'cancelled', updated_at = ?
+               WHERE project_id = ? AND supplier_id = ? AND quote_round = ?
+                 AND relative_path = ?""",
+            (
+                now, quote['project_id'], quote['supplier_id'], quote['quote_round'],
+                quote.get('original_relative_path') or '',
+            ),
+        )
+
+        remaining_supplier_quotes = conn.execute(
+            """SELECT 1 FROM supplier_quotes
+               WHERE supplier_id = ? AND status = 'confirmed' LIMIT 1""",
+            (quote['supplier_id'],),
+        ).fetchone()
+        conn.execute(
+            'UPDATE project_suppliers SET quote_status = ?, updated_at = ? WHERE id = ?',
+            ('received' if remaining_supplier_quotes else 'pending', now, quote['supplier_id']),
+        )
+        remaining_project_quotes = conn.execute(
+            """SELECT 1 FROM supplier_quotes
+               WHERE project_id = ? AND status = 'confirmed' LIMIT 1""",
+            (quote['project_id'],),
+        ).fetchone()
+        if not remaining_project_quotes:
+            conn.execute(
+                """UPDATE procurement_projects
+                   SET status = CASE WHEN status = 'quotes_received'
+                                     THEN 'documents_ready' ELSE status END,
+                       updated_at = ? WHERE id = ?""",
+                (now, quote['project_id']),
+            )
+        audit(
+            conn, 'supplier_quote', quote_id, 'delete', before=quote,
+            after={
+                'item_count': item_count,
+                'invalidated_comparison_runs': invalidated,
+                'original_file_removed': file_deleted,
+            },
+        )
+        return {
+            'project_id': quote['project_id'],
+            'relative_path': quote.get('original_relative_path') if file_deleted else '',
+        }

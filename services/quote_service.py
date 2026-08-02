@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -12,10 +12,20 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 import procurement_store
 from services import procurement_file_service
+from services.isolated_process import run_isolated_worker
+from utils.logger import get_logger
+from utils.money import SQLITE_MAX_INTEGER, to_minor
+from utils.security import safe_spreadsheet_value, validate_office_archive
 
 
 FORMAT_VERSION = '1.0'
 PARSER_VERSION = '1.0'
+MAX_QUOTE_PDF_BYTES = 25 * 1024 * 1024
+PDF_HEADER = b'%PDF-'
+MAX_STANDARD_QUOTE_ROWS = 10_000
+MAX_STANDARD_QUOTE_COLUMNS = 20
+QUOTE_PARSE_TIMEOUT_SECONDS = 45
+QUOTE_PARSE_MEMORY_MB = 1536
 
 _HEADER_FILL = PatternFill('solid', fgColor='1D4ED8')
 _HEADER_FONT = Font(color='FFFFFF', bold=True)
@@ -29,6 +39,9 @@ def _decimal(value, label, errors, row=None, allow_zero=True):
     except InvalidOperation:
         errors.append(f'{label}{f"（第 {row} 行）" if row else ""}格式无效')
         return None
+    if not result.is_finite():
+        errors.append(f'{label}{f"（第 {row} 行）" if row else ""}必须是有限数值')
+        return None
     if result < 0 or (not allow_zero and result == 0):
         errors.append(f'{label}{f"（第 {row} 行）" if row else ""}必须大于 0')
         return None
@@ -36,7 +49,7 @@ def _decimal(value, label, errors, row=None, allow_zero=True):
 
 
 def _money_minor(value):
-    return int((value * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return to_minor(value, allow_none=False)
 
 
 def _date_text(value):
@@ -84,7 +97,7 @@ def generate_quote_template(project_id, supplier_id):
         ('报价总额', ''),
     ]
     for label, value in info_rows:
-        info.append([label, value])
+        info.append([label, safe_spreadsheet_value(value)])
         info.cell(info.max_row, 2).fill = _INPUT_FILL if label not in {'项目编号', '项目名称', '供应商名称'} else _LOCKED_FILL
     price_basis = DataValidation(type='list', formula1='"含税,不含税"', allow_blank=False)
     info.add_data_validation(price_basis)
@@ -105,9 +118,12 @@ def generate_quote_template(project_id, supplier_id):
         detail.column_dimensions[detail.cell(1, index).column_letter].width = width
     for row_index, item in enumerate(items, start=2):
         detail.append([
-            item['id'], item['line_no'], item['item_name'], item.get('spec_model') or '',
-            item.get('drawing_no') or '', Decimal(item['quantity_text']), item['unit'], '',
-            f'=ROUND(F{row_index}*H{row_index},2)', item.get('required_delivery_date') or '',
+            item['id'], item['line_no'], safe_spreadsheet_value(item['item_name']),
+            safe_spreadsheet_value(item.get('spec_model') or ''),
+            safe_spreadsheet_value(item.get('drawing_no') or ''),
+            Decimal(item['quantity_text']), safe_spreadsheet_value(item['unit']), '',
+            f'=ROUND(F{row_index}*H{row_index},2)',
+            safe_spreadsheet_value(item.get('required_delivery_date') or ''),
             '', '', '',
         ])
         for col in range(1, 8):
@@ -140,16 +156,15 @@ def generate_quote_template(project_id, supplier_id):
         ('format_version', FORMAT_VERSION), ('project_id', project_id),
         ('project_no', project['project_no']), ('supplier_id', supplier_id),
     ]:
-        meta.append([key, value])
+        meta.append([key, safe_spreadsheet_value(value)])
 
     filename = f"{project['project_no']}_{supplier['supplier_name']}_标准报价模板.xlsx"
-    path = procurement_file_service.target_path(project, 'quote_template', filename)
-    workbook.save(path)
-    relative = procurement_file_service.relative_path(path)
-    procurement_store.register_project_file(
-        project_id, 'quote_template', relative, filename,
-        procurement_file_service.sha256_file(path), path.stat().st_size,
-    )
+    try:
+        path = procurement_file_service.save_generated(
+            project, 'quote_template', filename, workbook.save,
+        )
+    finally:
+        workbook.close()
     if project['status'] == 'draft':
         procurement_store.transition_project_status(project_id, 'documents_ready', '已生成标准报价模板')
     return str(path)
@@ -157,31 +172,126 @@ def generate_quote_template(project_id, supplier_id):
 
 def _sheet_pairs(sheet):
     values = {}
-    for row in sheet.iter_rows(min_row=2, values_only=True):
+    for row in sheet.iter_rows(
+        min_row=2,
+        max_row=min(sheet.max_row, 100),
+        max_col=2,
+        values_only=True,
+    ):
         key = str(row[0] or '').strip()
         if key:
             values[key] = row[1]
     return values
 
 
-def parse_standard_quote(path, project_id, supplier_id, expected_round):
-    errors = []
-    warnings = []
-    project = procurement_store.get_project(project_id)
-    supplier = procurement_store.get_project_supplier(supplier_id)
-    expected_items = {item['id']: item for item in procurement_store.list_project_items(project_id)}
-    if not project or not supplier or supplier['project_id'] != project_id:
-        return {}, ['采购项目或候选供应商不存在'], []
+def _parse_standard_quote_file(
+    path,
+    project_id,
+    supplier_id,
+    expected_round,
+    project,
+    supplier,
+    expected_items,
+):
     try:
-        workbook = load_workbook(path, data_only=False, read_only=False)
+        workbook = load_workbook(path, data_only=False, read_only=True)
     except Exception as exc:
         return {}, [f'Excel 文件无法读取：{exc}'], []
+    try:
+        errors = []
+        warnings = []
+        return _parse_standard_quote_workbook(
+            workbook,
+            path,
+            project_id,
+            supplier_id,
+            expected_round,
+            project,
+            supplier,
+            expected_items,
+            errors,
+            warnings,
+        )
+    finally:
+        workbook.close()
+
+
+def parse_standard_quote(path, project_id, supplier_id, expected_round):
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    expected_items = {
+        item['id']: item
+        for item in procurement_store.list_project_items(project_id)
+    }
+    if not project or not supplier or supplier['project_id'] != project_id:
+        return {}, ['采购项目或候选供应商不存在'], []
+    return _parse_standard_quote_file(
+        path,
+        project_id,
+        supplier_id,
+        expected_round,
+        project,
+        supplier,
+        expected_items,
+    )
+
+
+def _standard_quote_worker(
+    path,
+    project_id,
+    supplier_id,
+    expected_round,
+    project,
+    supplier,
+    expected_items,
+    result_queue,
+):
+    result_queue.put(('ok', _parse_standard_quote_file(
+        path,
+        project_id,
+        supplier_id,
+        expected_round,
+        project,
+        supplier,
+        expected_items,
+    )))
+
+
+def _parse_standard_quote_workbook(
+    workbook,
+    path,
+    project_id,
+    supplier_id,
+    expected_round,
+    project,
+    supplier,
+    expected_items,
+    errors,
+    warnings,
+):
     required_sheets = {'_meta', '报价信息', '报价明细'}
     missing = required_sheets - set(workbook.sheetnames)
     if missing:
         return {}, [f'缺少工作表：{"、".join(sorted(missing))}'], []
+    sheet_limits = {
+        '_meta': (20, 2),
+        '报价信息': (100, MAX_STANDARD_QUOTE_COLUMNS),
+        '报价明细': (MAX_STANDARD_QUOTE_ROWS, MAX_STANDARD_QUOTE_COLUMNS),
+    }
+    for sheet_name, (max_rows, max_columns) in sheet_limits.items():
+        sheet = workbook[sheet_name]
+        if sheet.max_row > max_rows:
+            return {}, [f'工作表“{sheet_name}”行数超过 {max_rows}'], []
+        if sheet.max_column > max_columns:
+            return {}, [f'工作表“{sheet_name}”列数超过 {max_columns}'], []
 
-    meta = {str(row[0].value): row[1].value for row in workbook['_meta'].iter_rows(min_row=1, max_col=2) if row[0].value}
+    meta = {
+        str(row[0].value): row[1].value
+        for row in workbook['_meta'].iter_rows(
+            min_row=1, max_row=20, max_col=2
+        )
+        if row[0].value
+    }
     if str(meta.get('format_version') or '') != FORMAT_VERSION:
         errors.append(f'模板版本不匹配，要求 {FORMAT_VERSION}')
     if str(meta.get('project_id')) != str(project_id) or str(meta.get('project_no')) != project['project_no']:
@@ -214,7 +324,15 @@ def parse_standard_quote(path, project_id, supplier_id, expected_round):
     parsed_items = []
     seen = set()
     detail = workbook['报价明细']
-    for excel_row, row in enumerate(detail.iter_rows(min_row=2, values_only=False), start=2):
+    for excel_row, row in enumerate(
+        detail.iter_rows(
+            min_row=2,
+            max_row=detail.max_row,
+            max_col=13,
+            values_only=False,
+        ),
+        start=2,
+    ):
         if all(cell.value in (None, '') for cell in row):
             continue
         try:
@@ -302,11 +420,28 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
     if int(quote_round) < 1:
         raise ValueError('报价轮次必须大于等于 1')
     saved = procurement_file_service.save_upload(project, 'supplier_quote', file_storage)
-    payload, errors, warnings = parse_standard_quote(
-        saved['absolute_path'], project_id, supplier_id, int(quote_round)
-    )
-    payload['size_bytes'] = saved['size_bytes']
     try:
+        validate_office_archive(saved['absolute_path'])
+        expected_items = {
+            item['id']: item
+            for item in procurement_store.list_project_items(project_id)
+        }
+        payload, errors, warnings = run_isolated_worker(
+            _standard_quote_worker,
+            (
+                saved['absolute_path'],
+                project_id,
+                supplier_id,
+                int(quote_round),
+                project,
+                supplier,
+                expected_items,
+            ),
+            timeout=QUOTE_PARSE_TIMEOUT_SECONDS,
+            label='标准报价解析',
+            memory_limit_mb=QUOTE_PARSE_MEMORY_MB,
+        )
+        payload['size_bytes'] = saved['size_bytes']
         return procurement_store.create_import_job({
             'project_id': project_id,
             'supplier_id': supplier_id,
@@ -323,9 +458,199 @@ def create_import_job(project_id, supplier_id, quote_round, file_storage):
         try:
             Path(saved['absolute_path']).unlink(missing_ok=True)
         except OSError:
-            pass
+            get_logger().warning(
+                '标准报价导入失败后无法删除上传文件',
+                exc_info=True,
+            )
+        raise
+
+
+def _validate_saved_pdf(path):
+    path = Path(path)
+    size = path.stat().st_size
+    if size <= 0:
+        raise ValueError('PDF 报价单不能为空')
+    if size > MAX_QUOTE_PDF_BYTES:
+        raise ValueError('PDF 报价单不能超过 25MB')
+    with open(path, 'rb') as stream:
+        header = stream.read(len(PDF_HEADER))
+    if header != PDF_HEADER:
+        raise ValueError('PDF 报价单文件内容无效，请上传真实 PDF 文件')
+
+
+def save_quote_pdf_attachment(project_id, supplier_id, quote_round, file_storage):
+    project = procurement_store.get_project(project_id)
+    supplier = procurement_store.get_project_supplier(supplier_id)
+    if not project or not supplier or supplier['project_id'] != project_id:
+        raise ValueError('采购项目或候选供应商不存在')
+    try:
+        quote_round = int(quote_round)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('报价轮次必须为整数') from exc
+    if quote_round < 1:
+        raise ValueError('报价轮次必须大于等于 1')
+    filename = str(file_storage.filename or '').strip()
+    if not filename:
+        raise ValueError('请选择 PDF 报价单')
+    if Path(filename).suffix.lower() != '.pdf':
+        raise ValueError('PDF 报价单仅支持 .pdf 格式')
+
+    saved = procurement_file_service.save_upload(project, 'supplier_quote_pdf', file_storage)
+    try:
+        _validate_saved_pdf(saved['absolute_path'])
+        display_name = f"第{quote_round}轮_{supplier['supplier_name']}_{saved['original_name']}"
+        return procurement_store.register_project_file(
+            project_id, 'supplier_quote_pdf', saved['relative_path'], display_name,
+            saved['sha256'], saved['size_bytes'],
+        )
+    except Exception:
+        try:
+            Path(saved['absolute_path']).unlink(missing_ok=True)
+        except OSError:
+            get_logger().warning(
+                'PDF 报价保存失败后无法删除上传文件',
+                exc_info=True,
+            )
         raise
 
 
 def confirm_import(job_id):
     return procurement_store.confirm_import_job(job_id)
+
+
+def get_import_job(job_id):
+    return procurement_store.get_import_job(job_id)
+
+
+def confirmed_quote_editor_data(project_id, quote_id):
+    quote = procurement_store.get_quote(quote_id)
+    if not quote or quote['project_id'] != project_id:
+        return None
+    return {
+        'quote': quote,
+        'items': procurement_store.get_quote_items(quote_id),
+    }
+
+
+def _validated_date(value, label):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    try:
+        date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f'{label}格式无效') from exc
+    return text
+
+
+def _limited_form_text(form, key, label, max_length=2000):
+    value = str(form.get(key) or '').strip()
+    if len(value) > max_length:
+        raise ValueError(f'{label}不能超过 {max_length} 个字符')
+    return value
+
+
+def _editable_tax_rate(form):
+    raw = str(form.get('tax_rate') or '').strip()
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError('税率格式无效') from exc
+    if not value.is_finite() or value < 0 or value > 100:
+        raise ValueError('税率必须是 0 到 100 之间的有限数值')
+    basis_points = value * 100
+    if basis_points != basis_points.to_integral_value():
+        raise ValueError('税率最多保留两位小数')
+    return int(basis_points)
+
+
+def update_confirmed_quote(quote_id, form):
+    quote = procurement_store.get_quote(quote_id)
+    if not quote:
+        raise ValueError('供应商报价不存在')
+    if quote['status'] != 'confirmed':
+        raise ValueError('只有已确认的报价可以编辑')
+    if quote.get('is_locked'):
+        raise ValueError('该报价已用于成交建议，不能编辑')
+
+    quote_date = _validated_date(form.get('quote_date'), '报价日期')
+    quote_valid_until = _validated_date(form.get('quote_valid_until'), '报价有效期')
+    if quote_date and quote_valid_until and quote_valid_until < quote_date:
+        raise ValueError('报价有效期不能早于报价日期')
+    price_basis = str(form.get('price_basis') or '').strip()
+    if price_basis not in {'tax_inclusive', 'tax_exclusive'}:
+        raise ValueError('价格口径无效')
+    header = {
+        'quote_date': quote_date,
+        'quote_valid_until': quote_valid_until,
+        'tax_rate_bps': _editable_tax_rate(form),
+        'price_basis': price_basis,
+        'delivery_period': _limited_form_text(form, 'delivery_period', '整体交付周期'),
+        'payment_terms': _limited_form_text(form, 'payment_terms', '付款条件'),
+        'warranty_period': _limited_form_text(form, 'warranty_period', '质保期'),
+        'package_transport': _limited_form_text(form, 'package_transport', '包装运输'),
+        'technical_deviation': _limited_form_text(
+            form, 'technical_deviation', '整体技术偏离'
+        ),
+        'commercial_deviation': _limited_form_text(
+            form, 'commercial_deviation', '整体商务偏离'
+        ),
+    }
+
+    updated_items = []
+    for item in procurement_store.get_quote_items(quote_id):
+        item_id = item['id']
+        raw_price = str(form.get(f'unit_price_{item_id}') or '').replace(',', '').strip()
+        try:
+            unit_price = Decimal(raw_price)
+        except InvalidOperation as exc:
+            raise ValueError(f'第 {item["line_no"]} 行单价格式无效') from exc
+        if not unit_price.is_finite() or unit_price < 0:
+            raise ValueError(f'第 {item["line_no"]} 行单价必须是非负有限数值')
+        try:
+            quantity = Decimal(item['quantity_text'])
+        except InvalidOperation as exc:
+            raise ValueError(f'第 {item["line_no"]} 行数量格式无效') from exc
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError(f'第 {item["line_no"]} 行数量必须是正有限数值')
+        unit_price_minor = to_minor(unit_price, allow_none=False)
+        amount_minor = to_minor(quantity * unit_price, allow_none=False)
+        updated_items.append({
+            'id': item_id,
+            'unit_price_minor': unit_price_minor,
+            'amount_minor': amount_minor,
+            'delivery_period': _limited_form_text(
+                form, f'delivery_period_{item_id}', f'第 {item["line_no"]} 行交期', 1000
+            ),
+            'technical_deviation': _limited_form_text(
+                form, f'technical_deviation_{item_id}',
+                f'第 {item["line_no"]} 行技术偏离', 1000,
+            ),
+            'commercial_deviation': _limited_form_text(
+                form, f'commercial_deviation_{item_id}',
+                f'第 {item["line_no"]} 行商务偏离', 1000,
+            ),
+            'remark': _limited_form_text(
+                form, f'remark_{item_id}', f'第 {item["line_no"]} 行备注', 1000
+            ),
+        })
+    if not updated_items:
+        raise ValueError('报价明细为空，不能保存')
+    if sum(item['amount_minor'] for item in updated_items) > SQLITE_MAX_INTEGER:
+        raise ValueError('报价总额超出可存储范围')
+    return procurement_store.update_quote(quote_id, header, updated_items)
+
+
+def delete_confirmed_quote(quote_id):
+    result = procurement_store.delete_quote(quote_id)
+    relative_path = result.get('relative_path') or ''
+    if relative_path:
+        try:
+            procurement_file_service.absolute_path(relative_path).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            get_logger().warning(
+                '删除供应商报价原文件失败: %s', relative_path, exc_info=True
+            )
+    return result['project_id']

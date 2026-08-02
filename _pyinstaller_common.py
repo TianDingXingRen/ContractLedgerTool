@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
-"""PyInstaller 打包公共模块 — 统一 hidden-imports、资源准备、目录工具。
-
-build_desktop_exe / build_installer / build_package 共用此模块，
-避免隐藏导入清单和资源准备逻辑多份不一致的问题。
-"""
+"""`build_package.py` 使用的 PyInstaller 资源与命令构造工具。"""
 
 import json
+import re
 import shutil
+import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 
@@ -112,19 +109,118 @@ def copy_html_templates(templates_dir):
     return copied
 
 
+def verify_compiled_frontend():
+    """Fail packaging early when the production CSS artifact is missing."""
+    compiled_css = ROOT / 'static' / 'css' / 'app.min.css'
+    if not compiled_css.is_file():
+        raise RuntimeError('缺少前端 CSS 产物，请先运行 npm run build:css')
+    size = compiled_css.stat().st_size
+    if size < 50_000 or size > 250_000:
+        raise RuntimeError(
+            f'前端 CSS 产物大小异常 ({size} bytes)，请重新运行 npm run build:css'
+        )
+
+
+SEMVER_PATTERN = re.compile(
+    r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
+    r'(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
+)
+
+
+def project_version():
+    """Return the validated, stable release version from the repository."""
+    version_path = ROOT / 'version.txt'
+    if not version_path.is_file():
+        raise RuntimeError('缺少 version.txt，无法构建可追溯发布包')
+    version = version_path.read_text(encoding='utf-8').strip()
+    if not SEMVER_PATTERN.fullmatch(version):
+        raise RuntimeError(f'version.txt 不是有效的语义版本：{version!r}')
+    return version
+
+
 def write_version_file(target_dir, version_str=None):
-    """写入 version.txt。"""
-    version = version_str or datetime.now().strftime('%Y%m%d.%H%M%S')
+    """Write the stable semantic version into packaged resources."""
+    version = version_str or project_version()
+    if not SEMVER_PATTERN.fullmatch(version):
+        raise RuntimeError(f'打包版本不是有效的语义版本：{version!r}')
     (target_dir / 'version.txt').write_text(version, encoding='utf-8')
     return version
+
+
+def write_windows_version_info(target_dir, executable_name, version_str=None):
+    """Create a PyInstaller VersionInfo resource for Windows executables."""
+    version = version_str or project_version()
+    match = re.match(r'^(\d+)\.(\d+)\.(\d+)', version)
+    if not match:
+        raise RuntimeError(f'无法从版本号生成 Windows 版本信息：{version!r}')
+    numeric_version = tuple(int(part) for part in match.groups()) + (0,)
+    file_version = '.'.join(str(part) for part in numeric_version)
+    target_dir = Path(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    version_path = target_dir / f'{executable_name}.version-info.txt'
+    version_path.write_text(
+        f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={numeric_version!r},
+    prodvers={numeric_version!r},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404B0',
+        [
+          StringStruct(u'CompanyName', u'Shao'),
+          StringStruct(u'FileDescription', u'采购业务平台单机版'),
+          StringStruct(u'FileVersion', u'{file_version}'),
+          StringStruct(u'InternalName', u'{executable_name}'),
+          StringStruct(u'LegalCopyright', u'Copyright (c) 2026 Shao'),
+          StringStruct(u'OriginalFilename', u'{executable_name}.exe'),
+          StringStruct(u'ProductName', u'采购业务平台'),
+          StringStruct(u'ProductVersion', u'{version}')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])])
+  ]
+)
+""",
+        encoding='utf-8',
+    )
+    return version_path
+
+
+def source_metadata():
+    """Return the Git revision and dirty state used for a local build."""
+    try:
+        commit = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True,
+            encoding='utf-8', errors='replace',
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        status = subprocess.check_output(
+            ['git', 'status', '--porcelain', '--untracked-files=normal'],
+            cwd=ROOT, text=True, encoding='utf-8', errors='replace',
+            stderr=subprocess.DEVNULL,
+        )
+        return {'source_commit': commit, 'source_dirty': bool(status.strip())}
+    except (OSError, subprocess.CalledProcessError):
+        return {'source_commit': 'unknown', 'source_dirty': True}
 
 
 def prepare_app_resources(res_dir, write_version=True):
     """准备 PyInstaller 打包所需的资源目录（static/templates/uploads/version）。
 
-    所有 build 脚本共用此函数，避免资源准备逻辑重复。
+    构建入口复用此函数准备不同子命令所需的相同资源。
     返回 manifest 字典，包含 html_templates/templates/uploads/skipped 及可选 version。
     """
+    verify_compiled_frontend()
     reset_dir(res_dir)
     templates_out = res_dir / 'templates'
     uploads_out = res_dir / 'uploads'
@@ -149,11 +245,21 @@ def prepare_app_resources(res_dir, write_version=True):
     }
     if write_version:
         manifest['version'] = write_version_file(res_dir)
+        manifest.update(source_metadata())
+        (res_dir / 'build-info.json').write_text(
+            json.dumps({
+                'version': manifest['version'],
+                'source_commit': manifest['source_commit'],
+                'source_dirty': manifest['source_dirty'],
+            }, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
     return manifest
 
 
 def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,
-                         res_dir, extra_data=None, icon_path=None):
+                          res_dir, extra_data=None, icon_path=None,
+                          windowed=False):
     """构建 PyInstaller 命令行参数列表。
 
     extra_data: 额外的 (src, dst_semicolon) 元组列表，用于 --add-data。
@@ -164,7 +270,7 @@ def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,
         '--noconfirm',
         '--clean',
         '--onefile',
-        '--console',
+        '--windowed' if windowed else '--console',
         '--name', name,
         '--distpath', str(dist_path),
         '--workpath', str(work_path),
@@ -177,12 +283,16 @@ def build_pyinstaller_cmd(entry_script, name, dist_path, work_path, spec_path,
     if icon_path and Path(icon_path).is_file():
         cmd.extend(['--icon', str(icon_path)])
 
+    version_info = write_windows_version_info(spec_path, name)
+    cmd.extend(['--version-file', str(version_info)])
+
     # 标准 --add-data 项
     add_data_items = [
         (res_dir / 'templates', 'templates'),
         (res_dir / 'static', 'static'),
         (res_dir / 'uploads', 'uploads'),
         (res_dir / 'version.txt', '.'),
+        (res_dir / 'build-info.json', '.'),
     ]
 
     if extra_data:

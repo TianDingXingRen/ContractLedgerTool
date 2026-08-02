@@ -297,6 +297,7 @@ class TestIntegration:
     def test_generate_with_csrf(self, client):
         # 先获取页面以拿到 CSRF token
         page = client.get("/excel-bill")
+        page.close()
         # 从 session 中提取 csrf_token
         with client.session_transaction() as sess:
             token = sess.get("_csrf_token", "")

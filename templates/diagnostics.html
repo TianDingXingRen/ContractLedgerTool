@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}诊断信息 - 合同管理工具{% endblock %}
-{% block breadcrumb %}diagnostics{% endblock %}
+{% block title %}诊断信息 - 采购业务平台{% endblock %}
+{% block breadcrumb %}系统 / 系统诊断{% endblock %}
 {% block content %}
 
 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
     <div>
-        <h2 class="text-2xl font-bold leading-tight">诊断信息</h2>
-        <p class="text-xs text-base-content/50 mt-1">运行路径、PDF 支持、自启动状态、最近日志和数据备份</p>
+        <h1 class="text-2xl font-bold leading-tight">诊断信息</h1>
+        <p class="text-xs text-base-content/50 mt-1">运行路径、自启动状态、最近日志和数据备份</p>
     </div>
     <div class="flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-primary btn-sm" id="copyDiagnosticsBtn" data-testid="copy-diagnostics">
@@ -15,20 +15,30 @@
         <button type="button" class="btn btn-ghost btn-sm" id="refreshDiagnosticsBtn" data-testid="refresh-diagnostics">
             <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重新检测
         </button>
-        <a href="{{ url_for('backups') }}" class="btn btn-ghost btn-sm">
+        <a href="{{ url_for('settings.backups') }}" class="btn btn-ghost btn-sm">
             <i data-lucide="database-backup" class="w-4 h-4"></i> 数据备份
         </a>
-        <form method="post" action="{{ url_for('reset') }}" onsubmit="return confirm('确定重置当前填写会话？已生成的合同和台账不会删除。')" style="display:inline">
+        <form method="post" action="{{ url_for('settings.reset') }}"
+              data-confirm="确定重置当前填写会话？已生成的合同和台账不会删除。"
+              data-confirm-title="重置当前会话"
+              data-confirm-ok="重置"
+              style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-ghost btn-sm">
                 <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重置当前会话
             </button>
         </form>
-        <a href="{{ url_for('index') }}" class="btn btn-ghost btn-sm">返回首页</a>
+        <a href="{{ url_for('contracts.index') }}" class="btn btn-ghost btn-sm">返回首页</a>
     </div>
 </div>
 
 <div id="diagnosticsToast" class="hidden alert mb-3 text-sm"></div>
+{% if request.args.get('protection_message') %}
+<div class="alert alert-success mb-3 text-sm">{{ request.args.get('protection_message') }}</div>
+{% endif %}
+{% if request.args.get('protection_error') %}
+<div class="alert alert-error mb-3 text-sm">{{ request.args.get('protection_error') }}</div>
+{% endif %}
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">
@@ -44,10 +54,37 @@
         </dl>
     </section>
 
+    <section class="bg-base-100 rounded-lg border border-base-300 p-4" data-testid="data-protection-panel">
+        <div class="flex items-center justify-between gap-2 mb-3">
+            <h3 class="font-semibold text-sm">本地数据保护</h3>
+            <span class="badge badge-sm {{ 'badge-success' if diagnostics.data_protection.enabled else ('badge-warning' if diagnostics.data_protection.partial else 'badge-ghost') }}">
+                {{ '已加密' if diagnostics.data_protection.enabled else ('部分加密' if diagnostics.data_protection.partial else '未启用') }}
+            </span>
+        </div>
+        <p class="text-sm mb-2">{{ diagnostics.data_protection.description }}</p>
+        <p class="text-xs text-warning mb-3">{{ diagnostics.data_protection.warning }}</p>
+        <p class="text-xs text-base-content/50 mb-3">
+            保护范围：数据库和备份、合同模板、上传源文件、生成文件及填写会话。EFS 防护磁盘脱机读取和其他 Windows 用户，不能防护当前已登录账户中的恶意程序。
+        </p>
+        {% if diagnostics.data_protection.supported and not diagnostics.data_protection.enabled %}
+        <form method="post" action="{{ url_for('settings.data_protection_enable') }}"
+              data-confirm="启用后，数据与当前 Windows 用户的 EFS 证书绑定。确认继续？"
+              data-confirm-title="启用 Windows EFS"
+              data-confirm-ok="启用加密">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="flex items-start gap-2 text-xs mb-3">
+                <input type="checkbox" class="checkbox checkbox-sm mt-0.5" name="acknowledge_recovery" value="1" required>
+                <span>我已了解：重装系统或丢失 EFS 私钥可能造成数据永久无法恢复；启用后会立即导出并离线保管证书与私钥。</span>
+            </label>
+            <button type="submit" class="btn btn-primary btn-sm" data-testid="enable-data-protection">启用本地数据加密</button>
+        </form>
+        {% endif %}
+    </section>
+
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">
         <div class="flex items-center justify-between gap-2 mb-3">
             <h3 class="font-semibold text-sm">自启动</h3>
-            <form method="post" action="{{ url_for('diagnostics_open_folder') }}" class="diagnostics-folder-form">
+            <form method="post" action="{{ url_for('settings.diagnostics_open_folder') }}" class="diagnostics-folder-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="folder" value="logs">
                 <button type="submit" class="btn btn-ghost btn-xs">打开日志目录</button>
@@ -75,7 +112,7 @@
             <h3 class="font-semibold text-sm">数据路径</h3>
             <div class="flex items-center gap-1">
                 {% for folder_key, label in [('data','数据'), ('output','输出'), ('backups','备份')] %}
-                <form method="post" action="{{ url_for('diagnostics_open_folder') }}" class="diagnostics-folder-form">
+                <form method="post" action="{{ url_for('settings.diagnostics_open_folder') }}" class="diagnostics-folder-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="folder" value="{{ folder_key }}">
                     <button type="submit" class="btn btn-ghost btn-xs">{{ label }}</button>
@@ -92,111 +129,24 @@
 
     <section class="bg-base-100 rounded-lg border border-base-300 p-4">
         <div class="flex items-center justify-between gap-2 mb-3">
-            <h3 class="font-semibold text-sm">PDF 支持</h3>
-            <button type="button" class="btn btn-ghost btn-xs" id="pdfCheckBtn">重新检测 PDF</button>
+            <h3 class="font-semibold text-sm">生成完整性</h3>
+            <span id="generationIntegrityBadge"
+                  class="badge badge-sm {{ 'badge-success' if diagnostics.generation_integrity.ok else 'badge-warning' }}">
+                {{ '正常' if diagnostics.generation_integrity.ok else '需检查' }}
+            </span>
         </div>
-        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm" id="pdfDiagnosticsList">
-            {% for key, value in diagnostics.pdf.items() %}
-            <dt class="text-base-content/50">{{ key }}</dt><dd class="break-all">{{ value }}</dd>
-            {% endfor %}
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt class="text-base-content/50">未完成任务</dt><dd data-diagnostics-field="generation-unfinished">{{ diagnostics.generation_integrity.unfinished }}</dd>
+            <dt class="text-base-content/50">需人工处理</dt><dd data-diagnostics-field="generation-attention">{{ diagnostics.generation_integrity.attention }}</dd>
+            <dt class="text-base-content/50">已自动恢复</dt><dd data-diagnostics-field="generation-recovered">{{ diagnostics.generation_integrity.recovered }}</dd>
+            <dt class="text-base-content/50">缺失文档</dt><dd data-diagnostics-field="generation-missing">{{ diagnostics.generation_integrity.missing_documents }}</dd>
+            <dt class="text-base-content/50">暂存文件</dt><dd data-diagnostics-field="generation-staging">{{ diagnostics.generation_integrity.staging_files }}</dd>
         </dl>
     </section>
+
 </div>
 
-<section class="bg-base-100 rounded-lg border border-base-300 p-4 mt-3">
-    <h3 class="font-semibold text-sm mb-3">最近日志</h3>
-    {% if diagnostics.recent_logs %}
-    <pre class="text-xs whitespace-pre-wrap break-all bg-base-200 rounded p-3 max-h-80 overflow-auto">{{ diagnostics.recent_logs|join('\n') }}</pre>
-    {% else %}
-    <p class="text-sm text-base-content/50">暂无日志</p>
-    {% endif %}
-</section>
-
-<script id="diagnosticsPayload" type="application/json">{{ diagnostics|tojson }}</script>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const payload = JSON.parse(document.getElementById('diagnosticsPayload').textContent || '{}');
-    const toast = document.getElementById('diagnosticsToast');
-
-    function showMessage(message, type) {
-        toast.textContent = message;
-        toast.className = 'alert mb-3 text-sm ' + (type === 'error' ? 'alert-error' : 'alert-success');
-        toast.classList.remove('hidden');
-        window.setTimeout(function() { toast.classList.add('hidden'); }, 2600);
-    }
-
-    function diagnosticsText(data) {
-        return JSON.stringify(data, null, 2);
-    }
-
-    document.getElementById('copyDiagnosticsBtn').addEventListener('click', function() {
-        const text = diagnosticsText(payload);
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(function() {
-                showMessage('诊断信息已复制', 'success');
-            }).catch(function() {
-                showMessage('复制失败，请使用浏览器手动复制页面内容', 'error');
-            });
-        } else {
-            showMessage('当前浏览器不支持自动复制', 'error');
-        }
-    });
-
-    function applyDiagnostics(data) {
-        const autostart = data.autostart || {};
-        const badge = document.getElementById('autostartDiagnosticBadge');
-        badge.textContent = autostart.enabled ? '已开启' : '未开启';
-        badge.classList.toggle('badge-success', !!autostart.enabled);
-        badge.classList.toggle('badge-ghost', !autostart.enabled);
-        document.getElementById('autostartDiagnosticDescription').textContent = autostart.description || '-';
-        document.getElementById('autostartTaskState').textContent = autostart.task_state || '-';
-        ['templates', 'contracts', 'backups'].forEach(function(key) {
-            const target = document.querySelector('[data-diagnostics-field="' + key + '"]');
-            if (target && data.counts) target.textContent = data.counts[key];
-        });
-    }
-
-    function refreshDiagnostics(label) {
-        return fetch('{{ url_for("api_diagnostics") }}', { headers: { 'Accept': 'application/json' } })
-            .then(function(response) { return response.json(); })
-            .then(function(data) {
-                applyDiagnostics(data);
-                showMessage(label || '检测完成', 'success');
-                return data;
-            })
-            .catch(function(err) { showMessage(err.message || '检测失败', 'error'); });
-    }
-
-    document.getElementById('refreshDiagnosticsBtn').addEventListener('click', function() {
-        refreshDiagnostics('诊断信息已刷新');
-    });
-    document.getElementById('pdfCheckBtn').addEventListener('click', function() {
-        refreshDiagnostics('PDF 环境已重新检测');
-    });
-
-    document.querySelectorAll('.diagnostics-folder-form').forEach(function(form) {
-        form.addEventListener('submit', function(event) {
-            event.preventDefault();
-            fetch(form.action, {
-                method: 'POST',
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-Token': form.querySelector('[name="csrf_token"]').value,
-                    'Accept': 'application/json'
-                },
-                body: new FormData(form)
-            })
-            .then(function(response) {
-                return response.json().then(function(data) {
-                    if (!response.ok || !data.success) throw new Error(data.message || '打开目录失败');
-                    return data;
-                });
-            })
-            .then(function(data) { showMessage('已请求打开目录：' + data.path, 'success'); })
-            .catch(function(err) { showMessage(err.message || '打开目录失败', 'error'); });
-        });
-    });
-});
-</script>
+<script id="diagnosticsPayload" type="application/json" data-api-url="{{ url_for('settings.api_diagnostics') }}">{{ diagnostics|tojson }}</script>
+<script src="{{ static_url('js/diagnostics.js') }}"></script>
 
 {% endblock %}

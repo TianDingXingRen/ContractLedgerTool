@@ -1,0 +1,14 @@
+version:
+  file: version.txt
+
+changelog:
+  files:
+    - path: CHANGELOG.md
+      lang: zh
+
+commit:
+  message: "chore: release v{version}"
+
+tag:
+  prefix: v
+  sign: false

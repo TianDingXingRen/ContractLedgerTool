@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}采购项目 - 合同管理工具{% endblock %}
+{% block title %}采购项目 - 采购业务平台{% endblock %}
 {% block breadcrumb %}采购前置 / 项目列表{% endblock %}
 {% block content %}
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
   <div><h1 class="text-2xl font-bold">采购前置工作台</h1><p class="text-sm text-base-content/50 mt-1">从报价准备到合同生成的一体化链路</p></div>
-  <a class="btn btn-primary" href="{{ url_for('procurement_project_new') }}"><i data-lucide="plus" class="w-4 h-4"></i> 新建采购项目</a>
+  <a class="btn btn-primary" href="{{ url_for('procurement.procurement_project_new') }}"><i data-lucide="plus" class="w-4 h-4"></i> 新建采购项目</a>
 </div>
 <form class="card bg-base-100 border border-base-300 mb-4" method="get">
   <div class="card-body p-4 flex flex-col sm:flex-row gap-3">
@@ -17,11 +17,11 @@
   <div class="overflow-x-auto"><table class="table">
     <thead><tr><th>项目</th><th>方式/部门</th><th>进度</th><th>状态</th><th>更新时间</th><th></th></tr></thead>
     <tbody>{% for project in result.rows %}<tr>
-      <td><a class="font-semibold link link-primary" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">{{ project.project_name }}</a><div class="text-xs text-base-content/50 font-mono">{{ project.project_no }}</div></td>
+      <td><a class="font-semibold link link-primary" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">{{ project.project_name }}</a><div class="text-xs text-base-content/50 font-mono">{{ project.project_no }}</div></td>
       <td>{{ procurement_method_labels.get(project.purchase_method, project.purchase_method) }}<div class="text-xs text-base-content/50">{{ project.demand_department or '-' }}</div></td>
       <td class="text-sm">明细 {{ project.item_count }} / 供应商 {{ project.supplier_count }} / 报价 {{ project.quote_count }}</td>
       <td><span class="badge badge-outline">{{ procurement_status_labels.get(project.status, project.status) }}</span></td><td class="text-sm">{{ project.updated_at }}</td>
-      <td><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">查看</a></td>
+      <td><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">查看</a></td>
     </tr>{% else %}<tr><td colspan="6" class="text-center py-12 text-base-content/40">暂无采购项目</td></tr>{% endfor %}</tbody>
   </table></div>
 </div>

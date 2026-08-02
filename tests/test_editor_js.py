@@ -25,30 +25,120 @@ class EditorJavaScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
-    def test_editor_script_exposes_inline_event_handlers(self):
+    def test_editor_uses_delegated_event_modules(self):
+        script_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor-table.js')
+        with open(script_path, 'r', encoding='utf-8') as f:
+            script = f.read()
+
+        self.assertIn("document.addEventListener('click'", script)
+        self.assertIn("document.addEventListener('change'", script)
+        self.assertIn("'add-row'", script)
+        self.assertIn("'remove-column-at'", script)
+        with open(os.path.join(app.RESOURCE_DIR, 'templates', 'editor.html'), encoding='utf-8') as f:
+            template = f.read()
+        self.assertNotIn('onclick=', template)
+        self.assertNotIn('onchange=', template)
+
+    def test_table_required_state_uses_non_empty_rows(self):
         script_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js')
         with open(script_path, 'r', encoding='utf-8') as f:
             script = f.read()
 
-        start = script.find('Object.assign(window,')
-        self.assertNotEqual(start, -1, 'editor.js must expose handlers used by inline HTML events')
-        end = script.find('});', start)
-        self.assertNotEqual(end, -1, 'window handler export block is incomplete')
-        exports_block = script[start:end]
+        self.assertIn('function tableFieldHasContent', script)
+        self.assertIn('return getTableRows(id).some(rowHasContent);', script)
+        self.assertNotIn("const tableFilled = !!(tbody && tbody.querySelectorAll('tr').length > 0);", script)
+        self.assertNotIn("if (!tbody || tbody.querySelectorAll('tr').length === 0)", script)
 
-        for handler_name in (
-            'onFieldChange',
-            'initTable',
-            'addTableColumn',
-            'removeTableColumn',
-            'removeTableColumnAt',
-            'updateColumnLabel',
-            'addTableRow',
-            'removeTableRow',
-            'removeThisRow',
-            'triggerCalc',
-        ):
-            self.assertIn(handler_name, exports_block)
+    def test_live_preview_renders_contract_document_blocks(self):
+        script_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js')
+        with open(script_path, 'r', encoding='utf-8') as f:
+            script = f.read()
+
+        self.assertIn('contract-preview-block', script)
+        self.assertIn('contract-preview-line', script)
+        self.assertIn('contract-preview-table', script)
+        self.assertIn('function renderDocumentPreview', script)
+        self.assertIn('function renderDocumentTableRow', script)
+        self.assertIn('function tableColgroup', script)
+        self.assertIn('function fitContractPreviewPage', script)
+        self.assertIn('livePreviewSummary', script)
+
+    def test_draft_autosave_uses_form_events_and_table_hooks(self):
+        draft_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor-draft.js')
+        editor_path = os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js')
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            draft = f.read()
+        with open(editor_path, 'r', encoding='utf-8') as f:
+            editor = f.read()
+
+        self.assertIn("form.addEventListener('input', scheduleDraftSave);", draft)
+        self.assertIn("form.addEventListener('change', scheduleDraftSave);", draft)
+        self.assertIn("window.addEventListener('beforeunload'", draft)
+        self.assertIn("event.returnValue = '';", draft)
+        self.assertIn('hasUnsavedChanges', draft)
+        self.assertIn('markClean: markClean', draft)
+        self.assertIn('window.ContractEditor.draft', draft)
+        self.assertGreaterEqual(editor.count("typeof scheduleDraftSave === 'function'"), 2)
+
+    def test_editor_preflight_and_tabs_are_keyboard_accessible(self):
+        with open(os.path.join(app.RESOURCE_DIR, 'templates', 'editor.html'), encoding='utf-8') as f:
+            template = f.read()
+        with open(os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor.js'), encoding='utf-8') as f:
+            editor = f.read()
+
+        self.assertIn('role="progressbar"', template)
+        self.assertIn('aria-labelledby="preflightTitle"', template)
+        self.assertIn('id="editorStatusLive" aria-live="polite"', template)
+        self.assertIn("event.key === 'ArrowRight'", editor)
+        self.assertIn("event.key !== 'Escape'", editor)
+        self.assertIn('announceEditorStatus', editor)
+
+    def test_invoice_and_excel_bill_async_loaders_guard_latest_selection(self):
+        with open(
+            os.path.join(app.RESOURCE_DIR, 'static', 'js', 'invoice-form.js'),
+            encoding='utf-8',
+        ) as f:
+            invoice_form = f.read()
+        with open(
+            os.path.join(app.RESOURCE_DIR, 'static', 'js', 'excel-bill.js'),
+            encoding='utf-8',
+        ) as f:
+            excel_bill = f.read()
+
+        self.assertIn('new AbortController()', invoice_form)
+        self.assertIn('targetRequests.get(row) !== controller', invoice_form)
+        self.assertIn('contractField.value !== contract', invoice_form)
+        self.assertIn('if (!response.ok)', invoice_form)
+        self.assertIn('const previousNoticeId = noticeField.value;', invoice_form)
+        self.assertIn('const previousPlanId = planField.value;', invoice_form)
+        self.assertRegex(
+            invoice_form,
+            r"data\.notices \|\| \[\],\s*'不关联',\s*contract,\s*previousNoticeId",
+        )
+        self.assertRegex(
+            invoice_form,
+            r"data\.plans \|\| \[\],\s*'不关联',\s*contract,\s*previousPlanId",
+        )
+        self.assertIn('MAX_ALLOCATION_ROWS = 100', invoice_form)
+        self.assertIn("currencyField.value = 'CNY'", invoice_form)
+        self.assertIn('currencyField.readOnly = true', invoice_form)
+        self.assertIn('pendingTargetLoads += 1;', invoice_form)
+        self.assertIn('pendingTargetLoads - 1', invoice_form)
+        self.assertIn("invoiceForm.addEventListener('submit'", invoice_form)
+        self.assertIn('event.preventDefault();', invoice_form)
+        self.assertIn('button.disabled = true;', invoice_form)
+        self.assertNotIn(
+            "replaceOptions(noticeField, [], '加载中…'",
+            invoice_form,
+        )
+
+        self.assertIn('new AbortController()', excel_bill)
+        self.assertIn('requestId !== contractItemsRequestId', excel_bill)
+        self.assertIn('contractSelect.value !== cid', excel_bill)
+        self.assertIn('if (!resp.ok)', excel_bill)
+        loading = excel_bill.index("textContent = '加载中…';")
+        request = excel_bill.index('    try {', loading)
+        self.assertIn('updateMappingUI();', excel_bill[loading:request])
 
 
 if __name__ == '__main__':

@@ -3,18 +3,19 @@
 import json
 import os
 
-from flask import render_template, request, jsonify, send_file, session
+from flask import Blueprint, render_template, request, jsonify, send_file
 
 import excel_bill_service
-from utils import helpers
+from runtime.flask_paths import current_runtime_paths
 from utils.logger import get_logger
 from utils.errors import GENERIC_ERROR, GENERIC_PARSE_ERROR
 
 
 def register(app):
     """在 Flask app 上注册 Excel 单据相关路由"""
+    bp = Blueprint('excel_bill', __name__)
 
-    @app.route("/excel-bill")
+    @bp.route("/excel-bill")
     def excel_bill_page():
         """Excel 单据生成页面"""
         presets = excel_bill_service.get_presets()
@@ -23,13 +24,13 @@ def register(app):
             presets=presets,
         )
 
-    @app.route("/api/excel-bill/presets")
+    @bp.route("/api/excel-bill/presets")
     def api_presets():
         """获取所有预置表头列表"""
         presets = excel_bill_service.get_presets()
         return jsonify({"presets": presets})
 
-    @app.route("/api/excel-bill/presets/<preset_key>")
+    @bp.route("/api/excel-bill/presets/<preset_key>")
     def api_preset_detail(preset_key):
         """获取某个预置的完整定义（含列信息）"""
         try:
@@ -39,13 +40,13 @@ def register(app):
             get_logger().error('Excel单据错误: %s', e, exc_info=True)
             return jsonify({"error": GENERIC_ERROR}), 404
 
-    @app.route("/api/excel-bill/contracts")
+    @bp.route("/api/excel-bill/contracts")
     def api_contracts_for_bill():
         """获取可用于关联的合同列表"""
         contracts = excel_bill_service.get_contracts_for_selection()
         return jsonify({"contracts": contracts})
 
-    @app.route("/api/excel-bill/contracts/<int:contract_id>/items")
+    @bp.route("/api/excel-bill/contracts/<int:contract_id>/items")
     def api_contract_items(contract_id):
         """获取指定合同的采购标的明细"""
         detail = excel_bill_service.extract_contract_table(contract_id)
@@ -60,14 +61,14 @@ def register(app):
 
     # ── 表头数据保存/加载 ──
 
-    @app.route("/api/excel-bill/defaults", methods=["GET"])
+    @bp.route("/api/excel-bill/defaults", methods=["GET"])
     def api_bill_defaults():
         """列出已保存的表头默认值（可按 preset_key 筛选）"""
         preset_key = request.args.get("preset_key", "")
         items = excel_bill_service.list_header_defaults(preset_key or None)
         return jsonify({"defaults": items})
 
-    @app.route("/api/excel-bill/defaults", methods=["POST"])
+    @bp.route("/api/excel-bill/defaults", methods=["POST"])
     def api_save_bill_defaults():
         """保存当前表头填写值"""
         try:
@@ -94,7 +95,7 @@ def register(app):
             get_logger().error("Save bill defaults failed: %s", e, exc_info=True)
             return jsonify({"error": GENERIC_ERROR}), 500
 
-    @app.route("/api/excel-bill/defaults/<filename>", methods=["GET"])
+    @bp.route("/api/excel-bill/defaults/<filename>", methods=["GET"])
     def api_load_bill_defaults(filename):
         """加载指定保存的表头默认值"""
         try:
@@ -104,7 +105,7 @@ def register(app):
             get_logger().error('Excel单据错误: %s', e, exc_info=True)
             return jsonify({"error": GENERIC_ERROR}), 404
 
-    @app.route("/api/excel-bill/defaults/<filename>", methods=["DELETE"])
+    @bp.route("/api/excel-bill/defaults/<filename>", methods=["DELETE"])
     def api_delete_bill_defaults(filename):
         """删除指定保存的表头默认值"""
         try:
@@ -116,7 +117,7 @@ def register(app):
             get_logger().error('Excel单据API错误: %s', e, exc_info=True)
             return jsonify({"error": GENERIC_ERROR}), 500
 
-    @app.route("/excel-bill/generate", methods=["POST"])
+    @bp.route("/excel-bill/generate", methods=["POST"])
     def excel_bill_generate():
         """生成 Excel 单据文件并下载"""
         try:
@@ -163,15 +164,15 @@ def register(app):
                     return jsonify({"error": GENERIC_PARSE_ERROR}), 400
 
             # 生成 Excel
-            output_dir = os.path.join(helpers.OUTPUT_FOLDER, "excel_bills")
+            output_dir = os.path.join(
+                str(current_runtime_paths().output_dir),
+                "excel_bills",
+            )
             path = excel_bill_service.generate_bill_excel(
                 preset_key, header_data, detail_rows, output_dir
             )
 
-            get_logger().info(
-                "Excel bill generated: preset=%s, bill_no=%s, detail_rows=%d, path=%s",
-                preset_key, bill_no, len(detail_rows), path,
-            )
+            get_logger().info('Excel bill generated with %d detail rows', len(detail_rows))
 
             return send_file(
                 path,
@@ -186,3 +187,5 @@ def register(app):
         except Exception as e:
             get_logger().error("Excel bill generation failed: %s", e, exc_info=True)
             return jsonify({"error": GENERIC_ERROR}), 500
+
+    app.register_blueprint(bp)

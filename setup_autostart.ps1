@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $AppDir = [System.IO.Path]::GetFullPath($AppDir)
+$TaskName = "ContractLedgerTool"
 $LauncherName = "ContractLedgerTool_Autostart.vbs"
 $StartupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
 $LauncherPath = Join-Path $StartupDir $LauncherName
@@ -27,6 +28,14 @@ $Command = "`"$PowerShellExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle H
 
 try {
     New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
+    try {
+        $ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($ExistingTask) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        }
+    } catch {
+        Write-Host "旧计划任务清理跳过: $_" -ForegroundColor Yellow
+    }
     foreach ($LegacyPath in $LegacyLauncherPaths) {
         if (Test-Path -LiteralPath $LegacyPath) {
             Remove-Item -LiteralPath $LegacyPath -Force

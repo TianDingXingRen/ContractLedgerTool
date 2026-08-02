@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 
 from docx import Document
 from openpyxl import load_workbook
 
 import procurement_store
 from services import procurement_file_service
+from services.isolated_process import run_isolated_worker
+from utils.logger import get_logger
+from utils.money import to_minor
+from utils.security import validate_office_archive
 
 
 MAPPING_FIELDS = [
@@ -20,6 +24,23 @@ MAPPING_FIELDS = [
     ('delivery_period', '分项交期'), ('technical_deviation', '技术偏离'),
     ('commercial_deviation', '商务偏离'), ('remark', '备注'),
 ]
+MAX_MAPPING_TABLES = 50
+MAX_MAPPING_ROWS = 10_000
+MAX_MAPPING_COLUMNS = 200
+MAX_MAPPING_CELL_TEXT = 2_000
+MAX_MAPPING_PDF_PAGES = 50
+MAPPING_PARSE_TIMEOUT_SECONDS = 60
+MAPPING_PARSE_MEMORY_MB = 1536
+
+
+def _bounded_cell(value):
+    return str(_json_value(value))[:MAX_MAPPING_CELL_TEXT]
+
+
+def _close_resource(resource):
+    close = getattr(resource, 'close', None)
+    if close is not None:
+        close()
 
 
 def _json_value(value):
@@ -36,16 +57,33 @@ def _extract_excel(path):
     workbook = load_workbook(path, data_only=False, read_only=True)
     try:
         tables = []
-        for sheet in workbook.worksheets:
+        total_rows = 0
+        for sheet in workbook.worksheets[:MAX_MAPPING_TABLES]:
+            if sheet.max_row > MAX_MAPPING_ROWS:
+                raise ValueError(
+                    f'工作表“{sheet.title}”声明的行数超过 {MAX_MAPPING_ROWS}'
+                )
+            if sheet.max_column > MAX_MAPPING_COLUMNS:
+                raise ValueError(
+                    f'工作表“{sheet.title}”声明的列数超过 {MAX_MAPPING_COLUMNS}'
+                )
             rows = []
-            for row in sheet.iter_rows(values_only=True):
-                values = [_json_value(value) for value in row]
+            for row in sheet.iter_rows(
+                min_row=1,
+                max_row=max(1, sheet.max_row),
+                max_col=max(1, sheet.max_column),
+                values_only=True,
+            ):
+                values = [_bounded_cell(value) for value in row]
                 if any(value not in ('', None) for value in values):
                     rows.append(values)
-                if len(rows) >= 5000:
+                    total_rows += 1
+                if len(rows) >= 5000 or total_rows >= MAX_MAPPING_ROWS:
                     break
             if rows:
                 tables.append({'name': sheet.title, 'rows': rows})
+            if total_rows >= MAX_MAPPING_ROWS:
+                break
         return tables, []
     finally:
         workbook.close()
@@ -54,10 +92,21 @@ def _extract_excel(path):
 def _extract_word(path):
     document = Document(path)
     tables = []
-    for index, table in enumerate(document.tables, start=1):
-        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+    total_rows = 0
+    for index, table in enumerate(document.tables[:MAX_MAPPING_TABLES], start=1):
+        rows = []
+        for row in table.rows:
+            rows.append([
+                str(cell.text or '').strip()[:MAX_MAPPING_CELL_TEXT]
+                for cell in row.cells[:MAX_MAPPING_COLUMNS]
+            ])
+            total_rows += 1
+            if total_rows >= MAX_MAPPING_ROWS:
+                break
         if rows:
             tables.append({'name': f'表格{index}', 'rows': rows})
+        if total_rows >= MAX_MAPPING_ROWS:
+            break
     return tables, []
 
 
@@ -69,11 +118,31 @@ def _extract_pdf(path):
         return [], ['缺少 pdfplumber，安装 requirements.txt 后可解析文本型 PDF']
     tables = []
     with pdfplumber.open(path) as pdf:
-        for page_number, page in enumerate(pdf.pages, start=1):
+        total_rows = 0
+        for page_number, page in enumerate(
+            pdf.pages[:MAX_MAPPING_PDF_PAGES], start=1
+        ):
             for table_index, raw_table in enumerate(page.extract_tables() or [], start=1):
-                rows = [[str(cell or '').strip() for cell in row] for row in raw_table if row]
+                rows = []
+                for row in raw_table:
+                    if not row:
+                        continue
+                    rows.append([
+                        str(cell or '').strip()[:MAX_MAPPING_CELL_TEXT]
+                        for cell in row[:MAX_MAPPING_COLUMNS]
+                    ])
+                    total_rows += 1
+                    if total_rows >= MAX_MAPPING_ROWS:
+                        break
                 if rows:
                     tables.append({'name': f'第{page_number}页表格{table_index}', 'rows': rows})
+                if (
+                    len(tables) >= MAX_MAPPING_TABLES
+                    or total_rows >= MAX_MAPPING_ROWS
+                ):
+                    break
+            if len(tables) >= MAX_MAPPING_TABLES or total_rows >= MAX_MAPPING_ROWS:
+                break
     if tables:
         return tables, diagnostics
     try:
@@ -83,18 +152,54 @@ def _extract_pdf(path):
         if tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
         pdf = pdfium.PdfDocument(path)
-        images = [page.render(scale=3).to_pil() for page in pdf]
         rows = []
-        for page_number, image in enumerate(images, start=1):
-            text = pytesseract.image_to_string(image, lang='chi_sim+eng')
-            page_rows = [[part.strip() for part in line.split('\t')]
-                         for line in text.splitlines() if line.strip()]
-            rows.extend(page_rows)
+        try:
+            for page_index in range(min(len(pdf), MAX_MAPPING_PDF_PAGES)):
+                page = pdf[page_index]
+                bitmap = None
+                image = None
+                try:
+                    bitmap = page.render(scale=3)
+                    image = bitmap.to_pil()
+                    text = pytesseract.image_to_string(
+                        image, lang='chi_sim+eng', timeout=20
+                    )
+                    for line in text.splitlines():
+                        if not line.strip():
+                            continue
+                        rows.append([
+                            part.strip()[:MAX_MAPPING_CELL_TEXT]
+                            for part in line.split('\t')[:MAX_MAPPING_COLUMNS]
+                        ])
+                        if len(rows) >= MAX_MAPPING_ROWS:
+                            break
+                finally:
+                    if image is not None:
+                        _close_resource(image)
+                    if bitmap is not None:
+                        _close_resource(bitmap)
+                    _close_resource(page)
+                if len(rows) >= MAX_MAPPING_ROWS:
+                    break
+        finally:
+            _close_resource(pdf)
         if rows:
             tables.append({'name': 'OCR识别结果', 'rows': rows})
     except Exception as exc:
         diagnostics.append(f'未识别到 PDF 表格；扫描件 OCR 需要本机 Tesseract 与 Poppler：{exc}')
     return tables, diagnostics
+
+
+def _mapping_extract_worker(source_type, path, result_queue):
+    extractors = {
+        'excel': _extract_excel,
+        'word': _extract_word,
+        'pdf': _extract_pdf,
+    }
+    extractor = extractors.get(source_type)
+    if extractor is None:
+        raise ValueError('不支持的报价解析类型')
+    result_queue.put(('ok', extractor(path)))
 
 
 def create_mapping_job(project_id, supplier_id, quote_round, file_storage):
@@ -103,13 +208,21 @@ def create_mapping_job(project_id, supplier_id, quote_round, file_storage):
     if not project or not supplier or supplier['project_id'] != project_id:
         raise ValueError('采购项目或候选供应商不存在')
     extension = os.path.splitext(file_storage.filename or '')[1].lower()
-    extractors = {'.xlsx': ('excel', _extract_excel), '.docx': ('word', _extract_word), '.pdf': ('pdf', _extract_pdf)}
-    if extension not in extractors:
+    source_types = {'.xlsx': 'excel', '.docx': 'word', '.pdf': 'pdf'}
+    if extension not in source_types:
         raise ValueError('非标准报价仅支持 .xlsx、.docx 或 .pdf')
     saved = procurement_file_service.save_upload(project, 'supplier_quote', file_storage)
-    source_type, extractor = extractors[extension]
+    source_type = source_types[extension]
     try:
-        tables, diagnostics = extractor(saved['absolute_path'])
+        if extension in {'.xlsx', '.docx'}:
+            validate_office_archive(saved['absolute_path'])
+        tables, diagnostics = run_isolated_worker(
+            _mapping_extract_worker,
+            (source_type, saved['absolute_path']),
+            timeout=MAPPING_PARSE_TIMEOUT_SECONDS,
+            label='供应商报价解析',
+            memory_limit_mb=MAPPING_PARSE_MEMORY_MB,
+        )
         if not tables:
             raise ValueError('；'.join(diagnostics) or '文件中未识别到可映射的表格')
         return procurement_store.create_mapping_job({
@@ -122,8 +235,15 @@ def create_mapping_job(project_id, supplier_id, quote_round, file_storage):
         try:
             os.remove(saved['absolute_path'])
         except OSError:
-            pass
+            get_logger().warning(
+                '非标准报价解析失败后无法删除上传文件',
+                exc_info=True,
+            )
         raise
+
+
+def get_mapping_job(job_id):
+    return procurement_store.get_mapping_job(job_id)
 
 
 def _decimal(value, label, errors, row_number, required=True):
@@ -135,6 +255,9 @@ def _decimal(value, label, errors, row_number, required=True):
     except InvalidOperation:
         errors.append(f'第 {row_number} 行{label}格式无效')
         return None
+    if not number.is_finite():
+        errors.append(f'第 {row_number} 行{label}必须是有限数值')
+        return None
     if number < 0:
         errors.append(f'第 {row_number} 行{label}不能为负数')
         return None
@@ -142,7 +265,7 @@ def _decimal(value, label, errors, row_number, required=True):
 
 
 def _minor(number):
-    return int((number * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return to_minor(number, allow_none=False)
 
 
 def _cell(row, mapping, key):
@@ -167,9 +290,19 @@ def map_to_import_job(mapping_job_id, form):
     if header_row >= len(table['rows']):
         raise ValueError('表头行号超出文件范围')
     mapping = {}
-    for key, _ in MAPPING_FIELDS:
+    header_width = len(table['rows'][header_row])
+    for key, label in MAPPING_FIELDS:
         raw = str(form.get(f'map_{key}', '')).strip()
-        mapping[key] = int(raw) if raw else None
+        if not raw:
+            mapping[key] = None
+            continue
+        try:
+            column_index = int(raw)
+        except ValueError as exc:
+            raise ValueError(f'{label}列映射无效') from exc
+        if column_index < 0 or column_index >= header_width:
+            raise ValueError(f'{label}列映射超出表头范围')
+        mapping[key] = column_index
     if mapping['item_name'] is None and mapping['project_item_id'] is None and mapping['line_no'] is None:
         raise ValueError('至少映射项目明细ID、行号或物资名称之一')
     if mapping['unit_price'] is None:
@@ -193,12 +326,12 @@ def map_to_import_job(mapping_job_id, form):
             try:
                 item = by_id.get(int(raw_id))
             except ValueError:
-                pass
+                get_logger().debug('报价映射中的项目明细 ID 无效: %r', raw_id)
         if item is None and str(raw_line).strip():
             try:
                 item = by_line.get(int(raw_line))
             except ValueError:
-                pass
+                get_logger().debug('报价映射中的行号无效: %r', raw_line)
         if item is None:
             name = str(_cell(row, mapping, 'item_name') or '').strip()
             spec = str(_cell(row, mapping, 'spec_model') or '').strip()
@@ -242,9 +375,13 @@ def map_to_import_job(mapping_job_id, form):
     if tax_raw:
         try:
             tax = Decimal(tax_raw)
-            if tax < 0 or tax > 100:
+            if not tax.is_finite() or tax < 0 or tax > 100:
                 raise InvalidOperation
-            tax_bps = int(tax * 100)
+            basis_points = tax * 100
+            if basis_points != basis_points.to_integral_value():
+                errors.append('税率最多保留两位小数')
+            else:
+                tax_bps = int(basis_points)
         except InvalidOperation:
             errors.append('税率格式无效')
     payload = {

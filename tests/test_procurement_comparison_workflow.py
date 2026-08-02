@@ -96,12 +96,43 @@ def test_comparison_and_clarification_workflow_matches_public_wrappers(tmp_db):
     assert question['supplier_name'] == '供应商A'
 
     procurement_store.update_clarification(question['id'], {
+        'project_id': project_id,
         'status': 'replied',
         'answer_text': '已调整',
     })
     updated = procurement_store.list_clarifications(project_id)[0]
     assert updated['status'] == 'replied'
     assert updated['answer_text'] == '已调整'
+
+
+def test_clarification_update_rejects_question_from_another_project(tmp_db):
+    import pytest
+    import procurement_store
+
+    procurement_store.init_db()
+    project_id, supplier_id, item_id = _project_supplier_item(procurement_store)
+    procurement_store.create_clarifications_from_results(project_id, [{
+        'supplier_id': supplier_id,
+        'project_item_id': item_id,
+        'question_type': 'price',
+        'question_text': '原问题',
+    }])
+    question = procurement_store.list_clarifications(project_id)[0]
+    other_project_id = procurement_store.create_project({
+        'project_no': 'CW-OTHER',
+        'project_name': '另一个项目',
+    })
+
+    with pytest.raises(ValueError, match='不属于该采购项目'):
+        procurement_store.update_clarification(question['id'], {
+            'project_id': other_project_id,
+            'status': 'closed',
+            'answer_text': '越权修改',
+        })
+
+    unchanged = procurement_store.list_clarifications(project_id)[0]
+    assert unchanged['status'] == 'pending'
+    assert unchanged['answer_text'] == ''
 
 
 def test_rule_config_workflow_matches_public_wrappers(tmp_db):

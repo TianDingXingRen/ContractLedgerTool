@@ -1,429 +1,321 @@
 {% extends "base.html" %}
-{% block title %}合同详情 - 合同管理工具{% endblock %}
-{% block breadcrumb %}contract_detail{% endblock %}
+{% import "_ui_macros.html" as ui %}
+{% block title %}{{ contract.title }} - 合同工作区{% endblock %}
+{% block breadcrumb %}合同台账 / 合同工作区{% endblock %}
 {% block content %}
+{% set notice_status_labels = {'draft':'草稿','issued':'已发出','acknowledged':'已确认','closed':'已关闭','cancelled':'已取消'} %}
+{% set invoice_review_labels = {'pending':'待核验','verified':'已核验','exception':'异常'} %}
+{% set invoice_status_labels = {'valid':'有效','red':'红字','void':'作废'} %}
 
-<div class="flex items-center justify-between mb-6">
+<div class="ui-page" data-testid="contract-workspace">
+  {% if error %}<div class="ui-alert" role="alert">{{ error }}</div>{% endif %}
+
+  <header class="ui-page-header">
     <div>
-        <h2 class="text-2xl font-bold">
-            {{ contract.title }}
-            {% if contract.deleted_at %}
-            <span class="badge badge-error ml-2">已删除</span>
-            {% endif %}
-        </h2>
-        <p class="text-base-content/50 text-sm mt-1">
-            {{ contract.contract_no or '未编号合同' }} ·
-            生成时间 {{ contract.created_at }}
-            {% if contract.deleted_at %}
-            · <span class="text-error">删除于 {{ contract.deleted_at }}</span>
-            {% endif %}
-        </p>
+      <div class="flex items-center gap-2 flex-wrap">
+        <h1 class="ui-page-title">{{ contract.title }}</h1>
+        {{ ui.badge(contract_status_labels.get(contract.status, contract.status), ui_tone(contract.status)) }}
+        {% if contract.deleted_at %}{{ ui.badge('已删除', 'red') }}{% endif %}
+        {% if contract.record_origin == 'imported' %}{{ ui.badge('外部导入', 'blue') }}{% endif %}
+      </div>
+      <p class="ui-page-subtitle">
+        {{ contract.contract_no or '未编号合同' }} · {{ contract.counterparty or '未填写对方单位' }}
+        {% if contract.project_name %} · {{ contract.project_name }}{% endif %}
+        {% if contract.record_origin == 'imported' and contract.original_filename %} · 原文件 {{ contract.original_filename }}{% endif %}
+      </p>
     </div>
-    <div class="flex gap-2">
-        <a href="{{ url_for('contract_ledger') }}" class="btn btn-ghost btn-sm">返回台账</a>
-        <a href="{{ url_for('payment_plan_list') }}" class="btn btn-ghost btn-sm">付款计划</a>
-        {% if contract.docx_path %}
-        <a href="{{ url_for('contract_download', contract_id=contract.id) }}" class="btn btn-primary btn-sm gap-1">
-            <i data-lucide="download" class="w-4 h-4"></i> 下载合同
-        </a>
-        <a href="{{ url_for('contract_download_pdf', contract_id=contract.id) }}" class="btn btn-ghost btn-sm gap-1">
-            <i data-lucide="file-text" class="w-4 h-4"></i> 下载 PDF
-        </a>
-        {% endif %}
-        {% if contract.deleted_at %}
-        <form method="post" action="{{ url_for('contract_restore', contract_id=contract.id) }}" class="contents" onsubmit="return confirm('确定恢复此合同？')">
+    <div class="ui-page-actions">
+      {% if contract.deleted_at %}
+      <form method="post" action="{{ url_for('contracts.contract_restore', contract_id=contract.id) }}" data-confirm="确定恢复此合同？" data-confirm-title="恢复合同" data-confirm-ok="恢复">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="ui-button primary" type="submit"><i data-lucide="rotate-ccw"></i>恢复合同</button>
+      </form>
+      {% elif tab == 'overview' %}
+      <button class="ui-button primary" type="button" data-drawer-open="contractEditDrawer"><i data-lucide="pencil-line"></i>编辑合同</button>
+      {% elif tab == 'payments' %}
+      <button class="ui-button primary" type="button" data-drawer-open="newPlanDrawer"><i data-lucide="plus"></i>新增付款计划</button>
+      {% elif tab == 'production' %}
+        {% if contract_items %}<a class="ui-button primary" href="{{ url_for('production.production_notice_new', contract_id=contract.id) }}"><i data-lucide="send"></i>发投产通知</a>
+        {% else %}<a class="ui-button primary" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}"><i data-lucide="boxes"></i>维护产品基线</a>{% endif %}
+      {% elif tab == 'invoices' %}
+      <a class="ui-button primary" href="{{ url_for('invoices.invoice_new', contract_id=contract.id) }}"><i data-lucide="receipt-text"></i>登记发票</a>
+      {% endif %}
+      <a class="ui-button secondary" href="{{ url_for('contracts.contract_ledger') }}">返回台账</a>
+      <details class="ui-menu">
+        <summary class="ui-icon-button" aria-label="更多合同操作"><i data-lucide="more-horizontal"></i></summary>
+        <div class="ui-menu-panel">
+          {% if contract.docx_path %}
+          <a class="ui-menu-item" href="{{ url_for('contracts.contract_download', contract_id=contract.id) }}"><i data-lucide="download"></i>下载 DOCX</a>
+          {% endif %}
+          <a class="ui-menu-item" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}"><i data-lucide="boxes"></i>维护产品基线</a>
+          <a class="ui-menu-item" href="{{ url_for('payments.payment_plan_list') }}"><i data-lucide="calendar-days"></i>付款工作台</a>
+          {% if not contract.deleted_at %}
+          <form method="post" action="{{ url_for('contracts.contract_soft_delete', contract_id=contract.id) }}" data-confirm="确定将此合同移入回收站？" data-confirm-title="移入回收站" data-confirm-ok="删除" data-confirm-danger="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-success btn-sm gap-1">
-                <i data-lucide="rotate-ccw" class="w-4 h-4"></i> 恢复
-            </button>
-        </form>
-        {% else %}
-        <form method="post" action="{{ url_for('contract_soft_delete', contract_id=contract.id) }}" class="contents" onsubmit="return confirm('确定将此合同移入回收站？')">
+            <button class="ui-menu-item danger" type="submit"><i data-lucide="trash-2"></i>移入回收站</button>
+          </form>
+          {% elif not procurement_linked %}
+          <form method="post" action="{{ url_for('contracts.contract_permanent_delete', contract_id=contract.id) }}" data-confirm="永久删除后无法恢复，确定继续？" data-confirm-title="永久删除合同" data-confirm-ok="永久删除" data-confirm-danger="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-ghost btn-sm text-error gap-1">
-                <i data-lucide="alert-triangle" class="w-4 h-4"></i> 删除
-            </button>
-        </form>
-        {% endif %}
+            <button class="ui-menu-item danger" type="submit"><i data-lucide="trash-2"></i>永久删除</button>
+          </form>
+          {% else %}
+          <span class="ui-menu-item" style="cursor:not-allowed;color:var(--ui-text-faint)" title="采购关联合同需保留审计记录，不能永久删除"><i data-lucide="info"></i>采购关联合同需保留审计记录，不能永久删除</span>
+          {% endif %}
+        </div>
+      </details>
     </div>
+  </header>
+
+  <nav class="ui-tabs" aria-label="合同工作区标签">
+    <a class="ui-tab {{ 'active' if tab == 'overview' }}" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='overview') }}">概览</a>
+    <a class="ui-tab {{ 'active' if tab == 'payments' }}" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='payments') }}">付款管理<span class="ui-tab-count">{{ summary.confirmed_plan_count }}</span></a>
+    <a class="ui-tab {{ 'active' if tab == 'production' }}" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='production') }}">投产管理<span class="ui-tab-count">{{ summary.production_count }}</span></a>
+    <a class="ui-tab {{ 'active' if tab == 'invoices' }}" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='invoices') }}">发票管理<span class="ui-tab-count">{{ summary.invoice_count }}</span></a>
+    <a class="ui-tab {{ 'active' if tab == 'history' }}" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='history') }}">变更记录</a>
+  </nav>
+
+  {% if tab == 'overview' %}
+  <section class="ui-metrics" aria-label="合同执行摘要">
+    {{ ui.metric('合同金额', format_money(summary.contract_amount), contract.status and contract_status_labels.get(contract.status, contract.status), 'blue') }}
+    {{ ui.metric('累计投产', format_money(summary.production_amount), summary.production_qty ~ ' 件 · ' ~ summary.production_count ~ ' 份通知') }}
+    {{ ui.metric('未付余额', format_money(summary.payment_unpaid), '已付 ' ~ format_money(summary.payment_paid), 'orange' if summary.payment_unpaid else 'green') }}
+    {{ ui.metric('发票分摊', format_money(summary.invoice_allocated), '待分摊 ' ~ format_money(summary.invoice_unallocated), 'green' if not summary.invoice_unallocated else 'orange') }}
+  </section>
+
+  <div class="ui-layout">
+    <div class="ui-stack">
+      <section class="ui-panel">
+        <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">合同信息</h2><p class="ui-panel-subtitle">默认只读，避免误改台账字段</p></div><button class="ui-button ghost compact" type="button" data-drawer-open="contractEditDrawer">编辑</button></div>
+        <div class="ui-panel-body">
+          <dl class="ui-kv-grid">
+            <div class="ui-kv"><dt>合同编号</dt><dd>{{ contract.contract_no or '—' }}</dd></div>
+            <div class="ui-kv"><dt>合同名称</dt><dd>{{ contract.title or '—' }}</dd></div>
+            <div class="ui-kv"><dt>对方单位</dt><dd>{{ contract.counterparty or '—' }}</dd></div>
+            <div class="ui-kv"><dt>合同金额</dt><dd>{{ format_money(contract.amount) }}</dd></div>
+            <div class="ui-kv"><dt>签订日期</dt><dd>{{ format_date(contract.sign_date) }}</dd></div>
+            <div class="ui-kv"><dt>到期日期</dt><dd>{{ format_date(contract.expiry_date) }}</dd></div>
+            <div class="ui-kv"><dt>负责人</dt><dd>{{ contract.owner or '—' }}</dd></div>
+            <div class="ui-kv"><dt>所属项目</dt><dd>{{ contract.project_name or '—' }}</dd></div>
+            <div class="ui-kv"><dt>覆盖号段</dt><dd>{% if contract.coverage_start is not none %}{{ contract.coverage_start }}—{{ contract.coverage_end }}{% else %}—{% endif %}</dd></div>
+            <div class="ui-kv"><dt>{{ '导入时间' if contract.record_origin == 'imported' else '生成时间' }}</dt><dd>{{ contract.created_at }}</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="ui-panel">
+        <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">执行链路</h2><p class="ui-panel-subtitle">合同产品、投产、付款和发票的当前状态</p></div></div>
+        <div class="ui-panel-body flush">
+          <table class="ui-table"><tbody>
+            <tr><td><div class="primary-text">产品基线</div><div class="secondary-text">维护合同数量、已发与剩余数量</div></td><td class="number">{{ contract_items|length }} 项</td><td><a class="ui-button ghost compact" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}">查看</a></td></tr>
+            <tr><td><div class="primary-text">投产通知</div><div class="secondary-text">累计投产 {{ summary.production_qty }} 件</div></td><td class="number">{{ summary.production_count }} 份</td><td><a class="ui-button ghost compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='production') }}">查看</a></td></tr>
+            <tr><td><div class="primary-text">付款计划</div><div class="secondary-text">已确认应付 {{ format_money(summary.payment_due) }}</div></td><td class="number">{{ summary.confirmed_plan_count }} 笔</td><td><a class="ui-button ghost compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='payments') }}">查看</a></td></tr>
+            <tr><td><div class="primary-text">进项发票</div><div class="secondary-text">已分摊 {{ format_money(summary.invoice_allocated) }}</div></td><td class="number">{{ summary.invoice_count }} 张</td><td><a class="ui-button ghost compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='invoices') }}">查看</a></td></tr>
+          </tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <aside class="ui-stack">
+      <section class="ui-panel">
+        <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">待处理事项</h2><p class="ui-panel-subtitle">只列出需要人工介入的事项</p></div></div>
+        <div class="ui-panel-body">
+          <div class="ui-task-list">
+            {% if summary.review_rule_count or summary.pending_rule_count %}<div class="ui-task"><div><div class="ui-task-title">付款规则需要复核</div><div class="ui-task-note">{{ summary.pending_rule_count }} 条待确认，{{ summary.review_rule_count }} 条存在提示</div></div><a class="ui-button ghost compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='payments') }}">处理</a></div>{% endif %}
+            {% if summary.overdue_count %}<div class="ui-task"><div><div class="ui-task-title">存在逾期付款</div><div class="ui-task-note">{{ summary.overdue_count }} 笔已确认计划超过应付日期</div></div><a class="ui-button ghost compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='payments') }}">处理</a></div>{% endif %}
+            {% if summary.pending_invoice_count or summary.invoice_unallocated %}<div class="ui-task"><div><div class="ui-task-title">发票尚未完成处理</div><div class="ui-task-note">{{ summary.pending_invoice_count }} 张待核验，待分摊 {{ format_money(summary.invoice_unallocated) }}</div></div><a class="ui-button ghost compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='invoices') }}">处理</a></div>{% endif %}
+            {% if not contract_items %}<div class="ui-task"><div><div class="ui-task-title">尚未建立产品基线</div><div class="ui-task-note">维护产品后才能准确记录每次投产数量</div></div><a class="ui-button ghost compact" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}">维护</a></div>{% endif %}
+            {% if not summary.review_rule_count and not summary.pending_rule_count and not summary.overdue_count and not summary.pending_invoice_count and not summary.invoice_unallocated and contract_items %}<div class="ui-empty" style="min-height:145px;padding:20px"><span class="ui-empty-icon"><i data-lucide="check"></i></span><strong>当前没有待处理事项</strong><p>合同执行数据处于可跟进状态。</p></div>{% endif %}
+          </div>
+        </div>
+      </section>
+
+      <section class="ui-panel">
+        <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">最近动态</h2><p class="ui-panel-subtitle">只展示已真实发生的业务事件</p></div></div>
+        <div class="ui-panel-body">
+          {% if activity %}<div class="ui-timeline">{% for item in activity %}<div class="ui-timeline-item"><div class="ui-timeline-title">{{ item.title }}</div><div class="ui-timeline-note">{{ item.note }}</div><div class="ui-timeline-time">{{ item.time }}</div></div>{% endfor %}</div>
+          {% else %}{{ ui.empty_state('history', '暂无业务动态', '投产、付款或发票发生后会显示在这里。') }}{% endif %}
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  {% elif tab == 'payments' %}
+  <section class="ui-metrics">
+    {{ ui.metric('付款规则', payment_rules|length ~ ' 条', summary.pending_rule_count ~ ' 条待确认') }}
+    {{ ui.metric('已确认计划', summary.confirmed_plan_count ~ ' 笔', '应付 ' ~ format_money(summary.payment_due), 'blue') }}
+    {{ ui.metric('累计已付', format_money(summary.payment_paid), '按已确认计划统计', 'green') }}
+    {{ ui.metric('未付余额', format_money(summary.payment_unpaid), summary.overdue_count ~ ' 笔逾期', 'red' if summary.overdue_count else 'orange') }}
+  </section>
+
+  <section class="ui-panel" id="contract-serials">
+    <div class="ui-panel-header">
+      <div class="ui-panel-heading"><h2 class="ui-panel-title">合同编号台账</h2><p class="ui-panel-subtitle">逐编号维护金额，付款计划直接选择编号；不依赖投产通知</p></div>
+      <div class="ui-table-actions">
+        <form method="post" action="{{ url_for('payments.contract_serials_sync', contract_id=contract.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_anchor" value="contract-serials"><button class="ui-button secondary compact" type="submit">同步合同号段</button></form>
+        {% if contract_serials %}<button class="ui-button secondary compact" type="button" data-drawer-open="contractSerialDrawer">维护编号金额</button>{% endif %}
+      </div>
+    </div>
+    <div class="ui-panel-body flush">
+      {% if contract_serials %}<div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>合同内编号</th><th class="number">本编号金额</th><th class="number">付款节点</th><th>状态</th><th>备注</th></tr></thead><tbody>
+        {% for serial in contract_serials %}<tr><td><div class="primary-text">{{ serial.serial_no }}号</div></td><td class="number">{{ format_money(serial.serial_amount) if serial.serial_amount is not none else '待维护' }}</td><td class="number">{{ serial.payment_plan_count }} 笔</td><td>{{ ui.badge('有效' if serial.status == 'active' else '已停用', 'green' if serial.status == 'active' else 'gray') }}</td><td>{{ serial.remark or '—' }}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% elif contract.coverage_start is none %}{{ ui.empty_state('list-ordered', '尚未设置合同号段', '先在编辑合同中维护覆盖起始号和结束号，再同步生成编号台账。') }}
+      {% else %}{{ ui.empty_state('list-ordered', '尚未生成编号台账', '按合同覆盖范围生成逐编号记录，随后维护每个编号的金额。') }}{% endif %}
+    </div>
+  </section>
+
+  <section class="ui-panel" id="payment-rules">
+    <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">合同付款规则</h2><p class="ui-panel-subtitle">规则描述合同约定；重复规则会由投产通知等事件生成实际付款计划</p></div></div>
+    <div class="ui-panel-body flush">
+      {% if payment_rules %}<div class="ui-table-wrap"><table class="ui-table" data-testid="payment-rule-table"><thead><tr><th>款项</th><th>解析状态</th><th>触发范围</th><th>触发条件</th><th>计算基数</th><th class="number">比例</th><th>确认状态</th><th></th></tr></thead><tbody>
+        {% for rule in payment_rules %}{% set ps = rule.parse_status or 'manual' %}<tr id="payment-rule-{{ rule.id }}">
+          <td><div class="primary-text">{{ rule.phase_name or '付款规则' }}</div><div class="secondary-text">{{ '重复触发' if rule.repeat_mode == 'each_event' else '一次性' }}</div></td>
+          <td>{{ ui.badge(payment_parse_status_labels.get(ps, ps), ui_tone(ps)) }}</td>
+          <td>{{ '每次投产通知' if rule.scope == 'production_notice' else '每批到货' if rule.scope == 'delivery_batch' else '结算周期' if rule.scope == 'settlement_period' else '合同范围' }}</td>
+          <td><div class="primary-text">{{ rule.trigger_event or '未明确' }}</div>{% if rule.condition_logic in ('AND','OR') %}<div class="secondary-text">组合条件 {{ rule.condition_logic }}</div>{% endif %}</td>
+          <td>{{ payment_amount_basis_labels.get(rule.amount_basis, rule.amount_basis_text or '未明确') }}</td>
+          <td class="number">{{ (rule.ratio ~ '%') if rule.ratio is not none else '—' }}</td>
+          <td>{{ ui.badge(confirm_status_labels.get(rule.confirm_status, rule.confirm_status), ui_tone(rule.confirm_status)) }}</td>
+          <td><div class="ui-table-actions">
+            {% if rule.confirm_status != 'confirmed' and ps not in ('conflict','unsupported') %}<form method="post" action="{{ url_for('payments.payment_rule_status', contract_id=contract.id, rule_id=rule.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="confirmed"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_anchor" value="payment-rule-{{ rule.id }}"><button class="ui-button secondary compact" type="submit">确认</button></form>{% endif %}
+            <button class="ui-button ghost compact" type="button" data-drawer-open="ruleDrawer{{ rule.id }}">查看与处理</button>
+          </div></td>
+        </tr>{% endfor %}
+      </tbody></table></div>{% else %}{{ ui.empty_state('scan-text', '暂无付款规则', '当前合同没有可展示的付款规则，可直接新增实际付款计划。') }}{% endif %}
+    </div>
+  </section>
+
+  <section class="ui-panel" id="payment-plans">
+    <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">实际付款计划</h2><p class="ui-panel-subtitle">这里只显示已经形成具体付款义务的实例</p></div><form method="post" action="{{ url_for('payments.payment_plans_confirm_all', contract_id=contract.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><button class="ui-button secondary compact" type="submit">确认完整项</button></form></div>
+    <div class="ui-panel-body flush">
+      {% if plans %}<div class="ui-table-wrap"><table class="ui-table" data-testid="payment-plan-table"><thead><tr><th>应付日期</th><th>合同内编号</th><th>款项</th><th>触发来源</th><th class="number">应付金额</th><th class="number">已付 / 未付</th><th>状态</th><th></th></tr></thead><tbody>
+        {% for p in plans %}<tr id="payment-plan-{{ p.id }}">
+          <td><div class="primary-text {{ 'text-red-600' if p.is_overdue }}">{{ format_date(p.due_date, '待定') }}</div>{% if p.is_overdue %}<div class="secondary-text" style="color:var(--ui-red)">已逾期</div>{% endif %}</td>
+          <td><div class="primary-text">{{ (p.serial_no ~ '号') if p.serial_no is not none else '待补编号' }}</div>{% if p.serial_amount is not none %}<div class="secondary-text">{{ format_money(p.serial_amount) }}</div>{% endif %}</td>
+          <td><div class="primary-text">{{ p.phase_name or '付款计划' }}</div><div class="secondary-text">{{ payment_parse_status_labels.get(p.parse_status or 'manual', '人工录入') }}</div></td>
+          <td><div class="primary-text">{{ p.trigger_event or ('固定日期' if p.payment_type == 'fixed_date' else '条件触发') }}</div><div class="secondary-text">{{ p.condition_text or p.remark or '—' }}</div></td>
+          <td class="number">{{ format_money(p.due_amount) }}</td>
+          <td class="number"><div class="primary-text">{{ format_money(p.paid_amount or 0) }}</div><div class="secondary-text">未付 {{ format_money(p.unpaid_amount) }}</div></td>
+          <td><div class="flex gap-1 flex-wrap">{{ ui.badge(payment_status_labels.get(p.payment_status, p.payment_status), ui_tone(p.payment_status)) }}{{ ui.badge(confirm_status_labels.get(p.confirm_status, p.confirm_status), ui_tone(p.confirm_status)) }}</div></td>
+          <td><div class="ui-table-actions">
+            {% if p.confirm_status == 'pending' %}<form method="post" action="{{ url_for('payments.payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="confirm"><input type="hidden" name="return_contract_id" value="{{ contract.id }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="return_anchor" value="payment-plan-{{ p.id }}"><button class="ui-button secondary compact" type="submit">确认</button></form>{% endif %}
+            {% if p.payment_status != 'paid' %}<button class="ui-button secondary compact" type="button" data-drawer-open="payDrawer{{ p.id }}">登记付款</button>{% endif %}
+	            <button class="ui-button ghost compact" type="button" data-drawer-open="planDrawer{{ p.id }}">编辑</button>
+	            <form method="post" action="{{ url_for('payments.payment_plans_save', contract_id=contract.id) }}" data-confirm="确定删除这条付款计划吗？"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="plan_count" value="1"><input type="hidden" name="plan_0_id" value="{{ p.id }}"><input type="hidden" name="plan_0_delete" value="1"><button class="ui-button ghost danger compact" type="submit" aria-label="删除 {{ p.phase_name or '付款计划' }}">删除</button></form>
+          </div></td>
+        </tr>{% endfor %}
+      </tbody></table></div>{% else %}{{ ui.empty_state('banknote', '暂无实际付款计划', '确认付款规则并登记触发事件，或手动新增一条付款计划。') }}{% endif %}
+    </div>
+  </section>
+  {% if plan_result.pages > 1 %}<div class="ui-pagination"><span>共 {{ plan_result.total }} 笔 · 第 {{ plan_result.page }} / {{ plan_result.pages }} 页</span><div class="ui-pagination-actions">{% if plan_result.page > 1 %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='payments', plan_page=plan_result.page-1) }}">上一页</a>{% endif %}{% if plan_result.page < plan_result.pages %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='payments', plan_page=plan_result.page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
+
+  {% elif tab == 'production' %}
+  <section class="ui-metrics">
+    {{ ui.metric('产品基线', contract_items|length ~ ' 项', '合同约定产品') }}
+    {{ ui.metric('投产通知', summary.production_count ~ ' 份', '已发出、确认或关闭') }}
+    {{ ui.metric('累计投产', summary.production_qty ~ ' 件', '按有效通知统计', 'blue') }}
+    {{ ui.metric('投产金额', format_money(summary.production_amount), '动态付款计算基数') }}
+  </section>
+  <section class="ui-panel">
+    <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">产品基线</h2><p class="ui-panel-subtitle">维护合同数量、累计已发和剩余数量</p></div><a class="ui-button secondary compact" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}">完整维护</a></div>
+    <div class="ui-panel-body flush">{% if contract_items %}<div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>产品</th><th>规格 / 图号</th><th class="number">合同数量</th><th class="number">累计已发</th><th class="number">剩余</th></tr></thead><tbody>{% for item in contract_items[:10] %}<tr><td><div class="primary-text">{{ item.product_name or item.item_name or '未命名产品' }}</div></td><td>{{ item.spec_model or '—' }}{% if item.drawing_no %} / {{ item.drawing_no }}{% endif %}</td><td class="number">{{ item.contract_qty or item.quantity or 0 }} {{ item.unit or '个' }}</td><td class="number">{{ item.issued_qty or 0 }}</td><td class="number">{{ item.remaining_qty if item.remaining_qty is defined else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}{{ ui.empty_state('boxes', '尚未维护产品基线', '先维护产品、合同数量和号段，再创建投产通知。', url_for('production.contract_items_page', contract_id=contract.id), '维护产品基线') }}{% endif %}</div>
+  </section>
+  <section class="ui-panel">
+    <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">投产通知</h2><p class="ui-panel-subtitle">发出后锁定，并自动触发匹配的动态付款规则</p></div></div>
+    <div class="ui-panel-body flush">{% if production_notices %}<div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>通知编号</th><th>日期</th><th>状态</th><th class="number">数量</th><th class="number">通知金额</th><th class="number">发票分摊</th><th></th></tr></thead><tbody>{% for notice in production_notices %}<tr><td><div class="primary-text">{{ notice.notice_no }}{% if notice.version > 1 %} · V{{ notice.version }}{% endif %}</div></td><td>{{ format_date(notice.notice_date) }}</td><td>{{ ui.badge(notice_status_labels.get(notice.status, notice.status), ui_tone(notice.status)) }}</td><td class="number">{{ notice.total_qty }}</td><td class="number">{{ format_money(notice.total_amount) }}</td><td class="number">{{ format_money(notice.allocated_amount) }}</td><td><a class="ui-button ghost compact" href="{{ url_for('production.production_notice_detail', notice_id=notice.id) }}">查看</a></td></tr>{% endfor %}</tbody></table></div>{% else %}{{ ui.empty_state('send', '暂无投产通知', '维护产品基线后即可记录每次发出了多少产品。') }}{% endif %}</div>
+  </section>
+  {% if notice_result.pages > 1 %}<div class="ui-pagination"><span>共 {{ notice_result.total }} 份</span><div class="ui-pagination-actions">{% if notice_result.page > 1 %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='production', notice_page=notice_result.page-1) }}">上一页</a>{% endif %}{% if notice_result.page < notice_result.pages %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='production', notice_page=notice_result.page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
+
+  {% elif tab == 'invoices' %}
+  <section class="ui-metrics">
+    {{ ui.metric('关联发票', summary.invoice_count ~ ' 张', summary.pending_invoice_count ~ ' 张待核验') }}
+    {{ ui.metric('已分摊至合同', format_money(summary.invoice_allocated), '有效发票口径', 'green') }}
+    {{ ui.metric('待分摊金额', format_money(summary.invoice_unallocated), '关联发票剩余额度', 'orange' if summary.invoice_unallocated else 'green') }}
+    {{ ui.metric('合同未付余额', format_money(summary.payment_unpaid), '可关联付款计划') }}
+  </section>
+  <section class="ui-panel">
+    <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">进项发票</h2><p class="ui-panel-subtitle">查看合同、投产通知和付款计划的发票分摊关系</p></div></div>
+    <div class="ui-panel-body flush">{% if invoices %}<div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>发票号码</th><th>销方</th><th>开票日期</th><th class="number">价税合计</th><th class="number">已分摊</th><th class="number">待分摊</th><th>核验</th><th>票据状态</th><th></th></tr></thead><tbody>{% for invoice in invoices %}<tr><td><div class="primary-text">{{ invoice.invoice_no }}</div><div class="secondary-text">{{ invoice.invoice_code or '—' }}</div></td><td>{{ invoice.seller_name or '—' }}</td><td>{{ format_date(invoice.issue_date) }}</td><td class="number">{{ format_money(invoice.total_amount) }}</td><td class="number">{{ format_money(invoice.allocated_amount) }}</td><td class="number">{{ format_money(invoice.unallocated_amount) }}</td><td>{{ ui.badge(invoice_review_labels.get(invoice.review_status, invoice.review_status), ui_tone(invoice.review_status)) }}</td><td>{{ ui.badge('已红冲' if invoice.has_red_offset else invoice_status_labels.get(invoice.invoice_status, invoice.invoice_status), 'red' if invoice.has_red_offset else ui_tone(invoice.invoice_status)) }}</td><td><a class="ui-button ghost compact" href="{{ url_for('invoices.invoice_detail', invoice_id=invoice.id) }}">查看</a></td></tr>{% endfor %}</tbody></table></div>{% else %}{{ ui.empty_state('receipt-text', '暂无关联发票', '登记发票并分摊到当前合同后会显示在这里。', url_for('invoices.invoice_new', contract_id=contract.id), '登记发票') }}{% endif %}</div>
+  </section>
+  {% if invoice_result.pages > 1 %}<div class="ui-pagination"><span>共 {{ invoice_result.total }} 张</span><div class="ui-pagination-actions">{% if invoice_result.page > 1 %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='invoices', invoice_page=invoice_result.page-1) }}">上一页</a>{% endif %}{% if invoice_result.page < invoice_result.pages %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='invoices', invoice_page=invoice_result.page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
+
+  {% elif tab == 'history' %}
+  <section class="ui-panel">
+    <div class="ui-panel-header"><div class="ui-panel-heading"><h2 class="ui-panel-title">合同台账变更记录</h2><p class="ui-panel-subtitle">按时间倒序保留字段修改前后的值</p></div><span class="ui-badge gray">{{ history_result.total }} 条</span></div>
+    <div class="ui-panel-body flush">{% if history %}<div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>时间</th><th>字段</th><th>旧值</th><th>新值</th></tr></thead><tbody>{% for h in history %}<tr><td>{{ h.changed_at }}</td><td><div class="primary-text">{{ h.field }}</div></td><td>{{ h.old_value or '(空)' }}</td><td>{{ h.new_value or '(空)' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}{{ ui.empty_state('history', '暂无变更记录', '合同台账字段发生修改后会在这里保留审计记录。') }}{% endif %}</div>
+  </section>
+  {% if history_result.pages > 1 %}<div class="ui-pagination"><span>第 {{ history_result.page }} / {{ history_result.pages }} 页</span><div class="ui-pagination-actions">{% if history_result.page > 1 %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='history', history_page=history_result.page-1) }}">上一页</a>{% endif %}{% if history_result.page < history_result.pages %}<a class="ui-button secondary compact" href="{{ url_for('contracts.contract_detail', contract_id=contract.id, tab='history', history_page=history_result.page+1) }}">下一页</a>{% endif %}</div></div>{% endif %}
+  {% endif %}
 </div>
 
-<!-- Ledger Info -->
-<div class="card bg-base-100 shadow-sm mb-6">
-    <div class="card-body">
-        <div class="flex items-center justify-between mb-4">
-            <h3 class="card-title text-base">台账信息</h3>
-        </div>
-        <form method="post" action="{{ url_for('contract_update', contract_id=contract.id) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">合同编号</span>
-                    <input name="contract_no" value="{{ contract.contract_no or '' }}" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">合同名称</span>
-                    <input name="title" value="{{ contract.title or '' }}" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">对方单位</span>
-                    <input name="counterparty" value="{{ contract.counterparty or '' }}" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">合同金额</span>
-                    <input name="amount" value="{{ contract.amount if contract.amount is not none else '' }}" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">签订日期</span>
-                    <input name="sign_date" value="{{ contract.sign_date or '' }}" placeholder="YYYY-MM-DD" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">到期日期</span>
-                    <input name="expiry_date" value="{{ contract.expiry_date or '' }}" placeholder="YYYY-MM-DD" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">负责人</span>
-                    <input name="owner" value="{{ contract.owner or '' }}" class="input input-bordered input-sm">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">所属项目</span>
-                    <input name="project_name" value="{{ contract.project_name or '' }}"
-                           list="projectNameOptions" maxlength="120"
-                           class="input input-bordered input-sm" placeholder="输入或选择项目名称">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">覆盖起始号</span>
-                    <input type="number" name="coverage_start" min="1" max="1000000000" step="1"
-                           value="{{ contract.coverage_start if contract.coverage_start is not none else '' }}"
-                           class="input input-bordered input-sm" placeholder="起始号">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">覆盖结束号</span>
-                    <input type="number" name="coverage_end" min="1" max="1000000000" step="1"
-                           value="{{ contract.coverage_end if contract.coverage_end is not none else '' }}"
-                           class="input input-bordered input-sm" placeholder="结束号">
-                </label>
-                <label class="form-control">
-                    <span class="label-text text-xs text-base-content/60 pb-1">状态</span>
-                    <select name="status" class="select select-bordered select-sm">
-                        {% for value, label in contract_status_labels.items() %}
-                        <option value="{{ value }}" {% if contract.status == value %}selected{% endif %}>{{ label }}</option>
-                        {% endfor %}
-                    </select>
-                </label>
-            </div>
-            <datalist id="projectNameOptions">
-                {% for project_name in project_names %}
-                <option value="{{ project_name }}"></option>
-                {% endfor %}
-            </datalist>
-            <div class="flex justify-end">
-                <button type="submit" class="btn btn-primary btn-sm gap-1">
-                    <i data-lucide="save" class="w-4 h-4"></i> 保存台账
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
+<dialog class="ui-drawer narrow" id="contractEditDrawer" aria-labelledby="contractEditTitle">
+  <form method="post" action="{{ url_for('contracts.contract_update', contract_id=contract.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="{{ tab }}">
+    <header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="contractEditTitle">编辑合同台账</h2><p class="ui-drawer-subtitle">修改会写入合同变更记录</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header>
+    <div class="ui-drawer-body"><div class="ui-form-grid">
+      <label class="ui-field"><span>合同编号</span><input class="ui-input" name="contract_no" value="{{ contract.contract_no or '' }}" autofocus></label>
+      <label class="ui-field"><span>合同状态</span><select class="ui-select" name="status">{% for value,label in contract_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if contract.status == value }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="ui-field span-2"><span>合同名称</span><input class="ui-input" name="title" value="{{ contract.title or '' }}"></label>
+      <label class="ui-field span-2"><span>对方单位</span><input class="ui-input" name="counterparty" value="{{ contract.counterparty or '' }}"></label>
+      <label class="ui-field"><span>合同金额</span><input class="ui-input" name="amount" inputmode="decimal" value="{{ contract.amount if contract.amount is not none else '' }}"></label>
+      <label class="ui-field"><span>负责人</span><input class="ui-input" name="owner" value="{{ contract.owner or '' }}"></label>
+      <label class="ui-field"><span>签订日期</span><input class="ui-input" type="date" name="sign_date" value="{{ contract.sign_date or '' }}"></label>
+      <label class="ui-field"><span>到期日期</span><input class="ui-input" type="date" name="expiry_date" value="{{ contract.expiry_date or '' }}"></label>
+      <label class="ui-field span-2"><span>所属项目</span><input class="ui-input" name="project_name" list="projectNameOptions" maxlength="120" value="{{ contract.project_name or '' }}"><small>可输入新项目，也可选择已有项目</small></label>
+      <label class="ui-field"><span>覆盖起始号</span><input class="ui-input" type="number" name="coverage_start" min="1" value="{{ contract.coverage_start if contract.coverage_start is not none else '' }}"></label>
+      <label class="ui-field"><span>覆盖结束号</span><input class="ui-input" type="number" name="coverage_end" min="1" value="{{ contract.coverage_end if contract.coverage_end is not none else '' }}"></label>
+      <datalist id="projectNameOptions">{% for project_name in project_names %}<option value="{{ project_name }}"></option>{% endfor %}</datalist>
+    </div></div>
+    <footer class="ui-drawer-footer"><button class="ui-button secondary" type="button" data-drawer-close>取消</button><button class="ui-button primary" type="submit">保存合同</button></footer>
+  </form>
+</dialog>
 
-<!-- Payment Plans -->
-<div class="card bg-base-100 shadow-sm">
-    <div class="card-body">
-        <div class="flex items-center justify-between mb-4">
-            <div>
-                <h3 class="card-title text-base">付款计划识别与确认</h3>
-                <p class="text-xs text-base-content/50 mt-1">自动抓取结果默认"待确认"。已确认且未付清的记录会出现在下月导出中。</p>
-            </div>
-            <form method="post" action="{{ url_for('payment_plans_confirm_all', contract_id=contract.id) }}" class="contents">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-ghost btn-sm" title="仅批量确认有金额且有日期或触发条件、置信度不是低的记录">确认完整项</button>
-            </form>
-        </div>
+{% if tab == 'payments' %}
+{% if contract_serials %}
+<dialog class="ui-drawer" id="contractSerialDrawer" aria-labelledby="contractSerialTitle">
+  <header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="contractSerialTitle">维护合同编号台账</h2><p class="ui-drawer-subtitle">{{ contract.project_name or contract.title }} · {{ contract.coverage_start }}—{{ contract.coverage_end }}号</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header>
+  <div class="ui-drawer-body">
+    <form class="ui-form-section" method="post" action="{{ url_for('payments.contract_serials_bulk_amount', contract_id=contract.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_anchor" value="contract-serials">
+      <div class="ui-form-section-title">批量填写金额</div>
+      <div class="ui-form-grid"><label class="ui-field"><span>统一编号金额</span><input class="ui-input" name="bulk_amount" inputmode="decimal" required></label><label class="ui-field"><span>填写范围</span><select class="ui-select" name="replace_existing"><option value="0">仅填写空白金额</option><option value="1">覆盖全部有效编号</option></select></label></div>
+      <div class="flex justify-end"><button class="ui-button secondary" type="submit">应用批量金额</button></div>
+    </form>
+    <form class="ui-form-section" method="post" action="{{ url_for('payments.contract_serials_save', contract_id=contract.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_anchor" value="contract-serials"><input type="hidden" name="serial_count" value="{{ contract_serials|length }}">
+      <div class="ui-form-section-title">逐编号金额</div>
+      <div class="ui-table-wrap"><table class="ui-table"><thead><tr><th>编号</th><th>本编号金额</th><th>备注</th><th>状态</th></tr></thead><tbody>
+        {% for serial in contract_serials %}<tr><td><input type="hidden" name="serial_{{ loop.index0 }}_id" value="{{ serial.id }}"><strong>{{ serial.serial_no }}号</strong></td><td><input class="ui-input" name="serial_{{ loop.index0 }}_amount" inputmode="decimal" value="{{ serial.serial_amount if serial.serial_amount is not none else '' }}" {{ 'readonly' if serial.status != 'active' }}></td><td><input class="ui-input" name="serial_{{ loop.index0 }}_remark" value="{{ serial.remark or '' }}" {{ 'readonly' if serial.status != 'active' }}></td><td>{{ '有效' if serial.status == 'active' else '已停用' }}</td></tr>{% endfor %}
+      </tbody></table></div>
+      <footer class="ui-drawer-footer"><button class="ui-button secondary" type="button" data-drawer-close>取消</button><button class="ui-button primary" type="submit">保存编号台账</button></footer>
+    </form>
+  </div>
+</dialog>
+{% endif %}
+<dialog class="ui-drawer" id="newPlanDrawer" aria-labelledby="newPlanTitle">
+  <form method="post" action="{{ url_for('payments.payment_plans_save', contract_id=contract.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="plan_count" value="1"><input type="hidden" name="plan_0_id" value=""><input type="hidden" name="plan_0_delete" value="0"><input type="hidden" name="plan_0_confidence" value="low"><input type="hidden" name="plan_0_parse_status" value="manual"><input type="hidden" name="plan_0_reason_codes_json" value="[]">
+    <header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="newPlanTitle">新增付款计划</h2><p class="ui-drawer-subtitle">手工计划默认进入待确认状态</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header>
+    <div class="ui-drawer-body"><div class="ui-form-section"><div class="ui-form-section-title">基本信息</div><div class="ui-form-grid"><label class="ui-field span-2"><span>款项名称</span><input class="ui-input" name="plan_0_phase_name" autofocus></label><label class="ui-field"><span>合同内编号</span><select class="ui-select" name="plan_0_contract_serial_id" {{ 'required' if active_contract_serials }}><option value="">待补编号</option>{% for serial in active_contract_serials %}<option value="{{ serial.id }}">{{ serial.serial_no }}号{% if serial.serial_amount is not none %} · {{ format_money(serial.serial_amount) }}{% endif %}</option>{% endfor %}</select><small>月度模板按此编号归集付款节点</small></label><label class="ui-field"><span>付款类型</span><select class="ui-select" name="plan_0_payment_type"><option value="conditional">条件触发</option><option value="fixed_date">固定日期</option></select></label><label class="ui-field"><span>确认状态</span><select class="ui-select" name="plan_0_confirm_status"><option value="pending">待确认</option><option value="confirmed">已确认</option></select></label></div></div><div class="ui-form-section"><div class="ui-form-section-title">触发与金额</div><div class="ui-form-grid"><label class="ui-field span-2"><span>触发条件</span><input class="ui-input" name="plan_0_trigger_event"></label><label class="ui-field"><span>后置天数</span><input class="ui-input" type="number" min="0" name="plan_0_trigger_days"></label><label class="ui-field"><span>应付日期</span><input class="ui-input" type="date" name="plan_0_due_date"></label><label class="ui-field"><span>比例 %</span><input class="ui-input" inputmode="decimal" name="plan_0_ratio"></label><label class="ui-field"><span>应付金额</span><input class="ui-input" inputmode="decimal" name="plan_0_due_amount"></label><input type="hidden" name="plan_0_paid_amount" value="0"><input type="hidden" name="plan_0_payment_status" value="unpaid"></div></div><div class="ui-form-section"><div class="ui-form-section-title">说明</div><label class="ui-field"><span>付款条件</span><textarea class="ui-textarea" name="plan_0_condition_text"></textarea></label><label class="ui-field"><span>备注</span><input class="ui-input" name="plan_0_remark"></label><label class="ui-field"><span>合同原文依据</span><textarea class="ui-textarea" name="plan_0_source_text"></textarea></label></div></div>
+    <footer class="ui-drawer-footer"><button class="ui-button secondary" type="button" data-drawer-close>取消</button><button class="ui-button primary" type="submit">保存计划</button></footer>
+  </form>
+</dialog>
 
-        <form method="post" action="{{ url_for('payment_plans_save', contract_id=contract.id) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="plan_count" id="plan_count" value="{{ plans|length }}">
-            <div class="overflow-x-auto border border-base-200 rounded-lg" style="position:relative">
-                <div class="table-scroll-hint text-xs text-base-content/40 px-3 py-1.5 bg-base-200/50 border-b border-base-200 flex items-center gap-2">
-                    <i data-lucide="arrow-left-right" class="w-3 h-3"></i>
-                    表格较宽，可左右滚动查看全部列（共14列）
-                </div>
-                <table class="table table-sm table-fixed payment-edit-table" data-testid="payment-plan-table">
-                    <colgroup>
-                        <col style="width:130px"><col style="width:80px"><col style="width:90px">
-                        <col style="width:90px"><col style="width:100px"><col style="width:72px">
-                        <col style="width:110px"><col style="width:68px"><col style="width:100px">
-                        <col style="width:90px"><col style="width:110px"><col style="width:180px">
-                        <col style="width:160px"><col style="width:64px">
-                    </colgroup>
-                    <thead>
-                        <tr>
-                            <th>款项<span class="col-resize-handle" role="separator" aria-label="调整款项列宽"></span></th>
-                            <th>确认<span class="col-resize-handle" role="separator" aria-label="调整确认列宽"></span></th>
-                            <th>付款状态<span class="col-resize-handle" role="separator" aria-label="调整付款状态列宽"></span></th>
-                            <th>类型<span class="col-resize-handle" role="separator" aria-label="调整类型列宽"></span></th>
-                            <th>触发条件<span class="col-resize-handle" role="separator" aria-label="调整触发条件列宽"></span></th>
-                            <th>后置天数<span class="col-resize-handle" role="separator" aria-label="调整后置天数列宽"></span></th>
-                            <th>预计付款日<span class="col-resize-handle" role="separator" aria-label="调整预计付款日列宽"></span></th>
-                            <th>比例%<span class="col-resize-handle" role="separator" aria-label="调整比例列宽"></span></th>
-                            <th>应付金额<span class="col-resize-handle" role="separator" aria-label="调整应付金额列宽"></span></th>
-                            <th>已付金额<span class="col-resize-handle" role="separator" aria-label="调整已付金额列宽"></span></th>
-                            <th>实付日期<span class="col-resize-handle" role="separator" aria-label="调整实付日期列宽"></span></th>
-                            <th>付款条件/备注<span class="col-resize-handle" role="separator" aria-label="调整付款条件列宽"></span></th>
-                            <th>原文依据<span class="col-resize-handle" role="separator" aria-label="调整原文依据列宽"></span></th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="planRows">
-                        {% for p in plans %}
-                        {% set i = loop.index0 %}
-                        <tr>
-                            <td>
-                                <input type="hidden" name="plan_{{ i }}_id" value="{{ p.id }}">
-                                <input type="hidden" name="plan_{{ i }}_delete" value="0">
-                                <input name="plan_{{ i }}_phase_name" value="{{ p.phase_name or '' }}" class="input input-bordered input-xs w-full">
-                                <input type="hidden" name="plan_{{ i }}_confidence" value="{{ p.confidence or 'low' }}">
-                                <input type="hidden" name="plan_{{ i }}_expected_trigger_date" value="{{ p.expected_trigger_date or '' }}">
-                                <span class="confidence-badge badge badge-xs mt-1
-                                    {% if p.confidence == 'high' %}badge-success
-                                    {% elif p.confidence == 'medium' %}badge-warning
-                                    {% else %}badge-ghost{% endif %}">
-                                    {{ confidence_labels.get(p.confidence, p.confidence or '低') }}
-                                </span>
-                            </td>
-                            <td>
-                                <select name="plan_{{ i }}_confirm_status" class="select select-bordered select-xs">
-                                    {% for value, label in confirm_status_labels.items() %}
-                                    <option value="{{ value }}" {% if p.confirm_status == value %}selected{% endif %}>{{ label }}</option>
-                                    {% endfor %}
-                                </select>
-                            </td>
-                            <td>
-                                <select name="plan_{{ i }}_payment_status" class="select select-bordered select-xs">
-                                    {% for value, label in payment_status_labels.items() %}
-                                    <option value="{{ value }}" {% if p.payment_status == value %}selected{% endif %}>{{ label }}</option>
-                                    {% endfor %}
-                                </select>
-                            </td>
-                            <td>
-                                <select name="plan_{{ i }}_payment_type" class="select select-bordered select-xs">
-                                    <option value="conditional" {% if p.payment_type == 'conditional' %}selected{% endif %}>条件触发</option>
-                                    <option value="fixed_date" {% if p.payment_type == 'fixed_date' %}selected{% endif %}>固定日期</option>
-                                </select>
-                            </td>
-                            <td><input name="plan_{{ i }}_trigger_event" value="{{ p.trigger_event or '' }}" class="input input-bordered input-xs w-20"></td>
-                            <td><input name="plan_{{ i }}_trigger_days" value="{{ p.trigger_days if p.trigger_days is not none else '' }}" class="input input-bordered input-xs w-16"></td>
-                            <td><input name="plan_{{ i }}_due_date" value="{{ p.due_date or '' }}" placeholder="YYYY-MM-DD" class="input input-bordered input-xs w-24"></td>
-                            <td><input name="plan_{{ i }}_ratio" value="{{ p.ratio if p.ratio is not none else '' }}" class="input input-bordered input-xs w-16"></td>
-                            <td><input name="plan_{{ i }}_due_amount" value="{{ p.due_amount if p.due_amount is not none else '' }}" class="input input-bordered input-xs w-24"></td>
-                            <td><input name="plan_{{ i }}_paid_amount" value="{{ p.paid_amount if p.paid_amount is not none else 0 }}" class="input input-bordered input-xs w-20"></td>
-                            <td><input name="plan_{{ i }}_paid_date" value="{{ p.paid_date or '' }}" placeholder="YYYY-MM-DD" class="input input-bordered input-xs w-24"></td>
-                            <td>
-                                <textarea name="plan_{{ i }}_condition_text" rows="2" class="textarea textarea-bordered textarea-xs w-full">{{ p.condition_text or '' }}</textarea>
-                                <input name="plan_{{ i }}_remark" value="{{ p.remark or '' }}" placeholder="备注" class="input input-bordered input-xs w-full mt-1">
-                            </td>
-                            <td><textarea name="plan_{{ i }}_source_text" rows="2" class="textarea textarea-bordered textarea-xs w-full">{{ p.source_text or '' }}</textarea></td>
-                            <td>
-                                <button type="button" class="btn btn-ghost btn-xs text-error" onclick="removePlanRow(this)">
-                                    <i data-lucide="alert-triangle" class="w-3 h-3"></i>
-                                </button>
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="14" class="empty-cell text-center py-8 text-base-content/40">没有识别到付款条款，可以手动新增付款计划。</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            <div class="flex justify-between mt-4">
-                <button type="button" class="btn btn-ghost btn-sm gap-1" onclick="addPlanRow()">
-                    <i data-lucide="plus" class="w-4 h-4"></i> 新增付款计划
-                </button>
-                <button type="submit" class="btn btn-primary btn-sm gap-1">
-                    <i data-lucide="save" class="w-4 h-4"></i> 保存付款计划
-                </button>
-            </div>
-        </form>
-    </div>
+{% for rule in payment_rules %}<dialog class="ui-drawer" id="ruleDrawer{{ rule.id }}" aria-labelledby="ruleDrawerTitle{{ rule.id }}">
+  <header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="ruleDrawerTitle{{ rule.id }}">{{ rule.phase_name or '付款规则' }}</h2><p class="ui-drawer-subtitle">查看依据、人工修正或登记触发事件</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header>
+  <div class="ui-drawer-body">
+    <div class="ui-form-section"><div class="ui-form-section-title">解析依据</div><dl class="ui-kv-grid"><div class="ui-kv"><dt>解析状态</dt><dd>{{ payment_parse_status_labels.get(rule.parse_status or 'manual', rule.parse_status) }}</dd></div><div class="ui-kv"><dt>提取器</dt><dd>{{ rule.extractor_version or '人工规则' }}</dd></div><div class="ui-kv span-2"><dt>合同原文</dt><dd>{{ rule.source_text or '—' }}</dd></div></dl>{% if rule.reason_codes %}<div class="ui-alert" style="margin:10px 0 0">{% for code in rule.reason_codes %}{{ payment_reason_labels.get(code, code) }}{% if not loop.last %}；{% endif %}{% endfor %}</div>{% endif %}</div>
+    <form class="ui-form-section" method="post" action="{{ url_for('payments.payment_rule_edit', contract_id=contract.id, rule_id=rule.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_anchor" value="payment-rule-{{ rule.id }}"><input type="hidden" name="trigger_event_type" value="{{ rule.trigger_event_type or 'other' }}"><div class="ui-form-section-title">人工修正规则</div><div class="ui-form-grid"><label class="ui-field span-2"><span>款项名称</span><input class="ui-input" name="phase_name" value="{{ rule.phase_name or '' }}"></label><label class="ui-field"><span>触发范围</span><select class="ui-select" name="scope">{% for value,label in [('contract','合同范围'),('production_notice','每次投产通知'),('delivery_batch','每批到货'),('settlement_period','结算周期'),('other','其他')] %}<option value="{{ value }}" {{ 'selected' if rule.scope == value }}>{{ label }}</option>{% endfor %}</select></label><label class="ui-field"><span>重复方式</span><select class="ui-select" name="repeat_mode"><option value="once" {{ 'selected' if rule.repeat_mode == 'once' }}>一次性</option><option value="each_event" {{ 'selected' if rule.repeat_mode == 'each_event' }}>每次事件</option></select></label><label class="ui-field span-2"><span>触发条件</span><input class="ui-input" name="trigger_event" value="{{ rule.trigger_event or '' }}"></label><label class="ui-field"><span>后置天数</span><input class="ui-input" name="trigger_days" value="{{ rule.trigger_days if rule.trigger_days is not none else '' }}"></label><label class="ui-field"><span>付款比例 %</span><input class="ui-input" name="ratio" value="{{ rule.ratio if rule.ratio is not none else '' }}"></label><label class="ui-field span-2"><span>计算基数</span><select class="ui-select" name="amount_basis">{% for value,label in payment_amount_basis_labels.items() %}<option value="{{ value }}" {{ 'selected' if rule.amount_basis == value }}>{{ label }}</option>{% endfor %}</select></label><label class="ui-field span-2"><span>基数原文</span><input class="ui-input" name="amount_basis_text" value="{{ rule.amount_basis_text or '' }}"></label><label class="ui-field"><span>合同明确金额</span><input class="ui-input" name="explicit_amount" value="{{ rule.explicit_amount if rule.explicit_amount is not none else '' }}"></label><label class="ui-field"><span>比例计算金额</span><input class="ui-input" name="calculated_amount" value="{{ rule.calculated_amount if rule.calculated_amount is not none else '' }}"></label></div><div class="flex justify-end"><button class="ui-button primary" type="submit">保存修正</button></div></form>
+    {% if rule.repeat_mode == 'each_event' and rule.confirm_status == 'confirmed' and rule.parse_status not in ('conflict','unsupported') %}<form class="ui-form-section" method="post" action="{{ url_for('payments.payment_rule_trigger', contract_id=contract.id, rule_id=rule.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_anchor" value="payment-rule-{{ rule.id }}"><div class="ui-form-section-title">登记业务事件</div><div class="ui-form-grid"><label class="ui-field span-2"><span>通知 / 批次编号</span><input class="ui-input" name="reference_no" required></label><label class="ui-field span-2"><span>事件名称</span><input class="ui-input" name="reference_name"></label><label class="ui-field"><span>事件日期</span><input class="ui-input" type="date" name="event_date"></label><label class="ui-field"><span>本次基数金额</span><input class="ui-input" name="base_amount" inputmode="decimal" required></label></div><div class="flex justify-end"><button class="ui-button primary" type="submit">生成付款实例</button></div></form>{% endif %}
+    {% if rule.confirm_status != 'void' %}<form class="ui-form-section" method="post" action="{{ url_for('payments.payment_rule_status', contract_id=contract.id, rule_id=rule.id) }}" data-confirm="确定作废这条付款规则？" data-confirm-title="作废付款规则" data-confirm-ok="作废"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="void"><input type="hidden" name="return_tab" value="payments"><button class="ui-button danger" type="submit">作废规则</button></form>{% endif %}
+  </div>
+</dialog>{% endfor %}
 
-    <!-- Change History -->
-    {% if history %}
-    <div class="card bg-base-100 shadow-sm mt-4">
-        <div class="card-body p-4">
-            <h3 class="card-title text-sm mb-3">
-                <i data-lucide="history" class="w-4 h-4"></i> 变更记录（{{ history|length }} 条）
-            </h3>
-            <div class="overflow-x-auto">
-                <table class="table table-xs">
-                    <thead>
-                        <tr class="text-base-content/40">
-                            <th>时间</th><th>字段</th><th>旧值</th><th>新值</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for h in history %}
-                        <tr>
-                            <td class="text-xs whitespace-nowrap">{{ h.changed_at }}</td>
-                            <td class="text-xs">{{ h.field }}</td>
-                            <td class="text-xs text-base-content/50">{{ h.old_value or '(空)' }}</td>
-                            <td class="text-xs">{{ h.new_value or '(空)' }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-</div>
+{% for p in plans %}
+<dialog class="ui-drawer narrow" id="payDrawer{{ p.id }}" aria-labelledby="payDrawerTitle{{ p.id }}"><header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="payDrawerTitle{{ p.id }}">登记付款</h2><p class="ui-drawer-subtitle">{{ p.phase_name or '付款计划' }} · 应付 {{ format_money(p.due_amount) }}</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="ui-drawer-body"><form class="ui-form-section" method="post" action="{{ url_for('payments.payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="paid"><input type="hidden" name="return_contract_id" value="{{ contract.id }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="return_anchor" value="payment-plan-{{ p.id }}"><div class="ui-form-section-title">全额付款</div><label class="ui-field"><span>实付日期</span><input class="ui-input" type="date" name="paid_date" value="{{ today_str }}"></label><button class="ui-button primary" type="submit">登记全额付款</button></form><form class="ui-form-section" method="post" action="{{ url_for('payments.payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="partial"><input type="hidden" name="return_contract_id" value="{{ contract.id }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="return_anchor" value="payment-plan-{{ p.id }}"><div class="ui-form-section-title">部分付款</div><label class="ui-field"><span>累计已付金额</span><input class="ui-input" name="paid_amount" inputmode="decimal" value="{{ p.paid_amount or '' }}" required><small>填写截至本次的累计已付金额</small></label><label class="ui-field"><span>最近实付日期</span><input class="ui-input" type="date" name="paid_date" value="{{ today_str }}" required></label><button class="ui-button secondary" type="submit">保存部分付款</button></form></div></dialog>
 
-{% endblock %}
-
-{% block scripts %}
-<script>
-    (function() {
-        const storageKey = 'contract-tool:payment-plan-column-widths:v1';
-        const minColumnWidth = 48;
-
-        function initColumnResize() {
-            const table = document.querySelector('.payment-edit-table');
-            if (!table || table.dataset.resizeReady === 'true') return;
-
-            const columns = Array.from(table.querySelectorAll('colgroup col'));
-            const handles = Array.from(table.querySelectorAll('.col-resize-handle'));
-            if (!columns.length || !handles.length) return;
-
-            table.dataset.resizeReady = 'true';
-            let resizeState = null;
-
-            function updateTableWidth() {
-                const total = columns.reduce(function(sum, column) {
-                    return sum + (parseFloat(column.style.width) || column.getBoundingClientRect().width);
-                }, 0);
-                table.style.width = Math.ceil(total) + 'px';
-            }
-
-            try {
-                const savedWidths = JSON.parse(localStorage.getItem(storageKey) || 'null');
-                if (Array.isArray(savedWidths) && savedWidths.length === columns.length) {
-                    savedWidths.forEach(function(width, index) {
-                        if (Number.isFinite(width) && width >= minColumnWidth) {
-                            columns[index].style.width = width + 'px';
-                        }
-                    });
-                }
-            } catch (error) {
-                // 浏览器禁用本地存储时，拖动功能仍可正常使用。
-            }
-            updateTableWidth();
-
-            handles.forEach(function(handle, index) {
-                handle.addEventListener('mousedown', function(event) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    resizeState = {
-                        column: columns[index],
-                        handle: handle,
-                        startX: event.clientX,
-                        startWidth: columns[index].getBoundingClientRect().width
-                    };
-                    handle.classList.add('active');
-                    table.classList.add('resizing');
-                    document.body.classList.add('column-resizing');
-                });
-            });
-
-            document.addEventListener('mousemove', function(event) {
-                if (!resizeState) return;
-                const width = Math.max(
-                    minColumnWidth,
-                    resizeState.startWidth + event.clientX - resizeState.startX
-                );
-                resizeState.column.style.width = Math.round(width) + 'px';
-                updateTableWidth();
-            });
-
-            document.addEventListener('mouseup', function() {
-                if (!resizeState) return;
-                resizeState.handle.classList.remove('active');
-                table.classList.remove('resizing');
-                document.body.classList.remove('column-resizing');
-                resizeState = null;
-                try {
-                    localStorage.setItem(storageKey, JSON.stringify(columns.map(function(column) {
-                        return Math.round(column.getBoundingClientRect().width);
-                    })));
-                } catch (error) {
-                    // 调整结果保留到本次页面关闭为止。
-                }
-            });
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initColumnResize);
-        } else {
-            initColumnResize();
-        }
-    })();
-
-    let planIndex = {{ plans|length }};
-
-    function optionHtml(options, selected) {
-        return options.map(function(item) {
-            const sel = item[0] === selected ? ' selected' : '';
-            return '<option value="' + item[0] + '"' + sel + '>' + item[1] + '</option>';
-        }).join('');
-    }
-
-    function addPlanRow() {
-        const body = document.getElementById('planRows');
-        if (body.querySelector('.empty-cell')) body.innerHTML = '';
-        const i = planIndex++;
-        document.getElementById('plan_count').value = planIndex;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>
-                <input type="hidden" name="plan_${i}_id" value="">
-                <input type="hidden" name="plan_${i}_delete" value="0">
-                <input name="plan_${i}_phase_name" value="" class="input input-bordered input-xs w-full">
-                <input type="hidden" name="plan_${i}_confidence" value="low">
-                <input type="hidden" name="plan_${i}_expected_trigger_date" value="">
-                <span class="confidence-badge badge badge-ghost badge-xs mt-1">低</span>
-            </td>
-            <td><select name="plan_${i}_confirm_status" class="select select-bordered select-xs">${optionHtml([['pending','待确认'],['confirmed','已确认'],['void','已作废']], 'pending')}</select></td>
-            <td><select name="plan_${i}_payment_status" class="select select-bordered select-xs">${optionHtml([['unpaid','未付款'],['partial','部分付款'],['paid','已付款']], 'unpaid')}</select></td>
-            <td><select name="plan_${i}_payment_type" class="select select-bordered select-xs">${optionHtml([['conditional','条件触发'],['fixed_date','固定日期']], 'conditional')}</select></td>
-            <td><input name="plan_${i}_trigger_event" value="" class="input input-bordered input-xs w-20" title="触发条件"></td>
-            <td><input name="plan_${i}_trigger_days" value="" class="input input-bordered input-xs w-16" title="后置天数"></td>
-            <td><input name="plan_${i}_due_date" value="" placeholder="YYYY-MM-DD" class="input input-bordered input-xs w-24" title="预计付款日"></td>
-            <td><input name="plan_${i}_ratio" value="" class="input input-bordered input-xs w-16" title="比例%"></td>
-            <td><input name="plan_${i}_due_amount" value="" class="input input-bordered input-xs w-24" title="应付金额"></td>
-            <td><input name="plan_${i}_paid_amount" value="0" class="input input-bordered input-xs w-20" title="已付金额"></td>
-            <td><input name="plan_${i}_paid_date" value="" placeholder="YYYY-MM-DD" class="input input-bordered input-xs w-24" title="实付日期"></td>
-            <td>
-                <textarea name="plan_${i}_condition_text" rows="1" class="textarea textarea-bordered textarea-xs w-full" title="付款条件/备注"></textarea>
-                <input name="plan_${i}_remark" value="" placeholder="备注" class="input input-bordered input-xs w-full mt-1" title="备注">
-            </td>
-            <td><textarea name="plan_${i}_source_text" rows="1" class="textarea textarea-bordered textarea-xs w-full" title="原文依据"></textarea></td>
-            <td><button type="button" class="btn btn-ghost btn-xs text-error" onclick="removePlanRow(this)"><i data-lucide="x" class="w-3 h-3"></i></button></td>
-        `;
-        body.appendChild(tr);
-        // icons auto-rendered by icons.js
-    }
-
-    function removePlanRow(btn) {
-        if (!confirm('确定删除这条付款计划吗？保存后生效。')) return;
-        const tr = btn.closest('tr');
-        const deleteInput = tr.querySelector('input[name$="_delete"]');
-        const idInput = tr.querySelector('input[name$="_id"]');
-        if (idInput && idInput.value) {
-            deleteInput.value = '1';
-            tr.style.display = 'none';
-        } else {
-            tr.remove();
-        }
-    }
-</script>
+<dialog class="ui-drawer" id="planDrawer{{ p.id }}" aria-labelledby="planDrawerTitle{{ p.id }}"><form method="post" action="{{ url_for('payments.payment_plans_save', contract_id=contract.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="return_anchor" value="payment-plan-{{ p.id }}"><input type="hidden" name="plan_count" value="1"><input type="hidden" name="plan_0_id" value="{{ p.id }}"><input type="hidden" name="plan_0_delete" value="0"><input type="hidden" name="plan_0_confidence" value="{{ p.confidence or 'low' }}"><input type="hidden" name="plan_0_parse_status" value="{{ p.parse_status or 'manual' }}"><input type="hidden" name="plan_0_reason_codes_json" value="{{ p.reason_codes_json or '[]' }}"><input type="hidden" name="plan_0_rule_fingerprint" value="{{ p.rule_fingerprint or '' }}"><input type="hidden" name="plan_0_extractor_version" value="{{ p.extractor_version or '' }}"><header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="planDrawerTitle{{ p.id }}">编辑付款计划</h2><p class="ui-drawer-subtitle">{{ p.phase_name or '付款计划' }}</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="ui-drawer-body"><div class="ui-form-section"><div class="ui-form-section-title">基本信息</div><div class="ui-form-grid"><label class="ui-field span-2"><span>款项名称</span><input class="ui-input" name="plan_0_phase_name" value="{{ p.phase_name or '' }}"></label><label class="ui-field"><span>合同内编号</span><select class="ui-select" name="plan_0_contract_serial_id"><option value="">待补编号</option>{% for serial in active_contract_serials %}<option value="{{ serial.id }}" {{ 'selected' if p.contract_serial_id == serial.id }}>{{ serial.serial_no }}号{% if serial.serial_amount is not none %} · {{ format_money(serial.serial_amount) }}{% endif %}</option>{% endfor %}</select><small>月度模板按此编号归集付款节点</small></label><label class="ui-field"><span>确认状态</span><select class="ui-select" name="plan_0_confirm_status">{% for value,label in confirm_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if p.confirm_status == value }}>{{ label }}</option>{% endfor %}</select></label><label class="ui-field"><span>付款状态</span><select class="ui-select" name="plan_0_payment_status">{% for value,label in payment_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if p.payment_status == value }}>{{ label }}</option>{% endfor %}</select></label><label class="ui-field"><span>付款类型</span><select class="ui-select" name="plan_0_payment_type"><option value="conditional" {{ 'selected' if p.payment_type == 'conditional' }}>条件触发</option><option value="fixed_date" {{ 'selected' if p.payment_type == 'fixed_date' }}>固定日期</option></select></label><label class="ui-field"><span>应付日期</span><input class="ui-input" type="date" name="plan_0_due_date" value="{{ p.due_date or '' }}"></label></div></div><div class="ui-form-section"><div class="ui-form-section-title">触发与金额</div><div class="ui-form-grid"><label class="ui-field span-2"><span>触发条件</span><input class="ui-input" name="plan_0_trigger_event" value="{{ p.trigger_event or '' }}"></label><label class="ui-field"><span>后置天数</span><input class="ui-input" name="plan_0_trigger_days" value="{{ p.trigger_days if p.trigger_days is not none else '' }}"></label><label class="ui-field"><span>预计触发日期</span><input class="ui-input" type="date" name="plan_0_expected_trigger_date" value="{{ p.expected_trigger_date or '' }}"></label><label class="ui-field"><span>比例 %</span><input class="ui-input" name="plan_0_ratio" value="{{ p.ratio if p.ratio is not none else '' }}"></label><label class="ui-field"><span>应付金额</span><input class="ui-input" name="plan_0_due_amount" value="{{ p.due_amount if p.due_amount is not none else '' }}"></label><label class="ui-field"><span>已付金额</span><input class="ui-input" name="plan_0_paid_amount" value="{{ p.paid_amount or 0 }}"></label><label class="ui-field"><span>实付日期</span><input class="ui-input" type="date" name="plan_0_paid_date" value="{{ p.paid_date or '' }}"></label></div></div><div class="ui-form-section"><div class="ui-form-section-title">说明</div><label class="ui-field"><span>付款条件</span><textarea class="ui-textarea" name="plan_0_condition_text">{{ p.condition_text or '' }}</textarea></label><label class="ui-field"><span>备注</span><input class="ui-input" name="plan_0_remark" value="{{ p.remark or '' }}"></label><label class="ui-field"><span>合同原文依据</span><textarea class="ui-textarea" name="plan_0_source_text">{{ p.source_text or '' }}</textarea></label></div></div><footer class="ui-drawer-footer"><button class="ui-button secondary" type="button" data-drawer-close>取消</button><button class="ui-button primary" type="submit">保存计划</button></footer></form></dialog>
+{% endfor %}
+{% endif %}
 {% endblock %}

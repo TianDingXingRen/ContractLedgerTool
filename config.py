@@ -11,6 +11,8 @@ CONFIG_DEFAULTS = {
     "HOST": "127.0.0.1",
     "PORT": 5000,
     "DEBUG": False,
+    "ALLOW_REMOTE": False,
+    "TRUSTED_HOSTS": ["127.0.0.1", "localhost", "[::1]"],
     "MAX_CONTENT_LENGTH_MB": 50,
     "CLEANUP_DAYS": 7,
     "LOG_LEVEL": "INFO",
@@ -24,6 +26,7 @@ CONFIG_DEFAULTS = {
     "RATE_LIMIT_LOCALHOST": [1000, 60],
     "SESSION_TTL_HOURS": 168,
     "OUTPUT_CLEANUP_DAYS": 7,
+    "GENERATION_HISTORY_DAYS": 30,
 }
 
 
@@ -43,6 +46,11 @@ class Config:
     HOST = '127.0.0.1'
     PORT = 5000
     DEBUG = False
+    ALLOW_REMOTE = False
+    TRUSTED_HOSTS = ['127.0.0.1', 'localhost', '[::1]']
+    REMOTE_ACCESS_TOKEN = ''
+    REMOTE_TLS_CERT = ''
+    REMOTE_TLS_KEY = ''
     MAX_CONTENT_LENGTH_MB = 50
     CLEANUP_DAYS = 7
     RATE_LIMITS = {
@@ -55,6 +63,7 @@ class Config:
     RATE_LIMIT_LOCALHOST = (1000, 60)   # 本地回环地址放松限制
     SESSION_TTL_HOURS = 168             # 会话过期时间（默认7天）
     OUTPUT_CLEANUP_DAYS = 7             # 临时文件清理天数
+    GENERATION_HISTORY_DAYS = 30        # 已完成生成任务日志保留天数
     LOG_LEVEL = 'INFO'
 
     def __init__(self, base_dir=None):
@@ -74,6 +83,9 @@ class Config:
                 setattr(self, key, tuple(value))
             else:
                 setattr(self, key, copy.deepcopy(value))
+        self.REMOTE_ACCESS_TOKEN = ''
+        self.REMOTE_TLS_CERT = ''
+        self.REMOTE_TLS_KEY = ''
 
     def reload(self, base_dir=None):
         if base_dir is not None:
@@ -105,9 +117,61 @@ class Config:
         'CLEANUP_DAYS': (1, 365),
         'SESSION_TTL_HOURS': (1, 8760),
         'OUTPUT_CLEANUP_DAYS': (1, 365),
+        'GENERATION_HISTORY_DAYS': (1, 3650),
     }
 
     _VALID_LOG_LEVELS = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+    _DEFAULT_TRUSTED_HOSTS = ('127.0.0.1', 'localhost', '[::1]')
+    _RATE_LIMIT_BOUNDS = ((1, 100000), (1, 86400))
+
+    @classmethod
+    def _validate_rate_limit(cls, value, label, default):
+        import logging
+
+        logger = logging.getLogger('contract_tool')
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            logger.warning('%s 必须是 [最大请求数, 时间窗口秒数]，使用默认值', label)
+            return tuple(default)
+        result = []
+        for index, (minimum, maximum) in enumerate(cls._RATE_LIMIT_BOUNDS):
+            validated = cls._validate_int(
+                value[index], minimum, maximum, f'{label}[{index}]'
+            )
+            if validated is None:
+                logger.warning('%s 包含无效值，使用默认值', label)
+                return tuple(default)
+            result.append(validated)
+        return tuple(result)
+
+    @classmethod
+    def _validate_trusted_hosts(cls, value):
+        import logging
+
+        logger = logging.getLogger('contract_tool')
+        if isinstance(value, str):
+            value = value.split(',')
+        if not isinstance(value, (list, tuple)):
+            logger.warning('TRUSTED_HOSTS 必须是主机名列表，使用本机默认值')
+            value = []
+        hosts = list(cls._DEFAULT_TRUSTED_HOSTS)
+        for item in value:
+            host = str(item or '').strip()
+            if (
+                not host
+                or host == '*'
+                or len(host) > 255
+                or any(character.isspace() for character in host)
+                or '://' in host
+                or '/' in host
+            ):
+                # Do not echo configuration values into logs.  Besides being
+                # unnecessary for recovery, a crafted value could forge a log
+                # line or disclose deployment details.
+                logger.warning('已忽略一个不安全的 TRUSTED_HOSTS 项')
+                continue
+            if host not in hosts:
+                hosts.append(host)
+        return hosts
 
     def _load_file(self):
         config_path = os.path.join(self.base_dir, 'config.json')
@@ -116,12 +180,12 @@ class Config:
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            for key in ('HOST', 'PORT', 'DEBUG', 'MAX_CONTENT_LENGTH_MB',
+            for key in ('HOST', 'PORT', 'DEBUG', 'ALLOW_REMOTE', 'MAX_CONTENT_LENGTH_MB',
                         'CLEANUP_DAYS', 'LOG_LEVEL', 'SESSION_TTL_HOURS',
-                        'OUTPUT_CLEANUP_DAYS'):
+                        'OUTPUT_CLEANUP_DAYS', 'GENERATION_HISTORY_DAYS'):
                 if key in data:
                     val = data[key]
-                    if key == 'DEBUG':
+                    if key in {'DEBUG', 'ALLOW_REMOTE'}:
                         # 统一转为 bool：JSON bool 已是 bool，字符串也需兼容
                         val = bool(val) if not isinstance(val, str) else val.lower() in ('1', 'true', 'yes')
                     elif key in self._INT_BOUNDS:
@@ -137,25 +201,40 @@ class Config:
                                 'LOG_LEVEL 值 "%s" 无效，使用默认值 INFO', val)
                             continue
                     setattr(self, key, val)
+            if 'TRUSTED_HOSTS' in data:
+                self.TRUSTED_HOSTS = self._validate_trusted_hosts(data['TRUSTED_HOSTS'])
             if 'RATE_LIMITS' in data and isinstance(data['RATE_LIMITS'], dict):
-                self.RATE_LIMITS.update({
-                    k: tuple(v) for k, v in data['RATE_LIMITS'].items()
-                    if isinstance(v, (list, tuple)) and len(v) == 2
-                })
+                for path, value in data['RATE_LIMITS'].items():
+                    path = str(path or '').strip()
+                    if not path.startswith('/'):
+                        continue
+                    default = self.RATE_LIMITS.get(path, self.RATE_LIMIT_DEFAULT)
+                    self.RATE_LIMITS[path] = self._validate_rate_limit(
+                        value, f'RATE_LIMITS[{path}]', default
+                    )
             if 'RATE_LIMIT_DEFAULT' in data:
-                self.RATE_LIMIT_DEFAULT = tuple(data['RATE_LIMIT_DEFAULT'])
+                self.RATE_LIMIT_DEFAULT = self._validate_rate_limit(
+                    data['RATE_LIMIT_DEFAULT'], 'RATE_LIMIT_DEFAULT',
+                    self.RATE_LIMIT_DEFAULT,
+                )
             if 'RATE_LIMIT_GLOBAL' in data:
-                self.RATE_LIMIT_GLOBAL = tuple(data['RATE_LIMIT_GLOBAL'])
+                self.RATE_LIMIT_GLOBAL = self._validate_rate_limit(
+                    data['RATE_LIMIT_GLOBAL'], 'RATE_LIMIT_GLOBAL',
+                    self.RATE_LIMIT_GLOBAL,
+                )
             if 'RATE_LIMIT_LOCALHOST' in data:
-                self.RATE_LIMIT_LOCALHOST = tuple(data['RATE_LIMIT_LOCALHOST'])
+                self.RATE_LIMIT_LOCALHOST = self._validate_rate_limit(
+                    data['RATE_LIMIT_LOCALHOST'], 'RATE_LIMIT_LOCALHOST',
+                    self.RATE_LIMIT_LOCALHOST,
+                )
         except (json.JSONDecodeError, TypeError, ValueError):
             import logging
             logging.getLogger('contract_tool').warning('config.json 解析失败，将使用默认配置')
 
     def _load_env(self):
-        for key in ('HOST', 'PORT', 'DEBUG', 'MAX_CONTENT_LENGTH_MB',
+        for key in ('HOST', 'PORT', 'DEBUG', 'ALLOW_REMOTE', 'MAX_CONTENT_LENGTH_MB',
                     'CLEANUP_DAYS', 'LOG_LEVEL', 'SESSION_TTL_HOURS',
-                    'OUTPUT_CLEANUP_DAYS'):
+                    'OUTPUT_CLEANUP_DAYS', 'GENERATION_HISTORY_DAYS'):
             env_val = os.environ.get(f'CT_{key}')
             if env_val is None:
                 continue
@@ -164,7 +243,7 @@ class Config:
                 val = self._validate_int(env_val, min_v, max_v, f'CT_{key}')
                 if val is not None:
                     setattr(self, key, val)
-            elif key == 'DEBUG':
+            elif key in {'DEBUG', 'ALLOW_REMOTE'}:
                 setattr(self, key, env_val.lower() in ('1', 'true', 'yes'))
             elif key == 'LOG_LEVEL':
                 val = env_val.upper()
@@ -176,6 +255,12 @@ class Config:
                         '环境变量 CT_LOG_LEVEL 值 "%s" 无效，使用默认值', env_val)
             else:
                 setattr(self, key, env_val)
+        trusted_hosts = os.environ.get('CT_TRUSTED_HOSTS')
+        if trusted_hosts is not None:
+            self.TRUSTED_HOSTS = self._validate_trusted_hosts(trusted_hosts)
+        self.REMOTE_ACCESS_TOKEN = os.environ.get('CT_REMOTE_ACCESS_TOKEN', '').strip()
+        self.REMOTE_TLS_CERT = os.environ.get('CT_REMOTE_TLS_CERT', '').strip()
+        self.REMOTE_TLS_KEY = os.environ.get('CT_REMOTE_TLS_KEY', '').strip()
 
 
 config = Config()

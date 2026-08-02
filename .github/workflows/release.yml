@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install locked release toolchain
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          npm ci
+          python -m playwright install chromium
+
+      - name: Audit locked dependencies
+        run: |
+          python -m pip_audit -r requirements.lock --no-deps --disable-pip
+          npm audit --audit-level=high
+
+      - name: Prepare required code-signing certificate
+        shell: pwsh
+        env:
+          CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD_SECRET: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+          CODESIGN_TIMESTAMP_URL_SECRET: ${{ secrets.CODESIGN_TIMESTAMP_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CODESIGN_PFX_BASE64)) {
+            throw "CODESIGN_PFX_BASE64 secret is required for an official release."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CODESIGN_PFX_PASSWORD_SECRET)) {
+            throw "CODESIGN_PFX_PASSWORD secret is required for an official release."
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "contract-ledger-codesign.pfx"
+          [System.IO.File]::WriteAllBytes(
+            $pfxPath,
+            [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64)
+          )
+          "CODESIGN_PFX=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODESIGN_PFX_PASSWORD=$env:CODESIGN_PFX_PASSWORD_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (-not [string]::IsNullOrWhiteSpace($env:CODESIGN_TIMESTAMP_URL_SECRET)) {
+            "CODESIGN_TIMESTAMP_URL=$env:CODESIGN_TIMESTAMP_URL_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          "REQUIRE_CODE_SIGNING=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run release gate and build single installer
+        run: python scripts/quality_gate.py release --build-installer
+
+      - name: Generate SBOM and checksum
+        shell: pwsh
+        run: |
+          python scripts/generate_sbom.py
+          $artifactName = "ContractLedgerTool_OfflineInstaller.exe"
+          $artifactPath = Join-Path "dist/release" $artifactName
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
+          "$digest  $artifactName" | Set-Content -Encoding ascii "dist/release/SHA256SUMS"
+
+      - name: Attest installer provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release/ContractLedgerTool_OfflineInstaller.exe
+
+      - name: Attest installer SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release/ContractLedgerTool_OfflineInstaller.exe
+          sbom-path: dist/release/ContractLedgerTool.sbom.cdx.json
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContractLedgerTool-${{ github.ref_name }}
+          path: |
+            dist/release/ContractLedgerTool_OfflineInstaller.exe
+            dist/release/ContractLedgerTool.sbom.cdx.json
+            dist/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" `
+            "dist\release\ContractLedgerTool_OfflineInstaller.exe" `
+            "dist\release\ContractLedgerTool.sbom.cdx.json" `
+            "dist\release\SHA256SUMS" `
+            --title "$env:GITHUB_REF_NAME" `
+            --generate-notes `
+            --verify-tag

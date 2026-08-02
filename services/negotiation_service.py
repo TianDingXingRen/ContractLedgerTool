@@ -5,23 +5,38 @@ from __future__ import annotations
 from decimal import Decimal
 
 import procurement_store
+from utils.money import to_minor
 
 
 def _money_to_minor(value):
     raw = str(value or '').replace(',', '').strip()
     if not raw:
         return None
-    amount = Decimal(raw)
-    if amount < 0:
-        raise ValueError('谈判金额不能为负数')
-    return int((amount * 100).quantize(Decimal('1')))
+    try:
+        return to_minor(raw, allow_none=False)
+    except ValueError as exc:
+        raise ValueError(f'谈判金额无效：{exc}') from exc
 
 
-def negotiation_view(project_id):
+def negotiation_view(project_id, editing_round_no=None):
     project = procurement_store.get_project(project_id)
     if not project:
         raise ValueError('采购项目不存在')
     quotes = procurement_store.list_quotes(project_id)
+    rounds = procurement_store.list_negotiation_rounds(project_id)
+    editing_round = None
+    if editing_round_no:
+        editing_round = next(
+            (row for row in rounds if int(row['round_no']) == int(editing_round_no)),
+            None,
+        )
+        if not editing_round:
+            raise ValueError('谈判轮次不存在')
+        editing_commitments = {
+            item['supplier_id']: item for item in editing_round.get('commitments') or []
+        }
+    else:
+        editing_commitments = {}
     grouped = {}
     for quote in quotes:
         grouped.setdefault(quote['supplier_id'], []).append(quote)
@@ -41,10 +56,14 @@ def negotiation_view(project_id):
             'latest_amount_minor': latest['total_amount_minor'] if latest else None,
             'reduction_minor': reduction,
             'reduction_percent': f'{percent:.2f}', 'latest_quote': latest,
+            'editing_commitment': editing_commitments.get(supplier_id, {}),
         })
+    next_round_no = (max((int(row['round_no']) for row in rounds), default=0) + 1)
     return {
         'project': project, 'suppliers': suppliers,
-        'rounds': procurement_store.list_negotiation_rounds(project_id),
+        'rounds': rounds,
+        'editing_round': editing_round,
+        'next_round_no': next_round_no,
     }
 
 

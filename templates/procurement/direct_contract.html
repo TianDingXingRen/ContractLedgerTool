@@ -35,7 +35,7 @@
         <div><span class="text-base-content/50">预算/目标价</span><div class="font-semibold">{{ project.budget_amount or project.target_price or '-' }}</div></div>
       </div>
       <div class="flex justify-end gap-2 mt-5">
-        <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement_project_detail', project_id=project.id) }}">返回项目</a>
+        <a class="apple-btn apple-btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=project.id) }}">返回项目</a>
         <button class="apple-btn apple-btn-primary">进入合同编辑器</button>
       </div>
     </div>

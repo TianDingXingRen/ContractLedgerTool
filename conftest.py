@@ -12,9 +12,51 @@ import stat
 import sys
 import tempfile
 
+import pytest
+
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _TEST_RUNTIME = tempfile.mkdtemp(prefix='.pytest_runtime_', dir=_BASE_DIR)
 os.environ['CONTRACT_TOOL_RUNTIME_DIR'] = _TEST_RUNTIME
+
+_FAST_TEST_MODULES = {
+    'test_app_errors.py',
+    'test_app_secrets.py',
+    'test_app_startup.py',
+    'test_app_template_context.py',
+    'test_cn_money.py',
+    'test_contract_preview.py',
+    'test_docs_index.py',
+    'test_editor_js.py',
+    'test_field_eval.py',
+    'test_frontend_assets.py',
+    'test_ledger_document_paths.py',
+    'test_ledger_money_fields.py',
+    'test_payment_extractor.py',
+    'test_payment_extractor_advanced.py',
+    'test_security.py',
+}
+_PACKAGING_TEST_MODULES = {
+    'test_demo_data_entrypoint.py',
+    'test_dependency_lock.py',
+    'test_installer_rollback.py',
+    'test_packaged_self_check.py',
+    'test_release_engineering.py',
+    'test_worktree_scope.py',
+}
+
+
+def pytest_collection_modifyitems(items):
+    """Assign every test to a stable delivery tier without test-order coupling."""
+    for item in items:
+        filename = os.path.basename(str(item.path))
+        if filename == 'test_ui_playwright.py':
+            item.add_marker(pytest.mark.ui)
+        elif filename in _PACKAGING_TEST_MODULES:
+            item.add_marker(pytest.mark.packaging)
+        elif filename in _FAST_TEST_MODULES:
+            item.add_marker(pytest.mark.fast)
+        else:
+            item.add_marker(pytest.mark.integration)
 
 
 def _force_rmtree(path):

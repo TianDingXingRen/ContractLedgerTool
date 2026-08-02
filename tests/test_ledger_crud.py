@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-import os,sqlite3,tempfile,unittest
+import os
+import tempfile
+import unittest
 from datetime import date,timedelta
 import ledger_store
 class T1(unittest.TestCase):
@@ -64,7 +66,7 @@ class T3(unittest.TestCase):
         ledger_store.DATA_DIR,ledger_store.DB_PATH=self.od,self.odb
         self.t.cleanup()
     def test_plan_crud(self):
-        pid=ledger_store.insert_payment_plan(self.cid,{'phase_name':'test','due_amount':50000})
+        ledger_store.insert_payment_plan(self.cid,{'phase_name':'test','due_amount':50000})
         plans=ledger_store.list_payment_plans(contract_id=self.cid)
         self.assertEqual(len(plans),1);self.assertEqual(plans[0]['phase_name'],'test')
     def test_create_with_plans(self):
@@ -75,4 +77,18 @@ class T3(unittest.TestCase):
         ledger_store.insert_payment_plan(self.cid,{'phase_name':'P1','due_amount':100,'paid_amount':30,'paid_date':'2026-06-01','confirm_status':'confirmed','payment_status':'partial','due_date':'2026-06-15'})
         s=ledger_store.get_payment_stats()
         self.assertEqual(s['total_due'],100);self.assertEqual(s['total_unpaid'],70)
+    def test_money_is_stored_in_integer_minor_units(self):
+        cid=ledger_store.create_contract({'title':'Precise','amount':'0.29'},{},'/precise.docx')
+        pid=ledger_store.insert_payment_plan(cid,{'phase_name':'P','due_amount':'0.29','paid_amount':'0.10','paid_date':'2026-06-01'})
+        with ledger_store.get_conn() as conn:
+            amount_minor=conn.execute('SELECT amount_minor FROM contracts WHERE id=?',(cid,)).fetchone()[0]
+            due_minor,paid_minor=conn.execute('SELECT due_amount_minor,paid_amount_minor FROM payment_plans WHERE id=?',(pid,)).fetchone()
+        self.assertEqual((amount_minor,due_minor,paid_minor),(29,29,10))
+        self.assertEqual(ledger_store.get_contract(cid)['amount'],0.29)
+    def test_partial_plan_save_preserves_integer_amounts(self):
+        cid=ledger_store.create_contract({'title':'Partial'},{},'/partial.docx')
+        pid=ledger_store.insert_payment_plan(cid,{'phase_name':'P','due_amount':'10.29','paid_amount':'1.01','paid_date':'2026-06-01'})
+        ledger_store.save_payment_plan_changes(cid,[{'id':pid,'data':{'remark':'updated'}}])
+        plan=ledger_store.get_payment_plan(pid)
+        self.assertEqual((plan['due_amount'],plan['paid_amount'],plan['remark']),(10.29,1.01,'updated'))
 if __name__=='__main__':unittest.main()

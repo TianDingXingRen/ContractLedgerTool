@@ -11,7 +11,7 @@ def test_worktree_scope_groups_common_project_areas():
         ' M templates/base.html',
         ' M static/style.css',
         '?? tests/test_example.py',
-        ' M build_installer.py',
+        ' M build_package.py',
         '?? data/contracts.db',
         '?? 技术债务.md',
     ])

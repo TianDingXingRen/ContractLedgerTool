@@ -1,5 +1,6 @@
 """Secret key persistence helpers for the Flask app."""
 
+import logging
 import os
 
 
@@ -20,5 +21,7 @@ def load_or_create_secret_key(base_dir):
     try:
         os.chmod(key_file, 0o600)
     except OSError:
-        pass
+        logging.getLogger('contract_tool').warning(
+            '无法收紧本地密钥文件权限: %s', key_file, exc_info=True,
+        )
     return key

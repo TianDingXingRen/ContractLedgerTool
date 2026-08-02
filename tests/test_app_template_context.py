@@ -15,6 +15,15 @@ def test_template_context_includes_shared_labels_and_csrf(app):
     assert context['procurement_stage_labels'] is helpers.PROCUREMENT_STAGE_LABELS
     assert context['quote_import_status_labels'] is helpers.QUOTE_IMPORT_STATUS_LABELS
     assert callable(context['csrf_token'])
+    assert callable(context['static_url'])
+
+
+def test_static_url_has_cache_busting_version(app):
+    with app.test_request_context('/'):
+        context = _merged_template_context(app)
+        url = context['static_url']('style.css')
+
+    assert url.startswith('/static/style.css?v=')
 
 
 def test_template_csrf_token_is_stable_within_session(app):

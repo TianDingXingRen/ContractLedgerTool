@@ -78,7 +78,7 @@ def get_project_progress_stats(get_conn, row_to_dict):
                     SELECT 1 FROM payment_plans p
                     WHERE p.contract_id = c.id
                       AND p.confirm_status = 'confirmed'
-                      AND (COALESCE(p.paid_amount, 0) > 0
+                      AND (COALESCE(p.paid_amount_minor, 0) > 0
                            OR p.payment_status IN ('partial', 'paid'))
                 ) THEN c.coverage_end END) AS paid_to
         FROM contracts c

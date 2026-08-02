@@ -39,6 +39,14 @@ class RuntimePaths:
         return self.base_dir / 'output'
 
     @property
+    def generation_staging_dir(self) -> Path:
+        return self.output_dir / '.staging'
+
+    @property
+    def generation_recovery_dir(self) -> Path:
+        return self.output_dir / '.recovery'
+
+    @property
     def sessions_dir(self) -> Path:
         return self.base_dir / 'sessions'
 
@@ -71,6 +79,8 @@ class RuntimePaths:
             self.templates_dir,
             self.uploads_dir,
             self.output_dir,
+            self.generation_staging_dir,
+            self.generation_recovery_dir,
             self.sessions_dir,
             self.data_dir,
             self.backups_dir,

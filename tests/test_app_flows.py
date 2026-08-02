@@ -2,18 +2,17 @@
 """Route-level regression tests for the Flask contract tool."""
 
 import io
-import json
-import os
 import tempfile
 import unittest
 import uuid
 import zipfile
+from unittest import mock
 
 from docx import Document
 
 import app
 import template_def
-from utils import helpers
+from utils.session_store import save_session_data
 
 
 def _docx_text(blob):
@@ -31,28 +30,27 @@ def _docx_text(blob):
 class AppFlowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.old_output = helpers.OUTPUT_FOLDER
-        self.old_session = helpers.SESSION_FOLDER
-        self.old_templates_dir = template_def.TEMPLATES_DIR
-        self.old_create_ledger = helpers.create_ledger_record
-
-        helpers.OUTPUT_FOLDER = os.path.join(self.tmp.name, 'output')
-        helpers.SESSION_FOLDER = os.path.join(self.tmp.name, 'sessions')
-        template_def.TEMPLATES_DIR = os.path.join(self.tmp.name, 'templates')
-        os.makedirs(helpers.OUTPUT_FOLDER, exist_ok=True)
-        os.makedirs(helpers.SESSION_FOLDER, exist_ok=True)
-        os.makedirs(template_def.TEMPLATES_DIR, exist_ok=True)
-        helpers.create_ledger_record = lambda *args, **kwargs: None
+        self.original_base_dir = app.BASE_DIR
+        self.original_resource_dir = app.RESOURCE_DIR
+        app.reset_runtime()
+        self.test_app = app.create_app(
+            runtime_base_dir=self.tmp.name,
+            resource_dir=self.original_resource_dir,
+            run_maintenance=False,
+            testing=True,
+        )
+        self.paths = self.test_app.extensions['runtime_paths']
 
         # 创建测试模板（无 source_docx，使用 generate_from_scratch）
         self._create_test_template()
 
     def tearDown(self):
-        helpers.create_ledger_record = self.old_create_ledger
-        helpers.OUTPUT_FOLDER = self.old_output
-        helpers.SESSION_FOLDER = self.old_session
-        template_def.TEMPLATES_DIR = self.old_templates_dir
+        app.reset_runtime()
         self.tmp.cleanup()
+        app.configure_runtime_paths(
+            self.original_base_dir,
+            self.original_resource_dir,
+        )
 
     def _create_test_template(self):
         """创建一个最小测试模板（无需源 DOCX 文件）。"""
@@ -86,14 +84,14 @@ class AppFlowTests(unittest.TestCase):
             form[f'field_{fid}'] = f'测试值{fid}'
 
         sid = uuid.uuid4().hex
-        helpers.save_session_data(sid, {
+        save_session_data(sid, {
             'template_name': self.test_tpl.name,
             'template_path': self.test_template_path,
             'stored_name': '',
             'step': 'editor',
-        })
+        }, self.paths)
 
-        with app.app.test_client() as client:
+        with self.test_app.test_client() as client:
             with client.session_transaction() as sess:
                 sess['sid'] = sid
                 sess['_csrf_token'] = 'test-token'
@@ -110,6 +108,42 @@ class AppFlowTests(unittest.TestCase):
             first_text = _docx_text(zf.read(names[0]))
 
         self.assertIn('测试甲公司', first_text)
+
+    def test_batch_zip_failure_discards_created_contract(self):
+        form = {'batch_counterparties': '测试甲公司'}
+        for index, field in enumerate(self.test_tpl.data.get('fields', [])):
+            fid = field.get('id', index)
+            form[f'field_{fid}'] = f'测试值{fid}'
+
+        sid = uuid.uuid4().hex
+        save_session_data(sid, {
+            'template_name': self.test_tpl.name,
+            'template_path': self.test_template_path,
+            'stored_name': '',
+            'step': 'editor',
+        }, self.paths)
+
+        with self.test_app.test_client() as client, \
+                mock.patch(
+                    'services.contract_generation_service.create_ledger_record',
+                    return_value=123,
+                ), \
+                mock.patch(
+                    'services.contract_batch_generation_service.zipfile.ZipFile.write',
+                    side_effect=OSError('disk full'),
+                ), \
+                mock.patch(
+                    'services.contract_batch_generation_service._discard_generated_contract'
+                ) as discard:
+            with client.session_transaction() as sess:
+                sess['sid'] = sid
+                sess['_csrf_token'] = 'test-token'
+            form['csrf_token'] = 'test-token'
+            response = client.post('/generate-batch', data=form)
+
+        self.assertEqual(response.status_code, 500)
+        discard.assert_called_once()
+        self.assertEqual(discard.call_args.args[0], 123)
 
 
 if __name__ == '__main__':

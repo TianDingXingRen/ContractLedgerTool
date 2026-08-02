@@ -6,6 +6,7 @@ dist/
 sessions/
 uploads/
 output/
+outputs/
 logs/
 *.log
 .secret_key
@@ -21,10 +22,13 @@ templates/versions/
 config.json
 # .venv — 自动创建的虚拟环境
 .venv/
+node_modules/
 .installed_version
 .pytest_runtime_*/
 .pytest_basetemp*/
 .pytest_cache/
+.coverage
+coverage.xml
 # 临时/备份文件
 *.bak
 templates/_*.txt

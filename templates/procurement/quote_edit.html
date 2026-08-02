@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}编辑供应商报价{% endblock %}
+{% block breadcrumb %}采购前置 / 编辑供应商报价{% endblock %}
+{% block content %}
+{% set selected_basis = form.get('price_basis', quote.price_basis) if form else quote.price_basis %}
+<div class="max-w-6xl mx-auto">
+  <div class="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-5">
+    <div>
+      <h1 class="text-2xl font-bold">编辑供应商报价</h1>
+      <p class="text-sm text-base-content/50 mt-1">{{ quote.supplier_name }} / 第 {{ quote.quote_round }} 轮 / {{ quote.currency }}</p>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('procurement.procurement_project_detail', project_id=project_id) }}#quotes">返回项目</a>
+  </div>
+
+  {% if error %}<div class="alert alert-error mb-4">{{ error }}</div>{% endif %}
+  {% if quote.is_locked %}
+  <div class="alert alert-warning mb-4">该报价已用于成交建议，为保证决策和合同数据可追溯，不能再编辑。</div>
+  {% else %}
+  <div class="alert mb-4">编辑只调整系统中的结构化报价，供应商上传的原文件保持不变；保存后需重新执行横向比价。</div>
+  {% endif %}
+
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <fieldset {% if quote.is_locked %}disabled{% endif %}>
+      <section class="card bg-base-100 border border-base-300 mb-5">
+        <div class="card-body grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <label class="form-control"><span class="label-text">报价日期</span><input class="input input-bordered" type="date" name="quote_date" value="{{ form.get('quote_date', quote.quote_date) if form else quote.quote_date }}"></label>
+          <label class="form-control"><span class="label-text">报价有效期</span><input class="input input-bordered" type="date" name="quote_valid_until" value="{{ form.get('quote_valid_until', quote.quote_valid_until) if form else quote.quote_valid_until }}"></label>
+          <label class="form-control"><span class="label-text">税率（%）</span><input class="input input-bordered" type="number" min="0" max="100" step="0.01" name="tax_rate" value="{{ form.get('tax_rate', '') if form else ((quote.tax_rate_bps / 100) if quote.tax_rate_bps is not none else '') }}"></label>
+          <label class="form-control"><span class="label-text">价格口径</span><select class="select select-bordered" name="price_basis" required><option value="tax_inclusive" {% if selected_basis == 'tax_inclusive' %}selected{% endif %}>含税</option><option value="tax_exclusive" {% if selected_basis == 'tax_exclusive' %}selected{% endif %}>不含税</option></select></label>
+          <label class="form-control"><span class="label-text">整体交付周期</span><input class="input input-bordered" maxlength="2000" name="delivery_period" value="{{ form.get('delivery_period', quote.delivery_period) if form else quote.delivery_period }}"></label>
+          <label class="form-control"><span class="label-text">付款条件</span><input class="input input-bordered" maxlength="2000" name="payment_terms" value="{{ form.get('payment_terms', quote.payment_terms) if form else quote.payment_terms }}"></label>
+          <label class="form-control"><span class="label-text">质保期</span><input class="input input-bordered" maxlength="2000" name="warranty_period" value="{{ form.get('warranty_period', quote.warranty_period) if form else quote.warranty_period }}"></label>
+          <label class="form-control"><span class="label-text">包装运输</span><input class="input input-bordered" maxlength="2000" name="package_transport" value="{{ form.get('package_transport', quote.package_transport) if form else quote.package_transport }}"></label>
+          <label class="form-control md:col-span-2"><span class="label-text">整体技术偏离</span><textarea class="textarea textarea-bordered" maxlength="2000" name="technical_deviation">{{ form.get('technical_deviation', quote.technical_deviation) if form else quote.technical_deviation }}</textarea></label>
+          <label class="form-control md:col-span-2"><span class="label-text">整体商务偏离</span><textarea class="textarea textarea-bordered" maxlength="2000" name="commercial_deviation">{{ form.get('commercial_deviation', quote.commercial_deviation) if form else quote.commercial_deviation }}</textarea></label>
+        </div>
+      </section>
+
+      <section class="card bg-base-100 border border-base-300 overflow-x-auto">
+        <div class="card-body p-0">
+          <div class="p-4 border-b border-base-300"><h2 class="font-semibold">报价明细</h2><p class="text-xs text-base-content/50 mt-1">数量和物资映射来自采购需求，不可修改；金额与总额按数量 × 单价重新计算。</p></div>
+          <table class="table table-sm min-w-[1100px]">
+            <thead><tr><th>#</th><th>物资</th><th>数量</th><th>单价（元）</th><th>当前金额</th><th>分项交期</th><th>技术偏离</th><th>商务偏离</th><th>备注</th></tr></thead>
+            <tbody>
+              {% for item in items %}
+              <tr>
+                <td>{{ item.line_no }}</td>
+                <td><strong>{{ item.item_name }}</strong><div class="text-xs text-base-content/50">{{ item.spec_model }} {{ item.drawing_no }}</div></td>
+                <td>{{ item.quantity_text }} {{ item.unit }}</td>
+                <td><input class="input input-bordered input-sm w-32" required type="number" min="0" step="0.01" name="unit_price_{{ item.id }}" value="{{ form.get('unit_price_' ~ item.id, money(item.unit_price_minor)) if form else money(item.unit_price_minor) }}"></td>
+                <td>{{ money(item.amount_minor) }}</td>
+                <td><input class="input input-bordered input-sm w-36" maxlength="1000" name="delivery_period_{{ item.id }}" value="{{ form.get('delivery_period_' ~ item.id, item.delivery_period) if form else item.delivery_period }}"></td>
+                <td><textarea class="textarea textarea-bordered textarea-sm w-44" maxlength="1000" name="technical_deviation_{{ item.id }}">{{ form.get('technical_deviation_' ~ item.id, item.technical_deviation) if form else item.technical_deviation }}</textarea></td>
+                <td><textarea class="textarea textarea-bordered textarea-sm w-44" maxlength="1000" name="commercial_deviation_{{ item.id }}">{{ form.get('commercial_deviation_' ~ item.id, item.commercial_deviation) if form else item.commercial_deviation }}</textarea></td>
+                <td><textarea class="textarea textarea-bordered textarea-sm w-40" maxlength="1000" name="remark_{{ item.id }}">{{ form.get('remark_' ~ item.id, item.remark) if form else item.remark }}</textarea></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </fieldset>
+    <div class="flex justify-end gap-2 mt-5">
+      <a class="btn btn-ghost" href="{{ url_for('procurement.procurement_project_detail', project_id=project_id) }}#quotes">取消</a>
+      {% if not quote.is_locked %}<button class="btn btn-primary">保存报价</button>{% endif %}
+    </div>
+  </form>
+</div>
+{% endblock %}

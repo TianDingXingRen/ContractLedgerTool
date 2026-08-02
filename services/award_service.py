@@ -3,15 +3,54 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from decimal import Decimal
 
 import procurement_store
 import template_def
-from utils import helpers
+from utils.keyword_maps import find_scalar_semantic, find_column_semantic
+from utils.money import from_minor
+from utils.template_paths import safe_template_path
 
 
-def _money(value):
-    return f'{Decimal(int(value or 0)) / 100:.2f}'
+_SCALAR_SEMANTIC_TO_PAYLOAD = {
+    'contract_no': lambda payload: f"{payload['project_no']}-HT",
+    'project_no': lambda payload: payload['project_no'],
+    'title': lambda payload: payload['project_name'],
+    'counterparty': lambda payload: payload['supplier']['name'],
+    'amount': lambda payload: from_minor(payload['amount_minor']),
+    'delivery_place': lambda payload: payload['delivery_place'],
+    'delivery_terms': lambda payload: payload['delivery_terms'],
+    'payment_terms': lambda payload: payload['payment_terms'],
+    'warranty': lambda payload: payload['warranty_period'],
+    'technical_notes': lambda payload: payload['technical_notes'],
+    'commercial_notes': lambda payload: payload['commercial_notes'],
+    'contract_notice': lambda payload: payload['contract_notice'],
+    'owner': lambda payload: payload['owner'],
+    'demand_department': lambda payload: payload['demand_department'],
+}
+
+
+_COLUMN_SEMANTIC_TO_VALUE = {
+    'line_no': lambda index, item, _supplier_name: index,
+    'item_name': lambda _index, item, _supplier_name: item['item_name'],
+    'supplier': lambda _index, item, supplier_name: item.get('supplier_name') or supplier_name,
+    'spec_model': lambda _index, item, _supplier_name: item['spec_model'],
+    'quantity': lambda _index, item, _supplier_name: item['quantity'],
+    'unit': lambda _index, item, _supplier_name: item['unit'],
+    'unit_price': lambda _index, item, _supplier_name: item['unit_price'],
+    'amount': lambda _index, item, _supplier_name: item['amount'],
+}
+
+
+def _field_semantic(field):
+    label = str(field.get('label') or '')
+    key = str(field.get('key') or '')
+    return find_scalar_semantic(label, key)
+
+
+def _col_semantic(column):
+    label = str(column.get('label') or '')
+    key = str(column.get('key') or '')
+    return find_column_semantic(label, key)
 
 
 def create_award(project_id, supplier_id, form):
@@ -104,6 +143,23 @@ def create_split_award(project_id, form):
     return procurement_store.create_split_award_recommendation(project_id, data, selections)
 
 
+def award_view(project_id):
+    split_rows, _ = split_award_options(project_id)
+    return {
+        'quotes': procurement_store.get_latest_quotes(project_id),
+        'split_rows': split_rows,
+        'award': procurement_store.get_latest_award(project_id),
+    }
+
+
+def get_latest_award(project_id):
+    return procurement_store.get_latest_award(project_id)
+
+
+def list_contract_templates():
+    return template_def.list_templates()
+
+
 def build_contract_data_sheet(project_id):
     project = procurement_store.get_project(project_id)
     award = procurement_store.get_latest_award(project_id)
@@ -133,8 +189,8 @@ def build_contract_data_sheet(project_id):
                 'spec_model': item.get('spec_model') or '',
                 'quantity': item['quantity_text'],
                 'unit': item['unit'],
-                'unit_price': _money(item['unit_price_minor']),
-                'amount': _money(item['amount_minor']),
+                'unit_price': from_minor(item['unit_price_minor']),
+                'amount': from_minor(item['amount_minor']),
                 'supplier_name': item.get('supplier_name') or award['supplier_name'],
             }
             for item in award['items']
@@ -155,64 +211,22 @@ def build_contract_data_sheet(project_id):
     return procurement_store.get_or_create_contract_data_sheet(project_id, award['id'], payload)
 
 
-def _contains(field, *keywords):
-    text = f"{field.get('key', '')} {field.get('label', '')}".lower()
-    return any(keyword.lower() in text for keyword in keywords)
-
-
 def _scalar_value(field, payload):
-    if _contains(field, '合同编号', '合同号', 'contract_no'):
-        return f"{payload['project_no']}-HT"
-    if _contains(field, '项目编号', 'project_no'):
-        return payload['project_no']
-    if _contains(field, '项目名称', '合同名称', '标题', 'project_name', 'title'):
-        return payload['project_name']
-    if _contains(field, '供应商', '对方', '乙方', '供方', '卖方', 'counterparty'):
-        return payload['supplier']['name']
-    if _contains(field, '合同金额', '总金额', '合同总价', '成交金额', 'amount', 'total'):
-        return _money(payload['amount_minor'])
-    if _contains(field, '交付地点', 'delivery_place'):
-        return payload['delivery_place']
-    if _contains(field, '交付周期', '交期', 'delivery'):
-        return payload['delivery_terms']
-    if _contains(field, '付款条件', '付款方式', 'payment'):
-        return payload['payment_terms']
-    if _contains(field, '质保', 'warranty'):
-        return payload['warranty_period']
-    if _contains(field, '技术要求', '技术说明', 'technical'):
-        return payload['technical_notes']
-    if _contains(field, '商务偏离', '商务说明', 'commercial'):
-        return payload['commercial_notes']
-    if _contains(field, '注意事项', '合同备注', 'contract_notice'):
-        return payload['contract_notice']
-    if _contains(field, '经办人', '负责人', 'owner'):
-        return payload['owner']
-    if _contains(field, '需求部门', '部门', 'department'):
-        return payload['demand_department']
+    semantic = _field_semantic(field)
+    if semantic and semantic in _SCALAR_SEMANTIC_TO_PAYLOAD:
+        return _SCALAR_SEMANTIC_TO_PAYLOAD[semantic](payload)
     return field.get('default_value') or ''
 
 
 def _table_rows(field, payload):
+    supplier_name = payload['supplier']['name']
     rows = []
     for index, item in enumerate(payload['items'], start=1):
         row = {}
         for column in field.get('columns', []):
-            if _contains(column, '序号', 'line_no'):
-                value = index
-            elif _contains(column, '物资名称', '产品名称', '标的名称', 'item_name', 'product_name'):
-                value = item['item_name']
-            elif _contains(column, '供应商', '供方', 'supplier'):
-                value = item.get('supplier_name') or payload['supplier']['name']
-            elif _contains(column, '规格', '型号', 'spec'):
-                value = item['spec_model']
-            elif _contains(column, '数量', 'qty', 'quantity'):
-                value = item['quantity']
-            elif _contains(column, '单位', 'unit', 'uom'):
-                value = item['unit']
-            elif _contains(column, '单价', 'unit_price'):
-                value = item['unit_price']
-            elif _contains(column, '小计', '合计', '金额', 'subtotal', 'amount'):
-                value = item['amount']
+            semantic = _col_semantic(column)
+            if semantic and semantic in _COLUMN_SEMANTIC_TO_VALUE:
+                value = _COLUMN_SEMANTIC_TO_VALUE[semantic](index, item, supplier_name)
             else:
                 value = column.get('default_value') or ''
             row[column.get('key')] = value
@@ -232,10 +246,10 @@ def prepare_template_fields(template_path, payload):
     return tpl, fields
 
 
-def prepare_editor_session(project_id, template_filename):
+def prepare_editor_session(project_id, template_filename, paths):
     sheet = build_contract_data_sheet(project_id)
     sheet = procurement_store.get_contract_data_sheet(sheet['id'])
-    path = helpers.safe_template_path(template_filename)
+    path = safe_template_path(template_filename, paths)
     tpl, fields = prepare_template_fields(path, sheet['payload'])
     procurement_store.mark_data_sheet_in_editor(sheet['id'])
     return {

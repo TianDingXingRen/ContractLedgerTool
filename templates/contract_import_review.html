@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}复核导入合同 - 采购业务平台{% endblock %}
+{% block breadcrumb %}合同台账 / 导入合同 / 复核{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-5 gap-3">
+    <div>
+        <h1 class="text-2xl font-bold">复核合同信息</h1>
+        <p class="text-sm text-base-content/50 mt-1">原文件：{{ preview.original_filename }} · 保存后付款计划仍为待确认</p>
+    </div>
+    <form method="post" action="{{ url_for('contract_import.contract_import_cancel', sid=sid) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">取消导入</button>
+    </form>
+</div>
+
+{% if error %}
+<div class="alert alert-error mb-4">
+    <span>{{ error }}</span>
+    {% if duplicate_contract %}
+    <a class="link" href="{{ url_for('contracts.contract_detail', contract_id=duplicate_contract.id) }}">查看已有合同</a>
+    {% endif %}
+</div>
+{% endif %}
+{% for warning in preview.warnings %}
+<div class="alert alert-warning py-2 mb-2"><span class="text-sm">{{ warning }}</span></div>
+{% endfor %}
+
+<form method="post" action="{{ url_for('contract_import.contract_import_confirm', sid=sid) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card bg-base-100 shadow-sm mb-5">
+        <div class="card-body">
+            <h2 class="card-title text-base">台账字段</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {% set fields = [
+                    ('contract_no','合同编号','text'), ('title','合同名称','text'),
+                    ('counterparty','对方单位','text'), ('amount','合同金额','text'),
+                    ('sign_date','签订日期','text'), ('expiry_date','到期日期','text'),
+                    ('owner','负责人','text'), ('project_name','所属项目','text')
+                ] %}
+                {% for key, label, input_type in fields %}
+                <label class="form-control">
+                    <span class="label-text text-xs pb-1">{{ label }}{% if key == 'title' %}<span class="text-error"> *</span>{% endif %}</span>
+                    <input name="{{ key }}" value="{{ summary.get(key, '') if summary.get(key) is not none else '' }}"
+                           {% if key == 'title' %}required{% endif %}
+                           {% if key == 'project_name' %}list="projectNameOptions"{% endif %}
+                           class="input input-bordered input-sm">
+                    {% if diagnostics.get(key) %}
+                    {% set diagnostic = diagnostics.get(key) %}
+                    <span class="text-xs mt-1 {{ 'text-success' if diagnostic.confidence == 'high' else 'text-warning' if diagnostic.confidence == 'medium' else 'text-base-content/50' }}"
+                          title="{{ diagnostic.evidence }}">识别置信度：{{ confidence_labels.get(diagnostic.confidence, diagnostic.confidence) }}</span>
+                    {% endif %}
+                </label>
+                {% endfor %}
+                <label class="form-control">
+                    <span class="label-text text-xs pb-1">覆盖起始号</span>
+                    <input type="number" name="coverage_start" min="1" max="1000000000"
+                           value="{{ summary.coverage_start if summary.coverage_start is not none else '' }}"
+                           class="input input-bordered input-sm">
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs pb-1">覆盖结束号</span>
+                    <input type="number" name="coverage_end" min="1" max="1000000000"
+                           value="{{ summary.coverage_end if summary.coverage_end is not none else '' }}"
+                           class="input input-bordered input-sm">
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs pb-1">状态</span>
+                    <select name="status" class="select select-bordered select-sm">
+                        {% for value, label in contract_status_labels.items() %}
+                        <option value="{{ value }}" {% if summary.status == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <datalist id="projectNameOptions">
+                {% for project_name in project_names %}<option value="{{ project_name }}"></option>{% endfor %}
+            </datalist>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm mb-5">
+        <div class="card-body">
+            <div>
+                <h2 class="card-title text-base">合同付款规则（{{ rules|length }} 条）</h2>
+                <p class="text-xs text-base-content/50 mt-1">规则描述合同约定；“每次投产通知”等重复规则不会直接进入近期付款列表。</p>
+            </div>
+            <input type="hidden" name="rule_count" value="{{ rules|length }}">
+            <div class="overflow-x-auto border border-base-200 rounded-lg">
+                <table class="table table-sm">
+                    <thead><tr><th>保存</th><th>状态</th><th>款项</th><th>适用范围</th><th>触发条件</th><th>计算基数</th><th>比例%</th><th>原文依据</th></tr></thead>
+                    <tbody>
+                    {% for rule in rules %}
+                    {% set i = loop.index0 %}
+                    <tr>
+                        <td><input type="checkbox" name="rule_{{ i }}_include" value="1" {% if rule.get('_include', true) %}checked{% endif %} class="checkbox checkbox-sm"></td>
+                        <td>
+                            {% set ps = rule.parse_status or 'manual' %}
+                            <span class="badge badge-sm {{ 'badge-success' if ps == 'exact' else 'badge-error' if ps == 'conflict' else 'badge-warning' if ps in ('partial','unsupported') else 'badge-ghost' }}">
+                                {{ payment_parse_status_labels.get(ps, ps) }}
+                            </span>
+                        </td>
+                        <td>{{ rule.phase_name or '付款规则' }}{% if rule.repeat_mode == 'each_event' %}<span class="badge badge-info badge-xs ml-1">重复触发</span>{% endif %}</td>
+                        <td>{{ '每次投产通知' if rule.scope == 'production_notice' else '每批到货' if rule.scope == 'delivery_batch' else '合同范围' }}</td>
+                        <td>{{ rule.trigger_event or '未明确' }}</td>
+                        <td>{{ payment_amount_basis_labels.get(rule.amount_basis, rule.amount_basis_text or '未明确') }}</td>
+                        <td>{{ rule.ratio if rule.ratio is not none else '-' }}</td>
+                        <td class="min-w-64">
+                            <div class="text-xs">{{ rule.source_text }}</div>
+                            {% for code in rule.get('reason_codes', []) %}<div class="text-warning text-xs">{{ payment_reason_labels.get(code, code) }}</div>{% endfor %}
+                        </td>
+                    </tr>
+                    <tr hidden><td colspan="8">
+                        {% for key in ['group_key','phase_name','rule_type','scope','trigger_event_type','trigger_event','trigger_days','due_date','conditions_json','condition_logic','amount_basis','amount_basis_text','ratio','explicit_amount','calculated_amount','repeat_mode','source_text','source_block','rule_fingerprint','source_fingerprint','extractor_version','rule_version','parse_status','reason_codes_json','confirm_status'] %}
+                        <input type="hidden" name="rule_{{ i }}_{{ key }}" value="{{ rule.get(key, '') if rule.get(key) is not none else '' }}">
+                        {% endfor %}
+                    </td></tr>
+                    {% else %}
+                    <tr><td colspan="8" class="text-center text-base-content/40 py-6">未识别到付款规则</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm mb-5">
+        <div class="card-body">
+            <div>
+                <h2 class="card-title text-base">付款计划（{{ plans|length }} 条）</h2>
+                <p class="text-xs text-base-content/50 mt-1">取消勾选可排除误识别条目；导入后请在合同详情中再次确认。</p>
+            </div>
+            <input type="hidden" name="plan_count" value="{{ plans|length }}">
+            <div class="overflow-x-auto border border-base-200 rounded-lg">
+                <table class="table table-sm">
+                    <thead><tr><th>导入</th><th>款项</th><th>类型</th><th>触发条件</th><th>后置天数</th><th>日期</th><th>比例%</th><th>金额</th><th>原文</th></tr></thead>
+                    <tbody>
+                    {% for plan in plans %}
+                    {% set i = loop.index0 %}
+                    <tr>
+                        <td><input type="checkbox" name="plan_{{ i }}_include" value="1" {% if plan.get('_include', true) %}checked{% endif %} class="checkbox checkbox-sm"></td>
+                        <td>
+                            <input name="plan_{{ i }}_phase_name" value="{{ plan.phase_name or '' }}" class="input input-bordered input-xs w-28">
+                            <input type="hidden" name="plan_{{ i }}_confidence" value="{{ plan.confidence or 'low' }}">
+                            <input type="hidden" name="plan_{{ i }}_expected_trigger_date" value="{{ plan.expected_trigger_date or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_condition_text" value="{{ plan.condition_text or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_remark" value="{{ plan.remark or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_confirm_status" value="pending">
+                            <input type="hidden" name="plan_{{ i }}_payment_status" value="unpaid">
+                            <input type="hidden" name="plan_{{ i }}_paid_amount" value="0">
+                            <input type="hidden" name="plan_{{ i }}_paid_date" value="">
+                            <input type="hidden" name="plan_{{ i }}_amount_basis" value="{{ plan.amount_basis or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_explicit_amount" value="{{ plan.explicit_amount if plan.explicit_amount is not none else '' }}">
+                            <input type="hidden" name="plan_{{ i }}_calculated_amount" value="{{ plan.calculated_amount if plan.calculated_amount is not none else '' }}">
+                            <input type="hidden" name="plan_{{ i }}_parse_status" value="{{ plan.parse_status or 'manual' }}">
+                            <input type="hidden" name="plan_{{ i }}_reason_codes_json" value="{{ plan.reason_codes_json or '[]' }}">
+                            <input type="hidden" name="plan_{{ i }}_rule_fingerprint" value="{{ plan.rule_fingerprint or '' }}">
+                            <input type="hidden" name="plan_{{ i }}_extractor_version" value="{{ plan.extractor_version or '' }}">
+                        </td>
+                        <td><select name="plan_{{ i }}_payment_type" class="select select-bordered select-xs"><option value="conditional" {% if plan.payment_type == 'conditional' %}selected{% endif %}>条件</option><option value="fixed_date" {% if plan.payment_type == 'fixed_date' %}selected{% endif %}>固定日期</option></select></td>
+                        <td><input name="plan_{{ i }}_trigger_event" value="{{ plan.trigger_event or '' }}" class="input input-bordered input-xs w-24"></td>
+                        <td><input name="plan_{{ i }}_trigger_days" value="{{ plan.trigger_days if plan.trigger_days is not none else '' }}" class="input input-bordered input-xs w-16"></td>
+                        <td><input name="plan_{{ i }}_due_date" value="{{ plan.due_date or '' }}" class="input input-bordered input-xs w-24"></td>
+                        <td><input name="plan_{{ i }}_ratio" value="{{ plan.ratio if plan.ratio is not none else '' }}" class="input input-bordered input-xs w-16"></td>
+                        <td><input name="plan_{{ i }}_due_amount" value="{{ plan.due_amount if plan.due_amount is not none else '' }}" class="input input-bordered input-xs w-24"></td>
+                        <td><textarea name="plan_{{ i }}_source_text" rows="2" class="textarea textarea-bordered textarea-xs min-w-48">{{ plan.source_text or '' }}</textarea></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="9" class="text-center text-base-content/40 py-6">未识别到付款条款</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex justify-end gap-2">
+        <button type="submit" class="btn btn-primary gap-2">
+            <i data-lucide="import" class="w-4 h-4"></i> 确认导入台账
+        </button>
+    </div>
+</form>
+{% endblock %}

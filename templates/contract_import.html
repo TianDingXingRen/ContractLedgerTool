@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}导入合同 - 采购业务平台{% endblock %}
+{% block breadcrumb %}合同台账 / 导入合同{% endblock %}
+{% block content %}
+
+<div class="max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold">导入外部合同</h1>
+            <p class="text-sm text-base-content/50 mt-1">上传别人编写完成的 DOCX，识别结果经人工复核后才会写入台账。</p>
+        </div>
+        <a href="{{ url_for('contracts.contract_ledger') }}" class="btn btn-ghost btn-sm">返回台账</a>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error mb-4">
+        <span>{{ error }}</span>
+        {% if duplicate_contract %}
+        <a class="link" href="{{ url_for('contracts.contract_detail', contract_id=duplicate_contract.id) }}">查看已有合同</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('contract_import.contract_import_preview') }}"
+          enctype="multipart/form-data" class="card bg-base-100 shadow-sm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+            <label class="form-control">
+                <span class="label-text font-medium mb-2">DOCX 合同文件</span>
+                <input type="file" name="file" accept=".docx" required
+                       class="file-input file-input-bordered w-full">
+            </label>
+            <div class="text-xs text-base-content/50 leading-6 mt-2">
+                <p>仅支持标准 DOCX，不支持旧版 DOC、PDF 或批量上传。</p>
+                <p>系统不会修改原文件；合同编号和文件内容重复时将阻止导入。</p>
+            </div>
+            <div class="card-actions justify-end mt-4">
+                <button type="submit" class="btn btn-primary gap-2">
+                    <i data-lucide="scan-text" class="w-4 h-4"></i> 识别并复核
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+{% endblock %}
