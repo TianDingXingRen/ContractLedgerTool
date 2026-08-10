@@ -67,9 +67,15 @@ def _project_with_items_and_suppliers():
         'quantity': '5', 'unit': '件', 'required_delivery_date': '2026-08-10',
     })
     suppliers = []
-    for name in ('供应商A', '供应商B', '供应商C'):
+    for index, name in enumerate(('供应商A', '供应商B', '供应商C'), start=1):
         suppliers.append(procurement_project_service.add_supplier(project_id, {
             'supplier_name': name, 'contact_person': name[-1] + '联系人',
+            'contact_phone': f'1380000000{index}',
+            'email': f'supplier{index}@example.test',
+            'direct_support_experience': name[-1] + '直接配套经验',
+            'aerospace_support_experience': name[-1] + '航空航天配套经验',
+            'qualifications': name[-1] + '资质',
+            'remark': name[-1] + '其他信息',
         }))
     return project_id, suppliers
 
@@ -195,11 +201,56 @@ def test_inline_item_and_supplier_add_return_to_entry_sections(app, client):
         data={
             'csrf_token': 'inline-token',
             'supplier_name': '连续录入供应商',
+            'direct_support_experience': '  直接配套项目甲  ',
+            'aerospace_support_experience': '  有，曾配套航天结构件  ',
+            'qualifications': '  质量体系认证  ',
+            'remark': '  其他补充信息  ',
         },
         follow_redirects=False,
     )
     assert supplier_response.status_code == 302
     assert supplier_response.headers['Location'].endswith(f'/procurement/projects/{project_id}#suppliers')
+    supplier = procurement_store.list_project_suppliers(project_id)[0]
+    assert supplier['direct_support_experience'] == '直接配套项目甲'
+    assert supplier['aerospace_support_experience'] == '有，曾配套航天结构件'
+    assert supplier['qualifications'] == '质量体系认证'
+    assert supplier['remark'] == '其他补充信息'
+
+    detail_html = client.get(
+        f'/procurement/projects/{project_id}'
+    ).get_data(as_text=True)
+    assert all(label in detail_html for label in (
+        '直接配套经验', '是否有航空航天配套经验', '资质', '其他',
+    ))
+    assert '直接配套项目甲' in detail_html
+
+    edit_html = client.get(
+        f'/procurement/projects/{project_id}/suppliers/{supplier["id"]}/edit'
+    ).get_data(as_text=True)
+    assert 'name="direct_support_experience"' in edit_html
+    assert 'name="aerospace_support_experience"' in edit_html
+    assert 'name="qualifications"' in edit_html
+    assert '<span class="label-text">其他</span>' in edit_html
+    assert '<span class="label-text">备注</span>' not in edit_html
+
+    update_response = client.post(
+        f'/procurement/projects/{project_id}/suppliers/{supplier["id"]}/edit',
+        data={
+            'csrf_token': 'inline-token',
+            'supplier_name': '连续录入供应商',
+            'direct_support_experience': '  更新后的直接配套经验  ',
+            'aerospace_support_experience': '  更新后的航空航天经验  ',
+            'qualifications': '  更新后的资质  ',
+            'remark': '  更新后的其他信息  ',
+        },
+        follow_redirects=False,
+    )
+    assert update_response.status_code == 302
+    updated_supplier = procurement_store.get_project_supplier(supplier['id'])
+    assert updated_supplier['direct_support_experience'] == '更新后的直接配套经验'
+    assert updated_supplier['aerospace_support_experience'] == '更新后的航空航天经验'
+    assert updated_supplier['qualifications'] == '更新后的资质'
+    assert updated_supplier['remark'] == '更新后的其他信息'
 
 
 def test_standard_quote_import_page_downloads_supplier_template(app, client):
@@ -456,6 +507,16 @@ def test_negotiation_plan_prefills_generates_word_and_archives(app, client):
     assert '结构件A' in html
     assert '目标价格' in html
     assert '生成文件名' in html
+    assert '备选供应商信息' in html
+    assert all(name in html for name in ('供应商A', '供应商B', '供应商C'))
+    assert all(label in html for label in (
+        '直接配套经验', '是否有航空航天配套经验', '资质', '其他',
+    ))
+    assert all(value in html for value in (
+        'A直接配套经验', 'A航空航天配套经验', 'A资质', 'A其他信息',
+    ))
+    assert 'A联系人' not in html
+    assert 'supplier1@example.test' not in html
 
     with client.session_transaction() as flask_session:
         flask_session['_csrf_token'] = 'plan-token'
@@ -490,7 +551,78 @@ def test_negotiation_plan_prefills_generates_word_and_archives(app, client):
     assert '结构件加工竞争性谈判谈判预案' in all_text
     assert '按附件模板生成，减少重复填写。' in all_text
     assert '结构件A' in all_text
-    assert '评价方案' in all_text
+    assert all(name in all_text for name in ('供应商A', '供应商B', '供应商C'))
+    assert '三、备选供应商信息' in all_text
+    assert '四、生产周期要求' in all_text
+    assert '五、目标价格' in all_text
+    assert '六、报价轮次' in all_text
+    assert '七、评价方案' in all_text
+    supplier_table = next(
+        table for table in document.tables
+        if table.rows[0].cells[1].text == '备选供应商名称'
+    )
+    assert [cell.text for cell in supplier_table.rows[0].cells] == [
+        '序号', '备选供应商名称', '直接配套经验',
+        '是否有航空航天配套经验', '资质', '其他',
+    ]
+    assert [row.cells[1].text for row in supplier_table.rows[1:]] == [
+        '供应商A', '供应商B', '供应商C',
+    ]
+    assert [cell.text for cell in supplier_table.rows[1].cells] == [
+        '1', '供应商A', 'A直接配套经验', 'A航空航天配套经验',
+        'A资质', 'A其他信息',
+    ]
+    supplier_table_text = '\n'.join(
+        cell.text for row in supplier_table.rows for cell in row.cells
+    )
+    assert 'A联系人' not in supplier_table_text
+    assert 'supplier1@example.test' not in supplier_table_text
+    _assert_docx_uses_fangsong(document)
+
+
+@pytest.mark.parametrize('supplier_names', [
+    [],
+    ['单一备选供应商'],
+    ['供应商甲', '供应商乙', '超长供应商名称' * 18],
+])
+def test_negotiation_plan_supplier_section_handles_cardinality_and_wrapping(
+    app, supplier_names,
+):
+    project_id = procurement_project_service.create_project({
+        'project_no': 'CG-SUPPLIER-DOCX',
+        'project_name': '供应商章节测试',
+        'purchase_method': 'competitive_negotiation',
+    })
+    procurement_project_service.add_item(project_id, {
+        'item_name': '测试产品', 'quantity': '1', 'unit': '件',
+    })
+    for name in supplier_names:
+        procurement_project_service.add_supplier(project_id, {
+            'supplier_name': name,
+        })
+
+    path = project_document_service.generate_negotiation_plan(project_id)
+    document = Document(path)
+    supplier_table = next(
+        table for table in document.tables
+        if table.rows[0].cells[1].text == '备选供应商名称'
+    )
+    exported_names = [row.cells[1].text for row in supplier_table.rows[1:]]
+    if supplier_names:
+        assert exported_names == supplier_names
+        assert all(
+            cell.text == '—'
+            for row in supplier_table.rows[1:]
+            for cell in row.cells[2:]
+        )
+    else:
+        assert exported_names == ['暂无备选供应商信息']
+    assert [cell.text for cell in supplier_table.rows[0].cells] == [
+        '序号', '备选供应商名称', '直接配套经验',
+        '是否有航空航天配套经验', '资质', '其他',
+    ]
+    assert len(supplier_table.columns) == 6
+    assert supplier_table.autofit is False
     _assert_docx_uses_fangsong(document)
 
 

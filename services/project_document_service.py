@@ -10,7 +10,7 @@ import zipfile
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Inches, Pt
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
@@ -106,6 +106,16 @@ def _append_negotiation_signature_box(document):
         cell.text = label
     for cell in table.rows[2].cells:
         cell.text = '\n\n'
+
+
+def _set_table_column_widths(table, widths):
+    """Keep generated Word tables readable while allowing wrapped row growth."""
+    table.autofit = False
+    for row in table.rows:
+        for cell, width in zip(row.cells, widths):
+            cell.width = width
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.keep_together = True
 
 
 def _default_delivery_requirement(project, items):
@@ -227,6 +237,7 @@ def generate_negotiation_plan(project_id, form=None, return_info=False):
     defaults = negotiation_plan_defaults(project_id)
     project = defaults['project']
     items = defaults['items']
+    suppliers = defaults['suppliers']
     if not items:
         raise ValueError('请先录入采购明细')
     plan = _negotiation_plan_from_form(defaults, form)
@@ -262,16 +273,49 @@ def generate_negotiation_plan(project_id, form=None, return_info=False):
         for cell, value in zip(cells, values):
             cell.text = str(value)
 
-    document.add_heading('三、生产周期要求', level=2)
+    document.add_heading('三、备选供应商信息', level=2)
+    supplier_table = document.add_table(rows=1, cols=6)
+    supplier_table.style = 'Table Grid'
+    supplier_headers = [
+        '序号', '备选供应商名称', '直接配套经验',
+        '是否有航空航天配套经验', '资质', '其他',
+    ]
+    for cell, label in zip(supplier_table.rows[0].cells, supplier_headers):
+        cell.text = label
+    if suppliers:
+        for index, supplier in enumerate(suppliers, start=1):
+            cells = supplier_table.add_row().cells
+            values = [
+                index,
+                supplier.get('supplier_name') or '—',
+                supplier.get('direct_support_experience') or '—',
+                supplier.get('aerospace_support_experience') or '—',
+                supplier.get('qualifications') or '—',
+                supplier.get('remark') or '—',
+            ]
+            for cell, value in zip(cells, values):
+                cell.text = str(value)
+    else:
+        cells = supplier_table.add_row().cells
+        cells[0].merge(cells[-1]).text = '暂无备选供应商信息'
+    _set_table_column_widths(
+        supplier_table,
+        (
+            Inches(0.45), Inches(1.15), Inches(1.35),
+            Inches(1.55), Inches(1.0), Inches(1.0),
+        ),
+    )
+
+    document.add_heading('四、生产周期要求', level=2)
     document.add_paragraph(plan['delivery_requirement'])
 
-    document.add_heading('四、目标价格：', level=2)
+    document.add_heading('五、目标价格', level=2)
     document.add_paragraph('金额：' + plan['target_price_note'])
 
-    document.add_heading('五、报价轮次', level=2)
+    document.add_heading('六、报价轮次', level=2)
     document.add_paragraph(plan['quote_round_note'])
 
-    document.add_heading('六、评价方案', level=2)
+    document.add_heading('七、评价方案', level=2)
     for line in plan['evaluation_plan'].splitlines():
         text = line.strip()
         if text:

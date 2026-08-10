@@ -493,6 +493,9 @@ def add_supplier(project_id, form):
         'contact_person': str(form.get('contact_person') or '').strip(),
         'contact_phone': str(form.get('contact_phone') or '').strip(),
         'email': str(form.get('email') or '').strip(),
+        'direct_support_experience': str(form.get('direct_support_experience') or '').strip(),
+        'aerospace_support_experience': str(form.get('aerospace_support_experience') or '').strip(),
+        'qualifications': str(form.get('qualifications') or '').strip(),
         'remark': str(form.get('remark') or '').strip(),
     })
 
@@ -506,6 +509,9 @@ def update_supplier(project_id, supplier_id, form):
         'contact_person': str(form.get('contact_person') or '').strip(),
         'contact_phone': str(form.get('contact_phone') or '').strip(),
         'email': str(form.get('email') or '').strip(),
+        'direct_support_experience': str(form.get('direct_support_experience') or '').strip(),
+        'aerospace_support_experience': str(form.get('aerospace_support_experience') or '').strip(),
+        'qualifications': str(form.get('qualifications') or '').strip(),
         'remark': str(form.get('remark') or '').strip(),
     })
 

@@ -46,6 +46,10 @@ def test_project_item_and_supplier_components_match_public_wrappers(tmp_db):
     supplier_id = procurement_store.add_project_supplier(project_id, {
         'supplier_name': ' 供应商A ',
         'contact_person': '张三',
+        'direct_support_experience': '型号甲直接配套',
+        'aerospace_support_experience': '有航空配套经验',
+        'qualifications': '质量体系资质',
+        'remark': '初始其他信息',
     })
     removable_supplier = procurement_store.add_project_supplier(project_id, {
         'supplier_name': '供应商B',
@@ -54,6 +58,10 @@ def test_project_item_and_supplier_components_match_public_wrappers(tmp_db):
         'supplier_name': '供应商A-更新',
         'contact_person': '李四',
         'contact_phone': '13800000000',
+        'direct_support_experience': '型号乙直接配套',
+        'aerospace_support_experience': '航天结构件配套',
+        'qualifications': '保密资质',
+        'remark': '更新后的其他信息',
     })
     assert procurement_store.list_project_suppliers(project_id) == (
         project_components.list_project_suppliers(ledger_store.get_conn, project_id)
@@ -63,7 +71,12 @@ def test_project_item_and_supplier_components_match_public_wrappers(tmp_db):
             ledger_store.get_conn, procurement_store._dict, supplier_id
         )
     )
-    assert procurement_store.get_project_supplier(supplier_id)['normalized_name'] == '供应商a-更新'
+    saved_supplier = procurement_store.get_project_supplier(supplier_id)
+    assert saved_supplier['normalized_name'] == '供应商a-更新'
+    assert saved_supplier['direct_support_experience'] == '型号乙直接配套'
+    assert saved_supplier['aerospace_support_experience'] == '航天结构件配套'
+    assert saved_supplier['qualifications'] == '保密资质'
+    assert saved_supplier['remark'] == '更新后的其他信息'
     procurement_store.delete_project_supplier(project_id, removable_supplier)
     assert len(procurement_store.list_project_suppliers(project_id)) == 1
 

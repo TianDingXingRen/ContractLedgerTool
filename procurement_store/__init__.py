@@ -33,6 +33,7 @@ from .schema import (
     V3_CONTRACT_REFS_INDEX_SQL,
     V3_CONTRACT_REFS_SQL,
     V4_INDEX_STATEMENTS,
+    V5_SUPPLIER_COLUMN_MIGRATIONS,
 )
 
 def _normalize_name(value):
@@ -72,6 +73,7 @@ def init_db():
             MigrationStep(2, _migrate_v2),
             MigrationStep(3, _migrate_v3),
             MigrationStep(4, _migrate_v4),
+            MigrationStep(5, _migrate_v5),
         ),
         namespace='procurement',
         record_version=_record_schema_version,
@@ -91,6 +93,11 @@ def _migrate_v3(conn):
 def _migrate_v4(conn):
     for statement in V4_INDEX_STATEMENTS:
         conn.execute(statement)
+
+
+def _migrate_v5(conn):
+    for table_name, column_name, column_sql in V5_SUPPLIER_COLUMN_MIGRATIONS:
+        ensure_column(conn, table_name, column_name, column_sql)
 
 
 def _record_schema_version(conn, version):

@@ -6,7 +6,10 @@ def test_procurement_schema_module_exposes_init_parts():
     assert schema.SCHEMA_VERSION_INSERT_SQL.startswith('INSERT OR IGNORE')
     assert ('award_recommendations', 'is_split', 'INTEGER NOT NULL DEFAULT 0') in schema.V2_COLUMN_MIGRATIONS
     assert 'procurement_contract_refs' in schema.V3_CONTRACT_REFS_SQL
-    assert schema.CURRENT_SCHEMA_VERSION == 4
+    assert (
+        'project_suppliers', 'direct_support_experience', "TEXT DEFAULT ''"
+    ) in schema.V5_SUPPLIER_COLUMN_MIGRATIONS
+    assert schema.CURRENT_SCHEMA_VERSION == 5
 
 
 def test_procurement_init_db_uses_extracted_schema(tmp_path):
@@ -50,6 +53,12 @@ def test_procurement_init_db_uses_extracted_schema(tmp_path):
                     'PRAGMA table_info(award_recommendation_items)'
                 ).fetchall()
             }
+            supplier_columns = {
+                row['name']
+                for row in conn.execute(
+                    'PRAGMA table_info(project_suppliers)'
+                ).fetchall()
+            }
             schema_version = conn.execute(
                 'SELECT MAX(version) AS version FROM procurement_schema_version'
             ).fetchone()['version']
@@ -66,8 +75,81 @@ def test_procurement_init_db_uses_extracted_schema(tmp_path):
         assert 'idx_procurement_contract_refs_project' in indexes
         assert {'is_split', 'supplier_summary'} <= award_columns
         assert {'supplier_id', 'quote_id'} <= item_columns
+        assert {
+            'direct_support_experience',
+            'aerospace_support_experience',
+            'qualifications',
+        } <= supplier_columns
         assert schema_version == procurement_store.schema.CURRENT_SCHEMA_VERSION
         assert procurement_store.needs_migration() is False
+    finally:
+        ledger_store.close_connections()
+        ledger_store.DATA_DIR = old_data_dir
+        ledger_store.DB_PATH = old_db_path
+        ledger_store.BACKUP_DIR = old_backup_dir
+
+
+def test_procurement_v4_supplier_data_migrates_to_v5(tmp_path):
+    import ledger_store
+    import procurement_store
+
+    old_data_dir = ledger_store.DATA_DIR
+    old_db_path = ledger_store.DB_PATH
+    old_backup_dir = ledger_store.BACKUP_DIR
+
+    try:
+        ledger_store.DATA_DIR = str(tmp_path)
+        ledger_store.DB_PATH = str(tmp_path / 'contracts.db')
+        ledger_store.BACKUP_DIR = str(tmp_path / 'backups')
+        ledger_store.init_db()
+
+        with ledger_store.get_conn() as conn:
+            conn.executescript("""
+                CREATE TABLE procurement_projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_no TEXT NOT NULL UNIQUE,
+                    project_name TEXT NOT NULL,
+                    purchase_method TEXT NOT NULL DEFAULT 'competitive_negotiation',
+                    demand_department TEXT DEFAULT '', owner TEXT DEFAULT '',
+                    budget_minor INTEGER, target_price_minor INTEGER,
+                    currency TEXT NOT NULL DEFAULT 'CNY', delivery_place TEXT DEFAULT '',
+                    delivery_requirement TEXT DEFAULT '', payment_requirement TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'draft', remark TEXT DEFAULT '',
+                    archived_at TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE project_suppliers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    supplier_name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL,
+                    contact_person TEXT DEFAULT '', contact_phone TEXT DEFAULT '',
+                    email TEXT DEFAULT '', invite_status TEXT NOT NULL DEFAULT 'pending',
+                    quote_status TEXT NOT NULL DEFAULT 'pending', remark TEXT DEFAULT '',
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(project_id, normalized_name),
+                    FOREIGN KEY(project_id) REFERENCES procurement_projects(id) ON DELETE CASCADE
+                );
+                CREATE TABLE procurement_schema_version (
+                    version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL
+                );
+                INSERT INTO procurement_projects
+                    (id, project_no, project_name, created_at, updated_at)
+                    VALUES (1, 'CG-V4', '迁移测试项目', '2026-01-01', '2026-01-01');
+                INSERT INTO project_suppliers
+                    (project_id, supplier_name, normalized_name, remark, created_at, updated_at)
+                    VALUES (1, '历史供应商', '历史供应商', '历史备注', '2026-01-01', '2026-01-01');
+                INSERT INTO procurement_schema_version(version, applied_at)
+                    VALUES (4, '2026-01-01');
+            """)
+
+        procurement_store.init_db()
+
+        supplier = procurement_store.list_project_suppliers(1)[0]
+        assert supplier['remark'] == '历史备注'
+        assert supplier['direct_support_experience'] == ''
+        assert supplier['aerospace_support_experience'] == ''
+        assert supplier['qualifications'] == ''
+        assert procurement_store.get_schema_version() == 5
     finally:
         ledger_store.close_connections()
         ledger_store.DATA_DIR = old_data_dir

@@ -133,11 +133,16 @@ def update_project_supplier(
         before = dict(row)
         conn.execute(
             """UPDATE project_suppliers SET supplier_name = ?, normalized_name = ?,
-                      contact_person = ?, contact_phone = ?, email = ?, remark = ?, updated_at = ?
+                      contact_person = ?, contact_phone = ?, email = ?,
+                      direct_support_experience = ?, aerospace_support_experience = ?,
+                      qualifications = ?, remark = ?, updated_at = ?
                WHERE id = ?""",
             (name, normalize_name(name), data.get('contact_person') or '',
              data.get('contact_phone') or '', data.get('email') or '',
-             data.get('remark') or '', now_func(), supplier_id),
+             data.get('direct_support_experience') or '',
+             data.get('aerospace_support_experience') or '',
+             data.get('qualifications') or '', data.get('remark') or '',
+             now_func(), supplier_id),
         )
         audit(conn, 'project_supplier', supplier_id, 'update', before=before, after=data)
 
@@ -151,10 +156,14 @@ def add_project_supplier(
         cur = conn.execute(
             """INSERT INTO project_suppliers
                (project_id, supplier_name, normalized_name, contact_person, contact_phone,
-                email, invite_status, quote_status, remark, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                email, direct_support_experience, aerospace_support_experience,
+                qualifications, invite_status, quote_status, remark, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (project_id, name, normalize_name(name), data.get('contact_person') or '',
              data.get('contact_phone') or '', data.get('email') or '',
+             data.get('direct_support_experience') or '',
+             data.get('aerospace_support_experience') or '',
+             data.get('qualifications') or '',
              data.get('invite_status') or 'pending', data.get('quote_status') or 'pending',
              data.get('remark') or '', now, now),
         )
