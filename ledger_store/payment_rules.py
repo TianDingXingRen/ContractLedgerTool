@@ -316,10 +316,17 @@ class PaymentRuleRepository:
                 .quantize(Decimal('1'), rounding=ROUND_HALF_UP)
             )
             due_amount = due_minor / 100
+            contract = conn.execute(
+                'SELECT subsystem_name FROM contracts WHERE id = ?',
+                (contract_id,),
+            ).fetchone()
+            subsystem_name = str(
+                contract['subsystem_name'] if contract else ''
+            ).strip()[:120]
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO payment_plans (
-                    contract_id, phase_name, payment_type, trigger_event,
+                    contract_id, subsystem_name, phase_name, payment_type, trigger_event,
                     trigger_days, expected_trigger_date, due_date, ratio,
                     due_amount, due_amount_minor, paid_amount, paid_amount_minor,
                     paid_date, condition_text, source_text, confidence,
@@ -327,12 +334,13 @@ class PaymentRuleRepository:
                     trigger_event_id, instance_key, calculation_base_minor,
                     amount_basis, parse_status, reason_codes_json,
                     extractor_version, user_modified, created_at, updated_at
-                ) VALUES (?, ?, 'conditional', ?, ?, ?, '', ?, ?, ?, 0, 0,
+                ) VALUES (?, ?, ?, 'conditional', ?, ?, ?, '', ?, ?, ?, 0, 0,
                           '', ?, ?, ?, 'pending', 'unpaid', ?, ?, ?, ?, ?, ?,
                           ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     contract_id,
+                    subsystem_name,
                     rule.get('phase_name') or '动态付款',
                     rule.get('trigger_event'),
                     rule.get('trigger_days'),
@@ -492,6 +500,13 @@ class PaymentRuleRepository:
             (contract_id, event_type),
         ).fetchall()
         created_plan_ids = []
+        contract = conn.execute(
+            'SELECT subsystem_name FROM contracts WHERE id = ?',
+            (contract_id,),
+        ).fetchone()
+        subsystem_name = str(
+            contract['subsystem_name'] if contract else ''
+        ).strip()[:120]
         for row in rules:
             rule = self._public_rule(row)
             instance_key = f'rule:{rule["id"]}:event:{event_id}'
@@ -511,7 +526,7 @@ class PaymentRuleRepository:
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO payment_plans (
-                    contract_id, phase_name, payment_type, trigger_event,
+                    contract_id, subsystem_name, phase_name, payment_type, trigger_event,
                     trigger_days, expected_trigger_date, due_date, ratio,
                     due_amount, due_amount_minor, paid_amount, paid_amount_minor,
                     paid_date, condition_text, source_text, confidence,
@@ -519,12 +534,13 @@ class PaymentRuleRepository:
                     trigger_event_id, instance_key, calculation_base_minor,
                     amount_basis, parse_status, reason_codes_json,
                     extractor_version, user_modified, created_at, updated_at
-                ) VALUES (?, ?, 'conditional', ?, ?, ?, '', ?, ?, ?, 0, 0,
+                ) VALUES (?, ?, ?, 'conditional', ?, ?, ?, '', ?, ?, ?, 0, 0,
                           '', ?, ?, ?, 'pending', 'unpaid', ?, ?, ?, ?, ?, ?,
                           ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     contract_id,
+                    subsystem_name,
                     rule.get('phase_name') or '动态付款',
                     rule.get('trigger_event'),
                     rule.get('trigger_days'),

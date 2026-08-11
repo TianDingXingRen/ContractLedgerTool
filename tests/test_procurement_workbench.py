@@ -663,22 +663,29 @@ def test_procurement_to_contract_prefills_editor_and_links_ledger(app, client):
     editor_html = editor_page.get_data(as_text=True)
     assert 'value="供应商A"' in editor_html
     assert 'value="结构件加工竞争性谈判"' in editor_html
+    assert 'placeholder="此处填写火箭型号名称"' in editor_html
+    assert 'name="subsystem_name"' in editor_html
     assert 'id="batchToggle"' not in editor_html
 
     before_count = ledger_store.list_contracts(per_page=100)['total']
     preflight = client.post('/generate/preflight', data={
         'csrf_token': 'procurement-token',
+        'coverage_mode': 'not_applicable',
         '_generation_mode': 'batch',
     })
     assert preflight.status_code == 400
     assert '仅支持单份生成' in preflight.get_json()['blocking'][0]
-    batch = client.post('/generate-batch', data={'csrf_token': 'procurement-token'})
+    batch = client.post('/generate-batch', data={
+        'csrf_token': 'procurement-token',
+        'coverage_mode': 'not_applicable',
+    })
     assert batch.status_code == 400
     assert '仅支持单份生成' in batch.get_data(as_text=True)
     assert ledger_store.list_contracts(per_page=100)['total'] == before_count
 
     response = client.post('/generate', data={
         'csrf_token': 'procurement-token',
+        'coverage_mode': 'not_applicable',
         'project_name': '结构件加工竞争性谈判',
         'field_0': '结构件加工竞争性谈判',
         'field_1': '供应商A',
@@ -800,6 +807,7 @@ def test_direct_contract_session_and_generated_contract_ref(app, client):
 
     response = client.post('/generate', data={
         'csrf_token': 'direct-token',
+        'coverage_mode': 'not_applicable',
         'project_name': '结构件加工竞争性谈判',
         'field_0': '结构件加工竞争性谈判',
         'field_1': '供应商A',
@@ -836,6 +844,7 @@ def test_direct_procurement_batch_links_every_contract(app, client):
 
     response = client.post('/generate-batch', data={
         'csrf_token': 'direct-batch-token',
+        'coverage_mode': 'not_applicable',
         'project_name': data['project_name'],
         'field_0': data['project_name'],
         'field_1': '',
@@ -882,6 +891,7 @@ def test_direct_procurement_link_failure_discards_generated_records(app, client,
 
     single = client.post('/generate', data={
         'csrf_token': 'link-failure-token',
+        'coverage_mode': 'not_applicable',
         'field_0': '供应商甲',
         'field_1': 'LINK-FAIL-SINGLE',
     })
@@ -890,6 +900,7 @@ def test_direct_procurement_link_failure_discards_generated_records(app, client,
 
     batch = client.post('/generate-batch', data={
         'csrf_token': 'link-failure-token',
+        'coverage_mode': 'not_applicable',
         'field_0': '',
         'field_1': 'LINK-FAIL-BATCH',
         'batch_counterparties': '供应商甲\n供应商乙',

@@ -34,6 +34,7 @@ from .schema import (
     V3_CONTRACT_REFS_SQL,
     V4_INDEX_STATEMENTS,
     V5_SUPPLIER_COLUMN_MIGRATIONS,
+    V6_PROJECT_FILE_VERSION_INDEX_SQL,
 )
 
 def _normalize_name(value):
@@ -74,6 +75,7 @@ def init_db():
             MigrationStep(3, _migrate_v3),
             MigrationStep(4, _migrate_v4),
             MigrationStep(5, _migrate_v5),
+            MigrationStep(6, _migrate_v6),
         ),
         namespace='procurement',
         record_version=_record_schema_version,
@@ -98,6 +100,23 @@ def _migrate_v4(conn):
 def _migrate_v5(conn):
     for table_name, column_name, column_sql in V5_SUPPLIER_COLUMN_MIGRATIONS:
         ensure_column(conn, table_name, column_name, column_sql)
+
+
+def _migrate_v6(conn):
+    rows = conn.execute(
+        """SELECT id, project_id, file_type
+             FROM project_files
+            ORDER BY project_id, file_type, version, created_at, id"""
+    ).fetchall()
+    counters = {}
+    for row in rows:
+        key = (row['project_id'], row['file_type'])
+        counters[key] = counters.get(key, 0) + 1
+        conn.execute(
+            'UPDATE project_files SET version = ? WHERE id = ?',
+            (counters[key], row['id']),
+        )
+    conn.execute(V6_PROJECT_FILE_VERSION_INDEX_SQL)
 
 
 def _record_schema_version(conn, version):

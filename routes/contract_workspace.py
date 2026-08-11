@@ -111,7 +111,9 @@ def register_contract_workspace(bp):
             recent_invoices = ledger_store.list_invoices(
                 contract_id=contract_id, page=1, per_page=6
             )['rows']
-            recent_plans = ledger_store.list_payment_plans(contract_id=contract_id, limit=8)
+            recent_plans = ledger_store.list_payment_plans(
+                contract_id=contract_id, limit=8, include_void_contracts=True
+            )
             recent_history = ledger_store.get_contract_history(contract_id)[:6]
             activity = _contract_activity(
                 contract, recent_notices, recent_invoices, recent_plans, recent_history
@@ -124,7 +126,8 @@ def register_contract_workspace(bp):
                 row for row in contract_serials if row.get('status') == 'active'
             ]
             plan_result = ledger_store.list_payment_plans(
-                contract_id=contract_id, page=_positive_page('plan_page'), per_page=20
+                contract_id=contract_id, page=_positive_page('plan_page'), per_page=20,
+                include_void_contracts=True,
             )
             plans = plan_result['rows']
             today_text = date.today().strftime('%Y-%m-%d')

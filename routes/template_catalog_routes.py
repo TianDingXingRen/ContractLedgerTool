@@ -48,8 +48,13 @@ def register_template_catalog_routes(bp):
             field_count=len(view.fields),
             template_name=view.template_name,
             template_filename=view.template_filename,
+            template_revision=view.template_revision,
+            draft_scope=view.draft_scope,
             preview_blocks=view.preview_blocks,
             preview_warnings=view.preview_warnings,
+            project_names=view.project_names,
+            classification_project_name='',
+            classification_subsystem_name='',
             batch_allowed=True,
         )
 

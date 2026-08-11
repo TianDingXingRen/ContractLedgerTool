@@ -511,6 +511,47 @@ def test_contract_editor_service_recovers_legacy_fields(
     assert model['preview_warnings'] == ['preview-warning']
     assert model['project_names'] == ['项目A']
     assert model['batch_allowed'] is True
+    assert len(model['template_revision']) == 64
+    assert model['draft_scope'] == 'template::'
+
+
+def test_editor_draft_revision_tracks_template_content(tmp_path):
+    template_path = tmp_path / 'sales.contract-template'
+    template_path.write_text('{"name":"版本一"}', encoding='utf-8')
+
+    first = contract_editor_service.build_draft_revision(
+        template_path,
+        [{'id': 1, 'key': 'amount'}],
+    )
+    template_path.write_text('{"name":"版本二"}', encoding='utf-8')
+    second = contract_editor_service.build_draft_revision(
+        template_path,
+        [{'id': 1, 'key': 'amount'}],
+    )
+
+    assert len(first) == 64
+    assert len(second) == 64
+    assert first != second
+
+
+def test_editor_draft_scope_isolates_procurement_sources():
+    award_scope = contract_editor_service.build_draft_scope({
+        'source_type': 'award',
+        'source_project_id': 7,
+        'procurement_data_sheet_id': 11,
+    })
+    another_sheet = contract_editor_service.build_draft_scope({
+        'source_type': 'award',
+        'source_project_id': 7,
+        'procurement_data_sheet_id': 12,
+    })
+    direct_scope = contract_editor_service.build_draft_scope({
+        'source_type': 'direct_contract',
+        'source_project_id': 7,
+    })
+
+    assert award_scope == 'award:7:11'
+    assert len({award_scope, another_sheet, direct_scope}) == 3
 
 
 def test_contract_ledger_service_queries_project_view(monkeypatch):

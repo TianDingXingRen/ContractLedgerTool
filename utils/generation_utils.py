@@ -19,7 +19,7 @@ from utils.keyword_maps import (
 )
 from utils.logger import get_logger
 from utils.security import (
-    MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH,
+    MAX_COUNTERPARTY_LENGTH, MAX_PROJECT_NAME_LENGTH, MAX_SUBSYSTEM_NAME_LENGTH,
     bounded_int, limit_text,
 )
 from utils.constants import FieldType
@@ -225,32 +225,53 @@ def infer_contract_summary(tpl, fields, field_values):
 
 
 def parse_contract_classification(form):
-    """Parse and validate the optional project/range classification fields."""
+    """Parse the required coverage mode and its classification fields."""
     project_name = limit_text(
         str(form.get('project_name', '') or '').strip(),
         MAX_PROJECT_NAME_LENGTH,
     )
+    subsystem_name = limit_text(
+        str(form.get('subsystem_name', '') or '').strip(),
+        MAX_SUBSYSTEM_NAME_LENGTH,
+    )
     start_raw = str(form.get('coverage_start', '') or '').strip()
     end_raw = str(form.get('coverage_end', '') or '').strip()
+    coverage_mode = str(form.get('coverage_mode', '') or '').strip()
 
-    if bool(start_raw) != bool(end_raw):
-        raise ValueError('覆盖范围的起始号和结束号需要同时填写')
-    if (start_raw or end_raw) and not project_name:
-        raise ValueError('填写覆盖范围前，请先填写所属项目')
+    if coverage_mode not in {'range', 'not_applicable'}:
+        raise ValueError('请选择“填写数字范围”或“不适用”')
 
-    coverage_start = coverage_end = None
-    if start_raw and end_raw:
-        coverage_start = bounded_int(
-            start_raw, min_value=1, max_value=1_000_000_000, label='覆盖范围起始号'
-        )
-        coverage_end = bounded_int(
-            end_raw, min_value=1, max_value=1_000_000_000, label='覆盖范围结束号'
-        )
-        if coverage_start > coverage_end:
-            raise ValueError('覆盖范围起始号不能大于结束号')
+    if coverage_mode == 'not_applicable':
+        if start_raw or end_raw:
+            raise ValueError('选择“不适用”时不能填写起始发次或结束发次')
+        return {
+            'project_name': project_name,
+            'subsystem_name': subsystem_name,
+            'coverage_mode': coverage_mode,
+            'coverage_not_applicable': True,
+            'coverage_start': None,
+            'coverage_end': None,
+        }
+
+    if not start_raw or not end_raw:
+        raise ValueError('填写数字范围时，起始发次和结束发次必须同时填写')
+    if not project_name:
+        raise ValueError('填写发次范围前，请先填写项目名称')
+
+    coverage_start = bounded_int(
+        start_raw, min_value=1, max_value=1_000_000_000, label='起始发次'
+    )
+    coverage_end = bounded_int(
+        end_raw, min_value=1, max_value=1_000_000_000, label='结束发次'
+    )
+    if coverage_start > coverage_end:
+        raise ValueError('起始发次不能大于结束发次')
 
     return {
         'project_name': project_name,
+        'subsystem_name': subsystem_name,
+        'coverage_mode': coverage_mode,
+        'coverage_not_applicable': False,
         'coverage_start': coverage_start,
         'coverage_end': coverage_end,
     }
@@ -262,6 +283,11 @@ def prepare_ledger_record(tpl, fields, field_values, document_path, classificati
     if classification:
         summary.update({
             'project_name': classification.get('project_name') or '',
+            'subsystem_name': classification.get('subsystem_name') or '',
+            'coverage_mode': classification.get('coverage_mode') or '',
+            'coverage_not_applicable': bool(
+                classification.get('coverage_not_applicable')
+            ),
             'coverage_start': classification.get('coverage_start'),
             'coverage_end': classification.get('coverage_end'),
         })
@@ -287,6 +313,11 @@ def prepare_ledger_payments(
     if classification:
         summary.update({
             'project_name': classification.get('project_name') or '',
+            'subsystem_name': classification.get('subsystem_name') or '',
+            'coverage_mode': classification.get('coverage_mode') or '',
+            'coverage_not_applicable': bool(
+                classification.get('coverage_not_applicable')
+            ),
             'coverage_start': classification.get('coverage_start'),
             'coverage_end': classification.get('coverage_end'),
         })

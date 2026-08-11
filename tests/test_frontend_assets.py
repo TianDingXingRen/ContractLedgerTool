@@ -9,7 +9,7 @@ import build_package
 class FrontendAssetTests(unittest.TestCase):
     def test_templates_have_no_executable_inline_scripts_or_dom_event_attributes(self):
         templates_dir = os.path.join(app.RESOURCE_DIR, 'templates')
-        event_attribute = re.compile(r'\son(?:click|change|input|submit|focus|blur)\s*=', re.I)
+        event_attribute = re.compile(r'\son[a-z]+\s*=', re.I)
         inline_script = re.compile(r'<script(?![^>]*\bsrc=)(?![^>]*type="application/json")[^>]*>', re.I)
         for root, _dirs, files in os.walk(templates_dir):
             for filename in files:

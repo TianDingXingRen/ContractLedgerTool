@@ -37,6 +37,11 @@ def build_single_preflight(tpl, fields, field_values, classification):
             'amount': summary.get('amount'),
             'sign_date': summary.get('sign_date') or '',
             'project_name': summary.get('project_name') or '',
+            'subsystem_name': summary.get('subsystem_name') or '',
+            'coverage_mode': summary.get('coverage_mode') or '',
+            'coverage_not_applicable': bool(
+                summary.get('coverage_not_applicable')
+            ),
             'coverage_start': summary.get('coverage_start'),
             'coverage_end': summary.get('coverage_end'),
             'ledger': True,
@@ -86,6 +91,11 @@ def build_batch_preflight(
             'counterparties_preview': counterparties[:5],
             'batch_field_keys': batch_field_keys,
             'project_name': (classification or {}).get('project_name') or '',
+            'subsystem_name': (classification or {}).get('subsystem_name') or '',
+            'coverage_mode': (classification or {}).get('coverage_mode') or '',
+            'coverage_not_applicable': bool(
+                (classification or {}).get('coverage_not_applicable')
+            ),
             'coverage_start': (classification or {}).get('coverage_start'),
             'coverage_end': (classification or {}).get('coverage_end'),
             'ledger': True,

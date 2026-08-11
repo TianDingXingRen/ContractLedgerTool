@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import ledger_store
+from ledger_store import list_queries
 from utils.generation_utils import next_month_range
 
 
@@ -37,6 +38,9 @@ def due_soon_payload(days):
                 'project_name': payment.get('project_name', ''),
                 'coverage_start': payment.get('coverage_start'),
                 'coverage_end': payment.get('coverage_end'),
+                'coverage_not_applicable': bool(
+                    payment.get('coverage_not_applicable')
+                ),
             }
             for payment in payments
         ],
@@ -51,6 +55,7 @@ def payment_plan_page(filters, page, today):
     query = {
         key: filters.get(key, '')
         for key in (
+            'contract_id',
             'confirm_status',
             'payment_status',
             'start_date',
@@ -88,6 +93,12 @@ def payment_plan_page(filters, page, today):
             row['id'] for row in result['rows'] if row['can_bulk_select']
         ],
         **query,
+        'payment_contract_options': (
+            list_queries.list_payment_plan_contract_options(
+                ledger_store.get_conn,
+                ledger_store.row_to_dict,
+            )
+        ),
         'project_names': ledger_store.list_project_names(),
         'page': result['page'],
         'pages': result['pages'],

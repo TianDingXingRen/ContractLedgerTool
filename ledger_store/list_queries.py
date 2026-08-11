@@ -23,11 +23,13 @@ def list_contracts(
         like = f'%{q}%'
         clauses.append(
             '(c.contract_no LIKE ? OR c.title LIKE ? OR c.counterparty LIKE ? '
-            'OR c.owner LIKE ? OR c.project_name LIKE ? OR c.values_json LIKE ? '
+            'OR c.owner LIKE ? OR c.project_name LIKE ? OR c.subsystem_name LIKE ? '
+            'OR c.values_json LIKE ? '
             'OR EXISTS (SELECT 1 FROM payment_plans p WHERE p.contract_id = c.id '
-            'AND (p.condition_text LIKE ? OR p.source_text LIKE ? OR p.phase_name LIKE ?)))'
+            'AND (p.condition_text LIKE ? OR p.source_text LIKE ? OR p.phase_name LIKE ? '
+            'OR p.subsystem_name LIKE ?)))'
         )
-        params.extend([like] * 9)
+        params.extend([like] * 11)
     if status:
         clauses.append('c.status = ?')
         params.append(status)
@@ -95,6 +97,7 @@ def list_payment_plans(
     page=0,
     per_page=20,
     limit=0,
+    include_void_contracts=False,
 ):
     base_sql = """
         FROM payment_plans p
@@ -102,6 +105,8 @@ def list_payment_plans(
         LEFT JOIN contract_serials s ON s.id = p.contract_serial_id
     """
     clauses = ["(c.deleted_at = '' OR c.deleted_at IS NULL)"]
+    if not include_void_contracts:
+        clauses.append("c.status != 'void'")
     params = []
     if contract_id:
         clauses.append('p.contract_id = ?')
@@ -131,7 +136,9 @@ def list_payment_plans(
         sql = f"""
             SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                    c.amount_minor AS contract_amount_minor, c.project_name,
-                   c.coverage_start, c.coverage_end, s.serial_no,
+                   c.subsystem_name AS contract_subsystem_name,
+                   c.coverage_start, c.coverage_end,
+                   c.coverage_not_applicable, s.serial_no,
                    s.amount_minor AS serial_amount_minor,
                    s.status AS serial_status
             {base_sql}{where}
@@ -152,7 +159,9 @@ def list_payment_plans(
     sql = f"""
         SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                c.amount_minor AS contract_amount_minor, c.project_name,
-               c.coverage_start, c.coverage_end, s.serial_no,
+               c.subsystem_name AS contract_subsystem_name,
+               c.coverage_start, c.coverage_end,
+               c.coverage_not_applicable, s.serial_no,
                s.amount_minor AS serial_amount_minor,
                s.status AS serial_status
         {base_sql}{where}
@@ -165,3 +174,20 @@ def list_payment_plans(
     with get_conn() as conn:
         rows = conn.execute(sql, query_params).fetchall()
     return [row_to_dict(r) for r in rows]
+
+
+def list_payment_plan_contract_options(get_conn, row_to_dict):
+    """Return active contracts that have at least one payment plan."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT c.id, c.contract_no, c.title
+              FROM contracts c
+              JOIN payment_plans p ON p.contract_id = c.id
+             WHERE (c.deleted_at = '' OR c.deleted_at IS NULL)
+               AND c.status != 'void'
+             ORDER BY CASE WHEN COALESCE(c.contract_no, '') = '' THEN 1 ELSE 0 END,
+                      c.contract_no, c.title, c.id
+            """
+        ).fetchall()
+    return [row_to_dict(row) for row in rows]

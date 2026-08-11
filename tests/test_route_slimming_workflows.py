@@ -41,6 +41,7 @@ def test_payment_routes_cover_contract_rules_plans_and_batches(client):
         {
             'contract_no': 'PAY-SLIM-001',
             'title': '付款路由瘦身测试',
+            'project_name': '付款测试项目',
             'coverage_start': 1,
             'coverage_end': 2,
         },

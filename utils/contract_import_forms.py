@@ -14,6 +14,7 @@ from utils.payment_forms import payment_row_from_form
 from utils.security import (
     MAX_COUNTERPARTY_LENGTH,
     MAX_PROJECT_NAME_LENGTH,
+    MAX_SUBSYSTEM_NAME_LENGTH,
     limit_text,
 )
 
@@ -73,6 +74,14 @@ def summary_from_form(form):
             classification.get('project_name') or '',
             MAX_PROJECT_NAME_LENGTH,
         ),
+        'subsystem_name': limit_text(
+            classification.get('subsystem_name') or '',
+            MAX_SUBSYSTEM_NAME_LENGTH,
+        ),
+        'coverage_mode': classification.get('coverage_mode') or '',
+        'coverage_not_applicable': bool(
+            classification.get('coverage_not_applicable')
+        ),
         'coverage_start': classification.get('coverage_start'),
         'coverage_end': classification.get('coverage_end'),
     }
@@ -89,12 +98,18 @@ def summary_for_render(form):
         'owner',
         'status',
         'project_name',
+        'subsystem_name',
+        'coverage_mode',
         'coverage_start',
         'coverage_end',
     )
-    return {
+    summary = {
         key: str(form.get(key, '') or '').strip() for key in keys
     }
+    summary['coverage_not_applicable'] = (
+        summary['coverage_mode'] == 'not_applicable'
+    )
+    return summary
 
 
 def plans_for_render(form):
@@ -107,6 +122,7 @@ def plans_for_render(form):
         return []
     keys = (
         'phase_name',
+        'subsystem_name',
         'payment_type',
         'trigger_event',
         'trigger_days',

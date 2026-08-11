@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sqlite3
 from pathlib import PurePosixPath
 
 from utils.field_utils import safe_filename_part
+from utils.file_digest import sha256_file as _sha256_file, sha256_stream
 from utils.logger import get_logger
 
 
@@ -88,19 +88,12 @@ def validate_package_archive(zf):
 
 
 def sha256_file(path):
-    digest = hashlib.sha256()
-    with open(path, 'rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return _sha256_file(path)
 
 
 def sha256_zip_member(zf, name):
-    digest = hashlib.sha256()
     with zf.open(name) as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return sha256_stream(stream)
 
 
 def copy_database(db_path, target_path):

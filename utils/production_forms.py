@@ -8,6 +8,18 @@ from utils.field_utils import normalize_date
 MAX_ITEM_ROWS = 500
 
 
+def _item_row_count(form, label):
+    try:
+        count = int(form.get('item_count', 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{label}无效') from exc
+    if count < 0 or count > MAX_ITEM_ROWS:
+        raise ValueError(
+            f'{label}必须在 0 到 {MAX_ITEM_ROWS} 之间'
+        )
+    return count
+
+
 def _normalized_date(value, label, *, required=False):
     raw = str(value or '').strip()
     if not raw and not required:
@@ -19,12 +31,7 @@ def _normalized_date(value, label, *, required=False):
 
 
 def contract_item_rows(form):
-    try:
-        count = min(
-            MAX_ITEM_ROWS, max(0, int(form.get('item_count', 0)))
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError('合同产品行数无效') from exc
+    count = _item_row_count(form, '合同产品行数')
     return [
         {
             'id': form.get(f'item_{index}_id', ''),
@@ -63,12 +70,7 @@ def contract_item_rows(form):
 
 
 def production_notice_rows(form):
-    try:
-        count = min(
-            MAX_ITEM_ROWS, max(0, int(form.get('item_count', 0)))
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError('投产通知产品行数无效') from exc
+    count = _item_row_count(form, '投产通知产品行数')
 
     rows = []
     for index in range(count):

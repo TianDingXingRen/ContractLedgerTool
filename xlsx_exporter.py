@@ -75,8 +75,20 @@ def export_payment_plans(path, rows, title='下月付款计划'):
         values = [
             idx,
             row.get('project_name') or '',
-            (f"{row.get('coverage_start')}–{row.get('coverage_end')}号"
-             if row.get('coverage_start') is not None and row.get('coverage_end') is not None else ''),
+            row.get('subsystem_name') or row.get('contract_subsystem_name') or '',
+            (
+                (
+                    f"第 {row.get('serial_no')} 发（历史关联）"
+                    if row.get('coverage_not_applicable')
+                    else f"第 {row.get('serial_no')} 发"
+                )
+                if row.get('serial_no') is not None
+                else '不适用' if row.get('coverage_not_applicable')
+                else '待补发次'
+            ),
+            (f"第 {row.get('coverage_start')}–{row.get('coverage_end')} 发"
+             if row.get('coverage_start') is not None and row.get('coverage_end') is not None
+             else '不适用' if row.get('coverage_not_applicable') else '待补发次'),
             row.get('contract_no') or '',
             row.get('contract_title') or '',
             row.get('counterparty') or '',
@@ -91,17 +103,17 @@ def export_payment_plans(path, rows, title='下月付款计划'):
             cell = ws.cell(row=ri, column=ci, value=safe_spreadsheet_value(val))
             cell.font = _STYLES.normal_font
             cell.border = _STYLES.thin_border
-            if ci in (9, 10, 11):
+            if ci in (11, 12, 13):
                 cell.number_format = MONEY_FORMAT
 
     # 合计行
     summary_row = len(rows) + 4
-    ws.merge_cells(start_row=summary_row, start_column=1, end_row=summary_row, end_column=8)
+    ws.merge_cells(start_row=summary_row, start_column=1, end_row=summary_row, end_column=10)
     if rows:
         ws.cell(row=summary_row, column=1, value='合计').font = _STYLES.header_font
-        ws.cell(row=summary_row, column=9, value=round(total_due, 2)).number_format = MONEY_FORMAT
-        ws.cell(row=summary_row, column=10, value=round(total_paid, 2)).number_format = MONEY_FORMAT
-        ws.cell(row=summary_row, column=11, value=round(total_due - total_paid, 2)).number_format = MONEY_FORMAT
+        ws.cell(row=summary_row, column=11, value=round(total_due, 2)).number_format = MONEY_FORMAT
+        ws.cell(row=summary_row, column=12, value=round(total_paid, 2)).number_format = MONEY_FORMAT
+        ws.cell(row=summary_row, column=13, value=round(total_due - total_paid, 2)).number_format = MONEY_FORMAT
     else:
         ws.cell(row=summary_row, column=1, value='（无数据）').font = _STYLES.header_font
     for ci in range(1, len(headers) + 1):
@@ -159,8 +171,11 @@ def _monthly_detail_row_height(values, columns):
     return max(33, min(90, max_lines * 15 + 6))
 
 
-def _monthly_summary_row_height(project_name):
-    lines = _wrapped_line_count(project_name, MONTHLY_SUMMARY_COLUMNS[0].width)
+def _monthly_summary_row_height(project_name, subsystem_name=''):
+    lines = max(
+        _wrapped_line_count(project_name, MONTHLY_SUMMARY_COLUMNS[0].width),
+        _wrapped_line_count(subsystem_name, MONTHLY_SUMMARY_COLUMNS[1].width),
+    )
     return max(20, min(80, lines * 20 + 6))
 
 
@@ -205,7 +220,10 @@ def export_monthly_payment_plan_report(path, report):
     project_refs = []
 
     for project in report.get('projects', []):
-        sheet_name = _safe_sheet_name(project['project_name'], used_sheet_names)
+        sheet_name = _safe_sheet_name(
+            f"{project['project_name']}-{project['subsystem_name']}",
+            used_sheet_names,
+        )
         ws = wb.create_sheet(sheet_name)
         sheet_name = ws.title
         used_sheet_names.add(sheet_name)
@@ -216,7 +234,7 @@ def export_monthly_payment_plan_report(path, report):
         ws.cell(
             1, 1,
             '填表注意事项：1、数据万元显示；2、数据右对齐，保留2位；'
-            '3、力箭二号、力箭一号按分系统整理，并将各分系统汇总到一张表；'
+            '3、每个火箭型号项目的各分系统分别生成明细页，并在汇总页汇总；'
             '4、如预计在20日前无法完成单据审批，则将付款计划做到次月；'
             '5、如可用银承支付，明确银承兑付时间；',
         )
@@ -259,7 +277,18 @@ def export_monthly_payment_plan_report(path, report):
 
         for row_index, row in enumerate(project['rows'], data_start):
             values = [
-                row['project_name'], row['contract_no'], row['contract_title'],
+                (
+                    (
+                        f"第 {row['serial_no']} 发（历史关联；合同发次不适用）"
+                        if row.get('coverage_not_applicable')
+                        else row['serial_no']
+                    )
+                    if row.get('serial_no') is not None
+                    else '不适用'
+                    if row.get('coverage_not_applicable')
+                    else '待补发次'
+                ),
+                row['contract_no'], row['contract_title'],
                 row['party_a'], row['party_b'],
                 _minor_to_wan(row['serial_amount_minor']),
             ]
@@ -296,9 +325,13 @@ def export_monthly_payment_plan_report(path, report):
                 values,
                 columns,
             )
-            if row.get('serial_no') is not None:
+            if (
+                row.get('serial_no') is not None
+                and not row.get('coverage_not_applicable')
+            ):
+                ws.cell(row_index, 1).number_format = '"第 "0" 发"'
                 ws.cell(row_index, 1).comment = Comment(
-                    f"合同内编号：{row['serial_no']}",
+                    f"所属发次：第 {row['serial_no']} 发",
                     '合同生成工具',
                 )
             ws.cell(
@@ -434,6 +467,7 @@ def export_monthly_payment_plan_report(path, report):
         escaped_name = sheet_name.replace("'", "''")
         project_refs.append({
             'name': project['project_name'],
+            'subsystem_name': project['subsystem_name'],
             'sheet_name': sheet_name,
             'sheet_formula_name': escaped_name,
             'current_cell': (
@@ -469,11 +503,11 @@ def export_monthly_payment_plan_report(path, report):
     project_data_end = 2 + len(project_refs)
     reserved_project_end = max(6, project_data_end)
     for row_index in range(3, reserved_project_end + 1):
-        for column in range(2, 8):
+        for column in range(2, 9):
             cell = summary_ws.cell(row_index, column)
             cell.font = _STYLES.monthly_summary_body_font
             cell.border = _STYLES.thin_border
-            if column in (3, 4, 5, 6):
+            if column in (4, 5, 6, 7):
                 cell.number_format = MONEY_FORMAT
                 cell.alignment = _STYLES.right_alignment
 
@@ -486,38 +520,46 @@ def export_monthly_payment_plan_report(path, report):
         summary_ws.cell(row_index, 2).font = _STYLES.monthly_summary_bold_font
         summary_ws.cell(
             row_index,
+            3,
+            safe_spreadsheet_value(ref['subsystem_name']),
+        )
+        summary_ws.cell(row_index, 3).alignment = _STYLES.left_wrap_alignment
+        summary_ws.cell(
+            row_index,
             2,
         ).alignment = _STYLES.left_wrap_alignment
         summary_ws.row_dimensions[row_index].height = (
-            _monthly_summary_row_height(ref['name'])
+            _monthly_summary_row_height(
+                ref['name'], ref['subsystem_name']
+            )
         )
         summary_ws.cell(
             row_index,
-            3,
-            f'=SUM(D{row_index}:E{row_index})',
-        )
-        summary_ws.cell(
-            row_index, 4,
-            f"='{ref['sheet_formula_name']}'!{ref['current_cell']}",
+            4,
+            f'=SUM(E{row_index}:F{row_index})',
         )
         summary_ws.cell(
             row_index, 5,
-            f"='{ref['sheet_formula_name']}'!{ref['previous_cell']}",
+            f"='{ref['sheet_formula_name']}'!{ref['current_cell']}",
         )
         summary_ws.cell(
             row_index, 6,
+            f"='{ref['sheet_formula_name']}'!{ref['previous_cell']}",
+        )
+        summary_ws.cell(
+            row_index, 7,
             f"='{ref['sheet_formula_name']}'!{ref['bank_cell']}",
         )
-        summary_ws.cell(row_index, 7, '')
+        summary_ws.cell(row_index, 8, '')
 
     total_row = reserved_project_end + 2
     summary_ws.cell(total_row, 2, '合计：')
     summary_ws.cell(total_row, 2).font = _STYLES.monthly_summary_bold_font
-    for column in range(2, 8):
+    for column in range(2, 9):
         cell = summary_ws.cell(total_row, column)
         cell.border = _STYLES.thin_border
         cell.font = _STYLES.monthly_summary_bold_font
-    for column in range(4, 7):
+    for column in range(5, 8):
         if project_refs:
             letter = get_column_letter(column)
             summary_ws.cell(
@@ -527,16 +569,16 @@ def export_monthly_payment_plan_report(path, report):
         else:
             summary_ws.cell(total_row, column, 0)
         summary_ws.cell(total_row, column).number_format = MONEY_FORMAT
-    summary_ws.cell(total_row, 3, f'=SUM(D{total_row}:E{total_row})')
-    summary_ws.cell(total_row, 3).number_format = MONEY_FORMAT
+    summary_ws.cell(total_row, 4, f'=SUM(E{total_row}:F{total_row})')
+    summary_ws.cell(total_row, 4).number_format = MONEY_FORMAT
 
     diagnostics = report.get('diagnostics') or {}
     messages = []
     labels = [
-        ('unassigned_serial_count', '未关联合同内编号的付款计划'),
+        ('unassigned_serial_count', '待补发次的付款计划'),
         ('missing_due_date_count', '缺少应付日期的付款计划'),
         ('missing_due_amount_count', '缺少应付金额的付款计划'),
-        ('missing_serial_amount_count', '缺少本编号金额的报表行'),
+        ('missing_serial_amount_count', '缺少本发金额的报表行'),
     ]
     for key, label in labels:
         if diagnostics.get(key):
@@ -554,7 +596,7 @@ def export_monthly_payment_plan_report(path, report):
             '数据检查：' + '；'.join(messages),
             '合同生成工具',
         )
-    summary_ws.print_area = f'B2:G{note_row}'
+    summary_ws.print_area = f'B2:H{note_row}'
 
     try:
         wb.calculation.fullCalcOnLoad = True
@@ -603,9 +645,11 @@ def _export_contracts_streaming(path, contracts, title):
         values = [
             row_count,
             contract.get('project_name') or '',
-            (f"{contract.get('coverage_start')}–{contract.get('coverage_end')}号"
+            contract.get('subsystem_name') or '',
+            (f"第 {contract.get('coverage_start')}–{contract.get('coverage_end')} 发"
              if contract.get('coverage_start') is not None
-             and contract.get('coverage_end') is not None else ''),
+             and contract.get('coverage_end') is not None
+             else '不适用' if contract.get('coverage_not_applicable') else '待补发次'),
             contract.get('contract_no') or '',
             contract.get('title') or '',
             contract.get('counterparty') or '',
@@ -621,20 +665,21 @@ def _export_contracts_streaming(path, contracts, title):
             cell = WriteOnlyCell(ws, value=safe_spreadsheet_value(value))
             cell.font = _STYLES.normal_font
             cell.border = _STYLES.thin_border
-            if ci == 7:
+            if ci == 8:
                 cell.number_format = MONEY_FORMAT
             cells.append(cell)
         ws.append(cells)
 
     summary = ['合计' if row_count else '（无数据）', None, None, None, None, None,
-               round(total_amount, 2) if row_count else None, None, None, None, None, None]
+               None, round(total_amount, 2) if row_count else None,
+               None, None, None, None, None]
     summary_cells = []
     for ci, value in enumerate(summary, 1):
         cell = WriteOnlyCell(ws, value=value)
         cell.border = _STYLES.thin_border
         if ci == 1:
             cell.font = _STYLES.header_font
-        if ci == 7:
+        if ci == 8:
             cell.number_format = MONEY_FORMAT
         summary_cells.append(cell)
     ws.append(summary_cells)
@@ -682,8 +727,10 @@ def export_contracts(path, contracts, title='合同台账', streaming=False):
         values = [
             idx,
             c.get('project_name') or '',
-            (f"{c.get('coverage_start')}–{c.get('coverage_end')}号"
-             if c.get('coverage_start') is not None and c.get('coverage_end') is not None else ''),
+            c.get('subsystem_name') or '',
+            (f"第 {c.get('coverage_start')}–{c.get('coverage_end')} 发"
+             if c.get('coverage_start') is not None and c.get('coverage_end') is not None
+             else '不适用' if c.get('coverage_not_applicable') else '待补发次'),
             c.get('contract_no') or '',
             c.get('title') or '',
             c.get('counterparty') or '',
@@ -698,15 +745,15 @@ def export_contracts(path, contracts, title='合同台账', streaming=False):
             cell = ws.cell(row=ri, column=ci, value=safe_spreadsheet_value(val))
             cell.font = _STYLES.normal_font
             cell.border = _STYLES.thin_border
-            if ci == 7:
+            if ci == 8:
                 cell.number_format = MONEY_FORMAT
 
     # 合计行
     summary_row = len(contracts) + 4
-    ws.merge_cells(start_row=summary_row, start_column=1, end_row=summary_row, end_column=6)
+    ws.merge_cells(start_row=summary_row, start_column=1, end_row=summary_row, end_column=7)
     if contracts:
         ws.cell(row=summary_row, column=1, value='合计').font = _STYLES.header_font
-        ws.cell(row=summary_row, column=7, value=round(total_amount, 2)).number_format = MONEY_FORMAT
+        ws.cell(row=summary_row, column=8, value=round(total_amount, 2)).number_format = MONEY_FORMAT
     else:
         ws.cell(row=summary_row, column=1, value='（无数据）').font = _STYLES.header_font
     for ci in range(1, len(headers) + 1):

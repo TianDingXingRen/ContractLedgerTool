@@ -151,6 +151,7 @@ def test_table_formula_errors_block_preflight_and_generation(app, client):
 
     form = {
         'csrf_token': 'formula-token',
+        'coverage_mode': 'not_applicable',
         'field_0': json.dumps([{'qty': '10', 'divisor': '0'}]),
         'table_cols_0': json.dumps(columns, ensure_ascii=False),
     }
@@ -273,6 +274,7 @@ def test_preview_uses_current_values_and_batch_files_remain_downloadable(app, cl
 
     batch = client.post('/generate-batch', data={
         'csrf_token': 'plan-token',
+        'coverage_mode': 'not_applicable',
         'field_0': '',
         'field_1': 'BATCH-001',
         'batch_counterparties': '甲公司\n乙公司',

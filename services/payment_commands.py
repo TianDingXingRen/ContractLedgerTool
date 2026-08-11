@@ -19,6 +19,13 @@ def _require_contract(contract_id):
     return contract
 
 
+def _require_payable_contract(contract_id):
+    contract = _require_contract(contract_id)
+    if contract.get('status') == 'void':
+        raise ValueError('已作废合同不能修改付款数据')
+    return contract
+
+
 def sync_contract_serials(contract_id):
     _require_contract(contract_id)
     ledger_store.sync_contract_serial_range(contract_id)
@@ -39,7 +46,7 @@ def set_contract_serial_bulk_amount(
 
 
 def set_payment_rule_status(contract_id, rule_id, status):
-    _require_contract(contract_id)
+    _require_payable_contract(contract_id)
     changed = ledger_store.set_payment_rule_confirm_status(
         rule_id, contract_id, status
     )
@@ -48,7 +55,7 @@ def set_payment_rule_status(contract_id, rule_id, status):
 
 
 def update_payment_rule(contract_id, rule_id, values):
-    _require_contract(contract_id)
+    _require_payable_contract(contract_id)
     changed = ledger_store.update_payment_rule_manual(
         rule_id, contract_id, values
     )
@@ -57,7 +64,7 @@ def update_payment_rule(contract_id, rule_id, values):
 
 
 def trigger_payment_rule(contract_id, rule_id, event):
-    _require_contract(contract_id)
+    _require_payable_contract(contract_id)
     ledger_store.create_payment_rule_event_instance(
         contract_id,
         rule_id,
@@ -69,11 +76,12 @@ def trigger_payment_rule(contract_id, rule_id, event):
 
 
 def save_payment_plans(contract_id, changes):
-    _require_contract(contract_id)
+    _require_payable_contract(contract_id)
     ledger_store.save_payment_plan_changes(contract_id, changes)
 
 
 def confirm_all_payment_plans(contract_id):
+    _require_payable_contract(contract_id)
     plans = ledger_store.list_payment_plans(
         contract_id=contract_id, confirm_status='pending'
     )
@@ -101,6 +109,8 @@ def quick_update_payment_plan(
         raise NotFoundError('付款计划不存在')
     if plan.get('confirm_status') == 'void':
         raise ValueError('已作废的付款计划不能执行快捷操作')
+    if plan.get('contract_status') == 'void':
+        raise ValueError('已作废合同不能执行付款操作')
 
     if action == 'confirm':
         values = {'confirm_status': 'confirmed'}

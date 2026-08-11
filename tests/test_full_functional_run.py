@@ -149,6 +149,7 @@ def _run_with_app(flask_app):
         set_csrf(sess)
         sess['sid'] = sid
     gen_form = {
+        'coverage_mode': 'not_applicable',
         'field_0': '测试甲方有限公司',
         'field_1': '500000',
         'field_2': '深圳市测试乙方科技有限公司',

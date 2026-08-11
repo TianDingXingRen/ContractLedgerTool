@@ -88,7 +88,10 @@ def test_generate_rejects_missing_template_and_unsafe_source(app, client):
         client,
         source_docx='../outside.docx',
     )
-    unsafe = client.post('/generate', data={'csrf_token': token})
+    unsafe = client.post('/generate', data={
+        'csrf_token': token,
+        'coverage_mode': 'not_applicable',
+    })
     assert unsafe.status_code == 400
     assert GENERIC_FILE_ERROR in unsafe.get_data(as_text=True)
 
@@ -117,7 +120,10 @@ def test_generate_translates_service_failures(
         raise error
 
     monkeypatch.setattr(generation_service, 'generate', fail_generation)
-    response = client.post('/generate', data={'csrf_token': token})
+    response = client.post('/generate', data={
+        'csrf_token': token,
+        'coverage_mode': 'not_applicable',
+    })
     assert response.status_code == expected_status
     assert expected_message in response.get_data(as_text=True)
 
@@ -134,7 +140,10 @@ def test_generate_returns_contract_headers(app, client, monkeypatch):
         )
 
     monkeypatch.setattr(generation_service, 'generate', generate)
-    response = client.post('/generate', data={'csrf_token': token})
+    response = client.post('/generate', data={
+        'csrf_token': token,
+        'coverage_mode': 'not_applicable',
+    })
     try:
         assert response.status_code == 200
         assert response.headers['X-Contract-Id'] == '73'
@@ -197,6 +206,7 @@ def test_batch_preflight_enforces_counterparty_limits(
     response = client.post('/generate/preflight', data={
         'csrf_token': token,
         '_generation_mode': 'batch',
+        'coverage_mode': 'not_applicable',
         'batch_counterparties': counterparties,
         'field_0': '',
     })
@@ -214,6 +224,7 @@ def test_batch_preflight_blocks_procurement_data_sheet(app, client):
     response = client.post('/generate/preflight', data={
         'csrf_token': token,
         '_generation_mode': 'batch',
+        'coverage_mode': 'not_applicable',
         'batch_counterparties': '供应商',
         'field_0': '',
     })
@@ -248,6 +259,7 @@ def test_batch_route_validates_context_fields_and_counterparties(app, client):
     _, token = _activate_template(app, client, fields=[_counterparty_field()])
     no_counterparty = client.post('/generate-batch', data={
         'csrf_token': token,
+        'coverage_mode': 'not_applicable',
         'field_0': '',
     })
     assert no_counterparty.status_code == 400

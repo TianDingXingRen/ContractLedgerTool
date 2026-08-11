@@ -1,5 +1,9 @@
 """Project item, supplier, and file persistence helpers."""
 
+from contextlib import nullcontext
+
+from database.connection_factory import begin_immediate
+
 
 def list_project_items(get_conn, project_id):
     with get_conn() as conn:
@@ -213,9 +217,11 @@ def delete_project_supplier(get_conn, audit, project_id, supplier_id):
 
 def register_project_file(
     get_conn, now_func, project_id, file_type, relative_path,
-    original_name='', sha256='', size_bytes=0,
+    original_name='', sha256='', size_bytes=0, *, connection=None,
 ):
-    with get_conn() as conn:
+    manager = nullcontext(connection) if connection is not None else get_conn()
+    with manager as conn:
+        begin_immediate(conn)
         existing = conn.execute(
             'SELECT id FROM project_files WHERE project_id = ? AND file_type = ? AND relative_path = ?',
             (project_id, file_type, relative_path),

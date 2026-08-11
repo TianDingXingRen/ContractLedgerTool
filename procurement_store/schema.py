@@ -1,6 +1,6 @@
 """Schema SQL and lightweight migrations for procurement persistence."""
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 PROCUREMENT_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS procurement_projects (
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS project_files (
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     UNIQUE(project_id, file_type, relative_path),
+    UNIQUE(project_id, file_type, version),
     FOREIGN KEY(project_id) REFERENCES procurement_projects(id) ON DELETE CASCADE
 );
 
@@ -432,3 +433,9 @@ V5_SUPPLIER_COLUMN_MIGRATIONS = [
     ('project_suppliers', 'aerospace_support_experience', "TEXT DEFAULT ''"),
     ('project_suppliers', 'qualifications', "TEXT DEFAULT ''"),
 ]
+
+
+V6_PROJECT_FILE_VERSION_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_project_files_version "
+    "ON project_files(project_id, file_type, version)"
+)

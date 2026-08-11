@@ -140,7 +140,7 @@
                         <div style="font-size:11px;color:var(--apple-text3);margin-top:1px">
                             {{ c.contract_no or '未编号' }}
                             {% if c.record_origin == 'imported' %} · <span class="apple-badge blue" style="font-size:9px;padding:1px 6px">外部导入</span>{% endif %}
-                            {% if c.coverage_start is not none %} · {{ c.coverage_start }}-{{ c.coverage_end }}号{% endif %}
+                            {% if c.coverage_start is not none %} · 第 {{ c.coverage_start }}-{{ c.coverage_end }} 发{% elif c.coverage_not_applicable %} · 发次不适用{% else %} · 待补发次{% endif %}
                         </div>
                     </td>
                     <td style="font-size:13px">{{ c.counterparty or '-' }}</td>
@@ -197,19 +197,19 @@
         </span>
         {% if pages > 1 %}
         <div style="display:flex;gap:4px;flex-wrap:wrap">
-            {% set list_url = url_for('contracts.contract_trash') if trash_mode else url_for('contracts.contract_ledger') %}
+            {% set list_endpoint = 'contracts.contract_trash' if trash_mode else 'contracts.contract_ledger' %}
             {% if page > 1 %}
-            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ page-1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">上一页</a>
+            <a href="{{ url_for(list_endpoint, q=q, status=status, view=current_view, page=page-1) }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">上一页</a>
             {% endif %}
             {% for p in range(1, pages + 1) %}
             {% if p >= page - 2 and p <= page + 2 %}
-            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ p }}"
+            <a href="{{ url_for(list_endpoint, q=q, status=status, view=current_view, page=p) }}"
                class="apple-btn"
                style="padding:5px 14px;font-size:12px;{% if p == page %}background:var(--apple-blue);color:#fff;border-radius:8px{% else %}border-radius:8px{% endif %}">{{ p }}</a>
             {% endif %}
             {% endfor %}
             {% if page < pages %}
-            <a href="{{ list_url }}?q={{ q }}&status={{ status }}&view={{ current_view }}&page={{ page+1 }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">下一页</a>
+            <a href="{{ url_for(list_endpoint, q=q, status=status, view=current_view, page=page+1) }}" class="apple-btn apple-btn-ghost" style="padding:5px 14px;font-size:12px">下一页</a>
             {% endif %}
         </div>
         {% endif %}
@@ -232,7 +232,7 @@
                             {% if pc.coverage_end and pc.coverage_end > max_signed.v %}{% set max_signed.v = pc.coverage_end %}{% endif %}
                         {% endif %}
                     {% endfor %}
-                    {% if max_signed.v > 0 %}<span class="apple-badge blue">已签到 {{ max_signed.v }} 号</span>{% endif %}
+                    {% if max_signed.v > 0 %}<span class="apple-badge blue">已签至第 {{ max_signed.v }} 发</span>{% endif %}
                 </div>
                 <span style="font-size:12px;color:var(--apple-text3)">{{ signed_count.v }} 份已签</span>
             </div>
@@ -252,7 +252,7 @@
                     <div class="apple-progress-fill" style="width:{{ pct }}%"></div>
                 </div>
                 <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--apple-text3);margin-top:3px">
-                    <span>{{ rmin.v }}号</span><span>{{ max_signed.v }}号</span><span>{{ rmax.v }}号</span>
+                    <span>第 {{ rmin.v }} 发</span><span>第 {{ max_signed.v }} 发</span><span>第 {{ rmax.v }} 发</span>
                 </div>
             </div>
             {% endif %}
@@ -262,7 +262,7 @@
                 {% set st = c.status %}
                 <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}" class="ledger-contract-line">
                     <span class="ledger-coverage-chip {{ 'done' if st in ('signed','active','completed') else 'draft' if st == 'draft' else '' }}">
-                        {% if c.coverage_start and c.coverage_end %}{{ c.coverage_start }}-{{ c.coverage_end }}号{% else %}未编号{% endif %}
+                        {% if c.coverage_start and c.coverage_end %}第 {{ c.coverage_start }}-{{ c.coverage_end }} 发{% elif c.coverage_not_applicable %}不适用{% else %}待补发次{% endif %}
                     </span>
                     <span style="flex:1;min-width:0">
                         <span style="font-size:13px;font-weight:550;color:var(--apple-text)">{{ c.title }}</span>
@@ -280,7 +280,7 @@
         <div style="text-align:center;padding:60px 20px;color:var(--apple-text3)">
             <i data-lucide="folder-tree" style="width:40px;height:40px;margin:0 auto 14px;display:block;opacity:0.5"></i>
             <div style="font-size:14px;font-weight:500;color:var(--apple-text2)">暂无项目归类数据</div>
-            <div style="font-size:12px;color:var(--apple-text3);margin-top:4px">生成合同时填写所属项目和覆盖号段后，这里会自动形成进度。</div>
+            <div style="font-size:12px;color:var(--apple-text3);margin-top:4px">生成合同时填写项目名称并确认发次范围后，这里会自动形成进度。</div>
         </div>
         {% endif %}
     </div>

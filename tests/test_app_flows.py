@@ -78,6 +78,7 @@ class AppFlowTests(unittest.TestCase):
         """批量生成：使用无源文件的模板（generate_from_scratch 路径）。"""
         form = {
             'batch_counterparties': '测试甲公司\n测试乙公司',
+            'coverage_mode': 'not_applicable',
         }
         for index, field in enumerate(self.test_tpl.data.get('fields', [])):
             fid = field.get('id', index)
@@ -110,7 +111,10 @@ class AppFlowTests(unittest.TestCase):
         self.assertIn('测试甲公司', first_text)
 
     def test_batch_zip_failure_discards_created_contract(self):
-        form = {'batch_counterparties': '测试甲公司'}
+        form = {
+            'batch_counterparties': '测试甲公司',
+            'coverage_mode': 'not_applicable',
+        }
         for index, field in enumerate(self.test_tpl.data.get('fields', [])):
             fid = field.get('id', index)
             form[f'field_{fid}'] = f'测试值{fid}'

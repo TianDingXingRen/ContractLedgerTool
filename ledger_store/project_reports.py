@@ -28,11 +28,13 @@ def list_project_grouped_contracts(get_conn, row_to_dict, q='', status=''):
         like = f'%{q}%'
         clauses.append(
             '(c.contract_no LIKE ? OR c.title LIKE ? OR c.counterparty LIKE ? '
-            'OR c.owner LIKE ? OR c.project_name LIKE ? OR c.values_json LIKE ? '
+            'OR c.owner LIKE ? OR c.project_name LIKE ? OR c.subsystem_name LIKE ? '
+            'OR c.values_json LIKE ? '
             'OR EXISTS (SELECT 1 FROM payment_plans p WHERE p.contract_id = c.id '
-            'AND (p.condition_text LIKE ? OR p.source_text LIKE ? OR p.phase_name LIKE ?)))'
+            'AND (p.condition_text LIKE ? OR p.source_text LIKE ? OR p.phase_name LIKE ? '
+            'OR p.subsystem_name LIKE ?)))'
         )
-        params.extend([like] * 9)
+        params.extend([like] * 11)
     if status:
         clauses.append('c.status = ?')
         params.append(status)
@@ -66,14 +68,61 @@ def get_project_progress_stats(get_conn, row_to_dict):
             COUNT(*) AS contract_count,
             SUM(CASE WHEN c.status IN ('signed', 'active', 'completed') THEN 1 ELSE 0 END)
                 AS signed_contract_count,
+            SUM(CASE WHEN c.status IN ('signed', 'active', 'completed')
+                          AND c.coverage_not_applicable = 1
+                     THEN 1 ELSE 0 END) AS signed_not_applicable_count,
+            SUM(CASE WHEN c.status IN ('signed', 'active', 'completed')
+                          AND c.coverage_not_applicable = 0
+                          AND (c.coverage_start IS NULL OR c.coverage_end IS NULL)
+                     THEN 1 ELSE 0 END) AS signed_pending_coverage_count,
             MIN(CASE WHEN c.status IN ('signed', 'active', 'completed')
                      THEN c.coverage_start END) AS signed_from,
             MAX(CASE WHEN c.status IN ('signed', 'active', 'completed')
                      THEN c.coverage_end END) AS signed_to,
+            SUM(CASE WHEN EXISTS (
+                    SELECT 1 FROM payment_plans p
+                    WHERE p.contract_id = c.id AND p.confirm_status != 'void'
+                ) THEN 1 ELSE 0 END) AS planned_contract_count,
+            SUM(CASE WHEN c.coverage_not_applicable = 1 AND EXISTS (
+                    SELECT 1 FROM payment_plans p
+                    WHERE p.contract_id = c.id AND p.confirm_status != 'void'
+                ) THEN 1 ELSE 0 END) AS planned_not_applicable_count,
+            SUM(CASE WHEN c.coverage_not_applicable = 0
+                          AND (c.coverage_start IS NULL OR c.coverage_end IS NULL)
+                          AND EXISTS (
+                              SELECT 1 FROM payment_plans p
+                              WHERE p.contract_id = c.id
+                                AND p.confirm_status != 'void'
+                          )
+                     THEN 1 ELSE 0 END) AS planned_pending_coverage_count,
             MAX(CASE WHEN EXISTS (
                     SELECT 1 FROM payment_plans p
                     WHERE p.contract_id = c.id AND p.confirm_status != 'void'
                 ) THEN c.coverage_end END) AS planned_to,
+            SUM(CASE WHEN EXISTS (
+                    SELECT 1 FROM payment_plans p
+                    WHERE p.contract_id = c.id
+                      AND p.confirm_status = 'confirmed'
+                      AND (COALESCE(p.paid_amount_minor, 0) > 0
+                           OR p.payment_status IN ('partial', 'paid'))
+                ) THEN 1 ELSE 0 END) AS paid_contract_count,
+            SUM(CASE WHEN c.coverage_not_applicable = 1 AND EXISTS (
+                    SELECT 1 FROM payment_plans p
+                    WHERE p.contract_id = c.id
+                      AND p.confirm_status = 'confirmed'
+                      AND (COALESCE(p.paid_amount_minor, 0) > 0
+                           OR p.payment_status IN ('partial', 'paid'))
+                ) THEN 1 ELSE 0 END) AS paid_not_applicable_count,
+            SUM(CASE WHEN c.coverage_not_applicable = 0
+                          AND (c.coverage_start IS NULL OR c.coverage_end IS NULL)
+                          AND EXISTS (
+                              SELECT 1 FROM payment_plans p
+                              WHERE p.contract_id = c.id
+                                AND p.confirm_status = 'confirmed'
+                                AND (COALESCE(p.paid_amount_minor, 0) > 0
+                                     OR p.payment_status IN ('partial', 'paid'))
+                          )
+                     THEN 1 ELSE 0 END) AS paid_pending_coverage_count,
             MAX(CASE WHEN EXISTS (
                     SELECT 1 FROM payment_plans p
                     WHERE p.contract_id = c.id

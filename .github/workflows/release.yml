@@ -47,7 +47,8 @@ jobs:
       - name: Audit locked dependencies
         run: |
           python -m pip_audit -r requirements.lock --no-deps --disable-pip
-          npm audit --audit-level=high
+          python -m pip_audit -r requirements-dev.lock --no-deps --disable-pip
+          npm audit --audit-level=moderate
 
       - name: Prepare required code-signing certificate
         shell: pwsh

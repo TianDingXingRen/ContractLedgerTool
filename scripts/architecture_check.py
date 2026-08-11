@@ -11,11 +11,23 @@ PRODUCTION_ROOTS = (
     'core',
     'database',
     'ledger_store',
+    'payment_extraction',
     'procurement_store',
     'routes',
     'runtime',
     'services',
     'utils',
+    'xlsx_export',
+)
+TOP_LEVEL_PRODUCTION_FILES = (
+    'app.py',
+    'config.py',
+    'docx_builder.py',
+    'excel_bill_service.py',
+    'field_eval.py',
+    'payment_extractor.py',
+    'template_def.py',
+    'xlsx_exporter.py',
 )
 MAX_LOGICAL_LINES = 650
 MAX_FUNCTION_LINES = 150
@@ -24,11 +36,15 @@ MAX_FUNCTION_LINES = 150
 # prevent further growth while allowing incremental extraction without a rewrite.
 LEGACY_FILE_BUDGETS = {
     'services/handover_service.py': 690,
+    'xlsx_exporter.py': 891,
 }
 LEGACY_FUNCTION_BUDGETS = {
-    ('routes/excel_bill_bp.py', 'register'): 180,
+    ('excel_bill_service.py', '_init_presets'): 168,
+    ('routes/excel_bill_bp.py', 'register'): 178,
     ('routes/settings_bp.py', 'register'): 218,
-    ('services/handover_service.py', 'build_handover_data'): 207,
+    ('services/handover_service.py', 'build_handover_data'): 202,
+    ('xlsx_exporter.py', 'export_handover_checklist'): 162,
+    ('xlsx_exporter.py', 'export_monthly_payment_plan_report'): 404,
 }
 SLIM_BLUEPRINT_BUDGETS = {
     'routes/contract_import_bp.py': 100,
@@ -41,6 +57,7 @@ SLIM_BLUEPRINT_BUDGETS = {
 ROUTE_LAYER_FORBIDDEN_IMPORTS = {
     'ledger_store',
     'procurement_store',
+    'xlsx_export',
     'xlsx_exporter',
     'sqlite3',
     'openpyxl',
@@ -61,9 +78,11 @@ INNER_LAYER_ROOTS = {
     'database',
     'ledger_store',
     'procurement_store',
+    'payment_extraction',
     'runtime',
     'services',
     'utils',
+    'xlsx_export',
 }
 FORBIDDEN_INNER_IMPORTS = {'app', 'routes'}
 ROUTE_BLUEPRINT_MODULES = (
@@ -83,6 +102,8 @@ URL_FOR_PATTERN = re.compile(r"""url_for\(\s*['"]([^'"]+)['"]""")
 def python_files():
     for root_name in PRODUCTION_ROOTS:
         yield from sorted((ROOT / root_name).rglob('*.py'))
+    for filename in TOP_LEVEL_PRODUCTION_FILES:
+        yield ROOT / filename
 
 
 def exception_policy_files():
@@ -127,19 +148,42 @@ def check_file(path):
         errors.append(
             f'{relative}: {logical_lines} logical lines exceeds {file_budget}'
         )
+    elif relative in LEGACY_FILE_BUDGETS and logical_lines < file_budget:
+        errors.append(
+            f'{relative}: lower stale legacy file budget from {file_budget} '
+            f'to {logical_lines}'
+        )
 
     tree = ast.parse(source, filename=relative)
+    seen_legacy_functions = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             length = (node.end_lineno or node.lineno) - node.lineno + 1
-            budget = LEGACY_FUNCTION_BUDGETS.get(
-                (relative, node.name), MAX_FUNCTION_LINES
-            )
+            function_key = (relative, node.name)
+            if function_key in LEGACY_FUNCTION_BUDGETS:
+                seen_legacy_functions.add(function_key)
+            budget = LEGACY_FUNCTION_BUDGETS.get(function_key, MAX_FUNCTION_LINES)
             if length > budget:
                 errors.append(
                     f'{relative}:{node.lineno} {node.name}() has {length} lines; '
                     f'budget is {budget}'
                 )
+            elif function_key in LEGACY_FUNCTION_BUDGETS and length < budget:
+                errors.append(
+                    f'{relative}:{node.lineno} lower stale legacy function budget '
+                    f'for {node.name}() from {budget} to {length}'
+                )
+
+    expected_legacy_functions = {
+        key for key in LEGACY_FUNCTION_BUDGETS if key[0] == relative
+    }
+    for _filename, function_name in sorted(
+        expected_legacy_functions - seen_legacy_functions
+    ):
+        errors.append(
+            f'{relative}: remove stale legacy function budget for '
+            f'{function_name}()'
+        )
 
     if relative.split('/')[0] in INNER_LAYER_ROOTS:
         for node in ast.walk(tree):

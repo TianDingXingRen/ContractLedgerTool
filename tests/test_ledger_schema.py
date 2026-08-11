@@ -42,6 +42,14 @@ def test_init_db_uses_extracted_schema(tmp_path):
             schema_version = conn.execute(
                 'SELECT MAX(version) AS version FROM schema_version'
             ).fetchone()['version']
+            contract_columns = {
+                row['name']
+                for row in conn.execute('PRAGMA table_info(contracts)').fetchall()
+            }
+            payment_columns = {
+                row['name']
+                for row in conn.execute('PRAGMA table_info(payment_plans)').fetchall()
+            }
 
         assert {
             'contracts',
@@ -54,6 +62,9 @@ def test_init_db_uses_extracted_schema(tmp_path):
         } <= tables
         assert 'idx_contracts_contract_no_unique' in indexes
         assert 'idx_generation_jobs_active_output' in indexes
+        assert 'subsystem_name' in contract_columns
+        assert 'coverage_not_applicable' in contract_columns
+        assert 'subsystem_name' in payment_columns
         assert schema_version == ledger_store.MIGRATIONS[-1][0]
         assert ledger_store.needs_migration() is False
         assert os.path.isfile(ledger_store.DB_PATH)
@@ -123,6 +134,8 @@ def test_init_db_repairs_legacy_contract_columns_before_indexes(tmp_path):
             'deleted_at',
             'expiry_date',
             'project_name',
+            'subsystem_name',
+            'coverage_not_applicable',
             'coverage_start',
             'coverage_end',
         } <= columns

@@ -55,7 +55,7 @@ def register_contract_payment_routes(bp):
             return _not_found_response(exc)
         except ValueError as exc:
             message = str(exc)
-            if message.startswith('合同内编号数量'):
+            if message.startswith('发次数量'):
                 return message, 400
             return _contract_redirect(
                 contract_id, request.form, error=message

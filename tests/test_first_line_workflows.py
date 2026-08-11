@@ -175,6 +175,7 @@ def test_generate_preflight_blocks_duplicate_contract_no(app, client):
 
     response = client.post('/generate/preflight', data={
         'csrf_token': token,
+        'coverage_mode': 'not_applicable',
         'field_0': 'HT-DUP-001',
     })
     payload = response.get_json()
