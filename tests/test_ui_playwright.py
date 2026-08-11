@@ -200,6 +200,44 @@ class BrowserUiSmokeTests(unittest.TestCase):
                 self.skipTest('Playwright browser binaries are not installed')
             raise
 
+    def test_missing_coverage_mode_reopens_collapsed_generation_settings(self):
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(viewport={'width': 1280, 'height': 800})
+                console_errors = []
+                page.on(
+                    'console',
+                    lambda message: console_errors.append(message.text)
+                    if message.type == 'error' else None,
+                )
+                page.goto(
+                    f'{self.base_url}/template/browser-e2e.contract-template',
+                    wait_until='networkidle',
+                )
+                settings = page.locator('.editor-settings')
+                self.assertTrue(settings.evaluate('(node) => node.open'))
+                settings.locator('summary').click()
+                self.assertFalse(settings.evaluate('(node) => node.open'))
+
+                page.locator('#generateBtn').click()
+
+                self.assertTrue(settings.evaluate('(node) => node.open'))
+                self.assertEqual(
+                    page.evaluate(
+                        "document.activeElement && document.activeElement.name"
+                    ),
+                    'coverage_mode',
+                )
+                self.assertFalse(any(
+                    'not focusable' in message for message in console_errors
+                ))
+                browser.close()
+        except Exception as exc:
+            if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
+                self.skipTest('Playwright browser binaries are not installed')
+            raise
+
     def test_full_contract_generation_flow(self):
         """Select template, fill fields, download DOCX, and verify ledger UI."""
         try:
@@ -225,6 +263,14 @@ class BrowserUiSmokeTests(unittest.TestCase):
 
                 self.assertEqual(page.locator('#calc_4').input_value(), '128000.50')
                 self.assertEqual(page.locator('#calc_input_4').input_value(), '128000.50')
+                self.assertEqual(page.locator('#progressPercent').inner_text(), '100%')
+                self.assertEqual(page.locator('#filledCount').locator('..').inner_text(), '5/5')
+                self.assertTrue(
+                    page.locator('.editor-settings').evaluate('(node) => node.open')
+                )
+                page.locator('#coverageModeNotApplicable').check()
+                self.assertTrue(page.locator('#coverageStart').is_disabled())
+                self.assertTrue(page.locator('#coverageEnd').is_disabled())
 
                 with page.expect_download(timeout=30_000) as download_info:
                     page.locator('#generateBtn').click()
@@ -268,6 +314,7 @@ class BrowserUiSmokeTests(unittest.TestCase):
                 'counterparty': '华北工业控制设备有限公司',
                 'amount': 780000,
                 'project_name': '桌面验收项目',
+                'subsystem_name': '控制分系统',
                 'coverage_start': 101,
                 'coverage_end': 102,
             },
@@ -319,11 +366,26 @@ class BrowserUiSmokeTests(unittest.TestCase):
                 page.locator('[data-drawer-open="contractSerialDrawer"]').click()
                 page.locator('#contractSerialDrawer[open]').wait_for()
                 self.assertIn(
-                    '101号',
+                    '第 101 发',
                     page.locator('#contractSerialDrawer').inner_text(),
                 )
                 page.get_by_role('button', name='关闭').click()
                 page.locator('#contractSerialDrawer').wait_for(state='hidden')
+                page.locator('[data-drawer-open="newPlanDrawer"]').click()
+                page.locator('#newPlanDrawer[open]').wait_for()
+                subsystem_input = page.locator(
+                    '#newPlanDrawer [name="plan_0_subsystem_name"]'
+                )
+                self.assertEqual(subsystem_input.count(), 1)
+                self.assertEqual(subsystem_input.input_value(), '控制分系统')
+                launch_select = page.locator(
+                    '#newPlanDrawer [name="plan_0_contract_serial_id"]'
+                )
+                self.assertIsNotNone(launch_select.get_attribute('required'))
+                self.assertIn('待补发次', launch_select.inner_text())
+                self.assertIn('第 101 发', launch_select.inner_text())
+                page.get_by_role('button', name='关闭').click()
+                page.locator('#newPlanDrawer').wait_for(state='hidden')
                 page.evaluate("document.documentElement.style.zoom='1.25'")
                 zoom_sizes = page.evaluate("""({
                     scroll: document.documentElement.scrollWidth,
@@ -343,6 +405,147 @@ class BrowserUiSmokeTests(unittest.TestCase):
                 self.assertLessEqual(drawer['x'] + drawer['width'], 1441)
                 page.get_by_role('button', name='关闭').click()
                 page.locator('#contractEditDrawer').wait_for(state='hidden')
+                browser.close()
+        except Exception as exc:
+            if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):
+                self.skipTest('Playwright browser binaries are not installed')
+            raise
+        finally:
+            if ledger_store.get_contract(contract_id):
+                ledger_store.soft_delete_contract(contract_id)
+                ledger_store.permanently_delete_contract(contract_id)
+
+    def test_not_applicable_contract_locks_coverage_and_omits_serial_actions(self):
+        contract_id = ledger_store.create_contract(
+            {
+                'contract_no': 'UI-NA-001',
+                'title': '年度质量保障服务合同',
+                'counterparty': '北岳质量技术有限公司',
+            },
+            {},
+            '',
+        )
+        with ledger_store.get_conn() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO contract_serials
+                    (contract_id, serial_no, amount_minor, status, remark,
+                     created_at, updated_at)
+                VALUES (?, 9, 12300, 'active', '历史付款关联', ?, ?)
+                """,
+                (contract_id, '2026-01-01', '2026-01-01'),
+            )
+            historical_serial_id = cursor.lastrowid
+        historical_plan_id = ledger_store.insert_payment_plan(contract_id, {
+            'contract_serial_id': historical_serial_id,
+            'phase_name': '历史发次服务款',
+            'due_date': '2026-09-17',
+            'due_amount': 12300,
+            'confirm_status': 'confirmed',
+            'payment_status': 'unpaid',
+        })
+        ledger_store.insert_payment_plan(contract_id, {
+            'phase_name': '年度服务款',
+            'due_date': '2026-09-18',
+            'due_amount': 86400,
+            'confirm_status': 'confirmed',
+            'payment_status': 'unpaid',
+        })
+        ledger_store.update_contract(contract_id, {
+            'coverage_not_applicable': 1,
+            'coverage_start': None,
+            'coverage_end': None,
+        })
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(viewport={'width': 1440, 'height': 900})
+                page.goto(
+                    f'{self.base_url}/contracts/{contract_id}',
+                    wait_until='networkidle',
+                )
+                page.locator(
+                    '[data-drawer-open="contractEditDrawer"]'
+                ).first.click()
+                page.locator('#contractEditDrawer[open]').wait_for()
+                range_mode = page.locator(
+                    '#contractEditDrawer [name="coverage_mode"][value="range"]'
+                )
+                not_applicable_mode = page.locator(
+                    '#contractEditDrawer '
+                    '[name="coverage_mode"][value="not_applicable"]'
+                )
+                self.assertTrue(not_applicable_mode.is_checked())
+                self.assertTrue(range_mode.is_disabled())
+                self.assertEqual(
+                    page.locator(
+                        '#contractEditDrawer [data-coverage-bound]:disabled'
+                    ).count(),
+                    2,
+                )
+
+                page.goto(
+                    f'{self.base_url}/contracts/{contract_id}?tab=payments',
+                    wait_until='networkidle',
+                )
+                serial_panel = page.locator('#contract-serials')
+                self.assertIn('此合同不按发次归集', serial_panel.inner_text())
+                self.assertIn('第 9 发', serial_panel.inner_text())
+                self.assertEqual(
+                    serial_panel.locator(
+                        '[data-drawer-open="contractSerialDrawer"]'
+                    ).count(),
+                    0,
+                )
+                self.assertNotIn('同步发次范围', serial_panel.inner_text())
+                payment_table_text = page.locator(
+                    '[data-testid="payment-plan-table"]'
+                ).inner_text()
+                self.assertIn('第 9 发', payment_table_text)
+                self.assertIn('历史发次关联', payment_table_text)
+                self.assertIn('不适用', payment_table_text)
+
+                page.locator(
+                    f'[data-drawer-open="planDrawer{historical_plan_id}"]'
+                ).click()
+                page.locator(f'#planDrawer{historical_plan_id}[open]').wait_for()
+                historical_hidden = page.locator(
+                    f'#planDrawer{historical_plan_id} '
+                    'input[type="hidden"][name="plan_0_contract_serial_id"]'
+                )
+                self.assertEqual(
+                    historical_hidden.input_value(), str(historical_serial_id)
+                )
+                self.assertEqual(
+                    page.locator(
+                        f'#planDrawer{historical_plan_id} '
+                        '[aria-label*="历史关联"]'
+                    ).input_value(),
+                    '第 9 发（历史关联）',
+                )
+                page.get_by_role('button', name='关闭').click()
+                page.locator(f'#planDrawer{historical_plan_id}').wait_for(
+                    state='hidden'
+                )
+
+                page.locator('[data-drawer-open="newPlanDrawer"]').click()
+                page.locator('#newPlanDrawer[open]').wait_for()
+                self.assertEqual(
+                    page.locator(
+                        '#newPlanDrawer select[name="plan_0_contract_serial_id"]'
+                    ).count(),
+                    0,
+                )
+                serial_hidden = page.locator(
+                    '#newPlanDrawer input[type="hidden"]'
+                    '[name="plan_0_contract_serial_id"]'
+                )
+                self.assertEqual(serial_hidden.input_value(), '')
+                serial_display = page.locator(
+                    '#newPlanDrawer [aria-label="所属发次不适用"]'
+                )
+                self.assertTrue(serial_display.is_disabled())
+                self.assertEqual(serial_display.input_value(), '不适用')
                 browser.close()
         except Exception as exc:
             if 'Executable doesn' in str(exc) or 'playwright install' in str(exc):

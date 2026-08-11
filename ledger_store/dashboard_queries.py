@@ -7,10 +7,12 @@ def next_month_payment_plans(get_conn, row_to_dict, start_date, end_date):
     sql = """
         SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                c.amount_minor AS contract_amount_minor, c.project_name,
-               c.coverage_start, c.coverage_end
+               c.coverage_start, c.coverage_end,
+               c.coverage_not_applicable
         FROM payment_plans p
         JOIN contracts c ON c.id = p.contract_id
         WHERE (c.deleted_at = '' OR c.deleted_at IS NULL)
+          AND c.status != 'void'
           AND p.confirm_status = 'confirmed'
           AND p.payment_status != 'paid'
           AND p.due_date >= ?
@@ -51,25 +53,32 @@ def get_payment_stats(get_conn):
         due = conn.execute(
             """SELECT COALESCE(SUM(p.due_amount_minor),0) FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
-               WHERE p.confirm_status = 'confirmed' AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
+               WHERE p.confirm_status = 'confirmed'
+                 AND c.status != 'void'
+                 AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()[0]
         paid = conn.execute(
             """SELECT COALESCE(SUM(p.paid_amount_minor),0) FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
-               WHERE p.confirm_status = 'confirmed' AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
+               WHERE p.confirm_status = 'confirmed'
+                 AND c.status != 'void'
+                 AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()[0]
         pending = conn.execute(
             """SELECT COUNT(*), COALESCE(SUM(p.due_amount_minor),0)
                FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
-               WHERE p.confirm_status = 'pending' AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
+               WHERE p.confirm_status = 'pending'
+                 AND c.status != 'void'
+                 AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()
         pending_missing_date = conn.execute(
             """SELECT COUNT(*)
                FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
                WHERE p.confirm_status = 'pending'
-                 AND COALESCE(p.due_date, '') = ''
+                  AND c.status != 'void'
+                  AND COALESCE(p.due_date, '') = ''
                  AND (c.deleted_at = '' OR c.deleted_at IS NULL)"""
         ).fetchone()[0]
     return {
@@ -91,7 +100,8 @@ def get_monthly_payments(get_conn, year, month):
                FROM payment_plans p
                JOIN contracts c ON c.id = p.contract_id
                WHERE (c.deleted_at = '' OR c.deleted_at IS NULL)
-                 AND p.confirm_status = 'confirmed'
+                  AND c.status != 'void'
+                  AND p.confirm_status = 'confirmed'
                  AND p.payment_status != 'paid'
                  AND p.due_date LIKE ?""",
             (ym + '%',)
@@ -127,10 +137,12 @@ def get_due_soon_payments(get_conn, row_to_dict, days=7, today=None, limit=0):
     sql = """
         SELECT p.*, c.contract_no, c.title AS contract_title,
                c.counterparty, c.owner, c.project_name,
-               c.coverage_start, c.coverage_end
+               c.coverage_start, c.coverage_end,
+               c.coverage_not_applicable
         FROM payment_plans p
         JOIN contracts c ON c.id = p.contract_id
         WHERE (c.deleted_at = '' OR c.deleted_at IS NULL)
+          AND c.status != 'void'
           AND p.confirm_status = 'confirmed'
           AND p.payment_status != 'paid'
           AND p.due_date >= ? AND p.due_date <= ?
@@ -238,10 +250,16 @@ def get_contract_workspace_summary(get_conn, contract_id, today=None):
 
 def summarize_payment_plans(
     get_conn, *, confirm_status='', payment_status='', start_date='',
-    end_date='', project_name='', today=None,
+    end_date='', project_name='', contract_id=None, today=None,
 ):
-    clauses = ["(c.deleted_at = '' OR c.deleted_at IS NULL)"]
+    clauses = [
+        "(c.deleted_at = '' OR c.deleted_at IS NULL)",
+        "c.status != 'void'",
+    ]
     params = []
+    if contract_id:
+        clauses.append('p.contract_id = ?')
+        params.append(contract_id)
     for field, value in (
         ('p.confirm_status', confirm_status), ('p.payment_status', payment_status),
         ('c.project_name', project_name),

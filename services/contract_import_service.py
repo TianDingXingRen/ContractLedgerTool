@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import re
@@ -17,6 +16,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import payment_extractor
 from services.isolated_process import run_isolated_worker
 from utils.field_utils import normalize_date, parse_number
+from utils.file_digest import sha256_file
+from utils.generation_utils import parse_contract_classification
 from utils.security import validate_office_archive
 
 
@@ -106,11 +107,7 @@ class ContractImportService:
 
     @staticmethod
     def sha256_file(path) -> str:
-        digest = hashlib.sha256()
-        with open(path, 'rb') as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return sha256_file(path)
 
     @staticmethod
     def _clean(value, limit=200) -> str:
@@ -313,6 +310,9 @@ class ContractImportService:
             'owner': '',
             'status': 'draft',
             'project_name': '',
+            'subsystem_name': '',
+            'coverage_mode': '',
+            'coverage_not_applicable': False,
             'coverage_start': None,
             'coverage_end': None,
         }
@@ -377,6 +377,7 @@ class ContractImportService:
         status = str(request.summary.get('status') or 'draft').strip()
         if status not in self.ledger_store.CONTRACT_STATUSES:
             raise ValueError('合同状态无效')
+        classification = parse_contract_classification(request.summary)
         if len(request.plans or []) > 30:
             raise ValueError('导入时付款计划不能超过 30 条')
         if len(request.rules or []) > 60:
@@ -387,6 +388,7 @@ class ContractImportService:
         job_id = uuid.uuid4().hex
         summary = {
             **request.summary,
+            **classification,
             'title': title,
             'status': status,
             'record_origin': 'imported',

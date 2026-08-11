@@ -19,6 +19,7 @@ from utils.logger import get_logger
 from core.maintenance_gate import maintenance_gate
 from utils.constants import ContractStatus, PaymentStatus, ConfirmStatus, ConfidenceLevel
 from . import backups as backup_ops
+from . import contract_coverage
 from . import dashboard_queries
 from . import document_paths
 from . import generation_jobs
@@ -45,6 +46,9 @@ def _data_dir():
             return app_state.data_dir
     except Exception:
         get_logger().debug('读取运行时数据目录失败，回退到默认目录', exc_info=True)
+    runtime_override = os.environ.get('CONTRACT_TOOL_RUNTIME_DIR')
+    if runtime_override:
+        return os.path.join(os.path.abspath(runtime_override), 'data')
     return os.path.join(BASE_DIR, 'data')
 
 
@@ -68,9 +72,9 @@ def _backup_dir():
     return os.path.join(_data_dir(), 'backups')
 
 
-DATA_DIR = os.path.join(BASE_DIR, 'data')
-DB_PATH = os.path.join(DATA_DIR, 'contracts.db')
-BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
+DATA_DIR = _data_dir()
+DB_PATH = _db_path()
+BACKUP_DIR = _backup_dir()
 
 _ACTIVE_CONNECTION = ContextVar('ledger_active_connection', default=None)
 
@@ -86,7 +90,8 @@ CONFIDENCE_LEVELS = {c.value for c in ConfidenceLevel}
 CONTRACT_UPDATE_FIELDS = [
     'contract_no', 'title', 'counterparty', 'amount', 'sign_date',
     'expiry_date', 'owner', 'status', 'project_name',
-    'coverage_start', 'coverage_end',
+    'subsystem_name', 'coverage_not_applicable', 'coverage_start',
+    'coverage_end',
 ]
 
 # 可更新的付款计划字段
@@ -95,7 +100,7 @@ PLAN_UPDATE_FIELDS = [
     'expected_trigger_date', 'due_date', 'ratio', 'due_amount',
     'paid_amount', 'paid_date', 'condition_text', 'source_text',
     'confidence', 'confirm_status', 'payment_status', 'remark',
-    'contract_serial_id',
+    'contract_serial_id', 'subsystem_name',
 ]
 
 # 付款计划字段对应的校验器
@@ -195,6 +200,11 @@ LEGACY_CONTRACT_COLUMNS = {
     'deleted_at': "TEXT DEFAULT ''",
     'expiry_date': "TEXT DEFAULT ''",
     'project_name': "TEXT DEFAULT ''",
+    'subsystem_name': "TEXT DEFAULT ''",
+    'coverage_not_applicable': (
+        'INTEGER NOT NULL DEFAULT 0 '
+        'CHECK(coverage_not_applicable IN (0,1))'
+    ),
     'coverage_start': 'INTEGER',
     'coverage_end': 'INTEGER',
     'record_origin': "TEXT NOT NULL DEFAULT 'generated' CHECK(record_origin IN ('generated','imported'))",
@@ -454,6 +464,10 @@ def create_contract(summary, field_values, docx_path):
     return contract_id
 
 
+def _new_contract_coverage(summary):
+    return contract_coverage.normalize_new_contract_coverage(summary)
+
+
 def _create_contract_with_plans_impl(
     conn, summary, field_values, docx_path, plans, rules=None
 ):
@@ -464,6 +478,11 @@ def _create_contract_with_plans_impl(
     )
     values_json = json.dumps(field_values or {}, ensure_ascii=False, default=str)
     amount_minor, amount = _amount_pair(summary.get('amount'))
+    (
+        coverage_not_applicable,
+        coverage_start,
+        coverage_end,
+    ) = _new_contract_coverage(summary)
     stored_docx_path = portable_docx_path(docx_path)
     cur = conn.execute(
         """
@@ -471,8 +490,9 @@ def _create_contract_with_plans_impl(
             contract_no, title, counterparty, amount, amount_minor, sign_date, owner,
             status, template_name, docx_path, values_json, record_origin,
             original_filename, source_sha256, expiry_date, project_name,
-            coverage_start, coverage_end, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            subsystem_name, coverage_not_applicable, coverage_start,
+            coverage_end, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             summary.get('contract_no'),
@@ -491,14 +511,16 @@ def _create_contract_with_plans_impl(
             summary.get('source_sha256') or '',
             summary.get('expiry_date') or '',
             summary.get('project_name') or '',
-            summary.get('coverage_start'),
-            summary.get('coverage_end'),
+            summary.get('subsystem_name') or '',
+            coverage_not_applicable,
+            coverage_start,
+            coverage_end,
             now,
             now,
         ),
     )
     contract_id = cur.lastrowid
-    if summary.get('coverage_start') is not None and summary.get('coverage_end') is not None:
+    if not coverage_not_applicable and coverage_start is not None:
         _CONTRACT_SERIALS.sync_range(contract_id, connection=conn)
     rule_ids = _PAYMENT_RULES.insert_many_impl(conn, contract_id, rules or [])
     for plan in plans or []:

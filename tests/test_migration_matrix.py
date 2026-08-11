@@ -92,19 +92,21 @@ def test_every_historical_ledger_version_upgrades_to_current(tmp_path, monkeypat
         with closing(sqlite3.connect(database)) as connection:
             assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
             contract = connection.execute(
-                'SELECT amount_minor, record_origin, original_filename, source_sha256 '
+                'SELECT amount_minor, record_origin, original_filename, source_sha256, '
+                'subsystem_name, coverage_not_applicable '
                 'FROM contracts WHERE contract_no = ?', ('MATRIX-001',)
             ).fetchone()
             payment = connection.execute(
-                'SELECT due_amount_minor, paid_amount_minor, contract_serial_id '
+                'SELECT due_amount_minor, paid_amount_minor, contract_serial_id, '
+                'subsystem_name '
                 'FROM payment_plans WHERE id = 1'
             ).fetchone()
             serial_table = connection.execute(
                 "SELECT name FROM sqlite_master "
                 "WHERE type = 'table' AND name = 'contract_serials'"
             ).fetchone()
-        assert contract == (12_345, 'generated', '', '')
-        assert payment == (1_234, 123, None)
+        assert contract == (12_345, 'generated', '', '', '', 0)
+        assert payment == (1_234, 123, None, '')
         assert serial_table == ('contract_serials',)
 
 

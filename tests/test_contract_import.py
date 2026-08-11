@@ -75,6 +75,8 @@ def _confirm_form(preview, token, **overrides):
         'owner': summary.get('owner') or '',
         'status': summary.get('status') or 'draft',
         'project_name': summary.get('project_name') or '',
+        'subsystem_name': summary.get('subsystem_name') or '',
+        'coverage_mode': summary.get('coverage_mode') or 'not_applicable',
         'coverage_start': summary.get('coverage_start') or '',
         'coverage_end': summary.get('coverage_end') or '',
         'plan_count': len(preview.get('plans') or []),
@@ -162,6 +164,9 @@ def test_preview_extracts_table_fields_diagnostics_and_pending_plans(
         'owner': '',
         'status': 'draft',
         'project_name': '',
+        'subsystem_name': '',
+        'coverage_mode': '',
+        'coverage_not_applicable': False,
         'coverage_start': None,
         'coverage_end': None,
     }
@@ -429,7 +434,10 @@ def test_commit_failure_moves_file_back_without_orphan(tmp_path):
         staging_path=str(source),
         original_filename='原稿.docx',
         source_sha256=digest,
-        summary={'title': '回滚测试合同', 'status': 'draft'},
+        summary={
+            'title': '回滚测试合同', 'status': 'draft',
+            'coverage_mode': 'not_applicable',
+        },
         plans=[],
     )
 
@@ -464,7 +472,10 @@ def test_import_recovery_isolates_file_moved_before_commit(tmp_db, tmp_path):
             staging_path=str(source),
             original_filename='原稿.docx',
             source_sha256=digest,
-            summary={'title': '断电回滚合同', 'status': 'draft', 'contract_no': ''},
+            summary={
+                'title': '断电回滚合同', 'status': 'draft',
+                'contract_no': '', 'coverage_mode': 'not_applicable',
+            },
             plans=[],
         ))
 
@@ -507,7 +518,10 @@ def test_import_recovery_finalizes_commit_before_terminal_marker(tmp_db, tmp_pat
             staging_path=str(source),
             original_filename='原稿.docx',
             source_sha256=digest,
-            summary={'title': '断电提交合同', 'status': 'draft', 'contract_no': ''},
+            summary={
+                'title': '断电提交合同', 'status': 'draft',
+                'contract_no': '', 'coverage_mode': 'not_applicable',
+            },
             plans=[],
         ))
 
@@ -546,7 +560,10 @@ def test_concurrent_confirmation_allows_only_one_source_sha(tmp_db, tmp_path, mo
             staging_path=str(source),
             original_filename='并发合同.docx',
             source_sha256=digest,
-            summary={'title': '并发导入合同', 'status': 'draft', 'contract_no': ''},
+            summary={
+                'title': '并发导入合同', 'status': 'draft',
+                'contract_no': '', 'coverage_mode': 'not_applicable',
+            },
             plans=[],
         ))
 

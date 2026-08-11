@@ -5,6 +5,14 @@ let contracts = [];
 let selectedContractItems = [];
 let contractItemsController = null;
 let contractItemsRequestId = 0;
+let presetController = null;
+let presetRequestId = 0;
+let presetLoading = false;
+let loadedPresetKey = null;
+let savedDefaultsController = null;
+let savedDefaultsRequestId = 0;
+let defaultsRecordController = null;
+let defaultsRecordRequestId = 0;
 
 async function apiFetch(url, options = {}) {
     const opts = { ...options };
@@ -29,27 +37,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── 预置选择 ──
 function selectPreset(key, el) {
+    if (defaultsRecordController) defaultsRecordController.abort();
+    defaultsRecordRequestId += 1;
+    window._pendingMapping = null;
     document.getElementById('presetKey').value = key;
     document.querySelectorAll('#presetCards > div').forEach(c => {
         c.classList.remove('border-primary');
         c.classList.add('border-transparent');
     });
-    el.classList.remove('border-transparent');
-    el.classList.add('border-primary');
+    if (el) {
+        el.classList.remove('border-transparent');
+        el.classList.add('border-primary');
+    }
     loadPreset(key);
+    loadSavedDefaultsList();
 }
 
 async function loadPreset(key) {
+    const requestId = ++presetRequestId;
+    if (presetController) presetController.abort();
+    const controller = new AbortController();
+    presetController = controller;
+    presetLoading = true;
     try {
-        const resp = await fetch('/api/excel-bill/presets/' + key);
-        const preset = await resp.json();
+        const resp = await fetch('/api/excel-bill/presets/' + encodeURIComponent(key), {
+            headers: { Accept: 'application/json' },
+            signal: controller.signal,
+        });
+        const preset = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(preset.error || `请求失败（${resp.status}）`);
+        if (requestId !== presetRequestId || document.getElementById('presetKey').value !== key) return false;
         if (preset.error) { showToast(preset.error, 'error'); return; }
         currentPreset = preset;
+        loadedPresetKey = key;
         currentDetailColumns = preset.detail_columns || [];
-        renderHeaderFields(preset.header_columns);
+        renderHeaderFields(preset.header_columns || []);
         updateMappingUI();
+        return true;
     } catch (e) {
+        if (e.name === 'AbortError') return false;
+        if (requestId !== presetRequestId) return false;
         showToast('加载预设失败: ' + e.message, 'error');
+        return false;
+    } finally {
+        if (presetController === controller) presetController = null;
+        if (requestId === presetRequestId) presetLoading = false;
     }
 }
 
@@ -133,14 +165,7 @@ async function onContractChange() {
         document.getElementById('contractItemCount').textContent =
             '共 ' + data.item_count + ' 行采购标的';
         updateMappingUI();
-        // Apply pending column mapping from loaded defaults
-        if (window._pendingMapping) {
-            Object.entries(window._pendingMapping).forEach(([key, val]) => {
-                const sel = document.querySelector('[name=\"map_' + key + '\"]');
-                if (sel && val) sel.value = val;
-            });
-            window._pendingMapping = null;
-        }
+        applyPendingColumnMapping();
         renderPreview();
     } catch (e) {
         if (e.name === 'AbortError') return;
@@ -156,6 +181,24 @@ async function onContractChange() {
 }
 
 // ── 列映射 UI ──
+function applyColumnMapping(mapping) {
+    const unapplied = {};
+    Object.entries(mapping || {}).forEach(([key, val]) => {
+        if (!val) return;
+        const select = document.querySelector('[name="map_' + key + '"]');
+        const hasOption = select && Array.from(select.options || []).some(option => option.value === val);
+        if (hasOption) select.value = val;
+        else unapplied[key] = val;
+    });
+    return unapplied;
+}
+
+function applyPendingColumnMapping() {
+    if (!window._pendingMapping) return;
+    const unapplied = applyColumnMapping(window._pendingMapping);
+    window._pendingMapping = Object.keys(unapplied).length ? unapplied : null;
+}
+
 function updateMappingUI() {
     const container = document.getElementById('mappingRows');
     const cid = document.getElementById('contractSelect').value;
@@ -194,6 +237,7 @@ function updateMappingUI() {
             options + '</select>' +
             '</div>';
     }).join('');
+    applyPendingColumnMapping();
 }
 
 // ── 预览 ──
@@ -215,6 +259,11 @@ function renderPreview() {
 
 // ── 表单提交前处理 ──
 document.getElementById('billForm').addEventListener('submit', function(e) {
+    if (presetLoading || loadedPresetKey !== document.getElementById('presetKey').value) {
+        e.preventDefault();
+        showToast('预设尚未加载完成，请稍候再生成', 'error');
+        return;
+    }
     // 收集表头数据
     const headerData = {};
     if (currentPreset && currentPreset.header_columns) {
@@ -350,9 +399,18 @@ function appendDefaultsItem(menu, item, presetName) {
 
 async function loadSavedDefaultsList() {
     const pk = document.getElementById('presetKey').value;
+    const requestId = ++savedDefaultsRequestId;
+    if (savedDefaultsController) savedDefaultsController.abort();
+    const controller = new AbortController();
+    savedDefaultsController = controller;
     try {
-        const resp = await fetch('/api/excel-bill/defaults?preset_key=' + pk);
-        const data = await resp.json();
+        const resp = await fetch('/api/excel-bill/defaults?preset_key=' + encodeURIComponent(pk), {
+            headers: { Accept: 'application/json' },
+            signal: controller.signal,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `请求失败（${resp.status}）`);
+        if (requestId !== savedDefaultsRequestId || document.getElementById('presetKey').value !== pk) return;
         const items = data.defaults || [];
         const menu = document.getElementById('savedDefaultsMenu');
         // Clear old items
@@ -377,33 +435,52 @@ async function loadSavedDefaultsList() {
             menu.appendChild(li);
         }
     } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (requestId !== savedDefaultsRequestId) return;
         console.error('Load defaults list failed:', e);
+    } finally {
+        if (savedDefaultsController === controller) savedDefaultsController = null;
     }
 }
 
 async function loadDefaults(filename) {
+    const requestId = ++defaultsRecordRequestId;
+    if (defaultsRecordController) defaultsRecordController.abort();
+    const controller = new AbortController();
+    defaultsRecordController = controller;
     try {
-        const resp = await window.ContractToolApi.request('/api/excel-bill/defaults/' + encodeURIComponent(filename));
+        const resp = await window.ContractToolApi.request(
+            '/api/excel-bill/defaults/' + encodeURIComponent(filename),
+            { signal: controller.signal, headers: { Accept: 'application/json' } }
+        );
         if (!resp.ok) { showToast('加载失败', 'error'); return; }
         const record = await resp.json();
+        if (requestId !== defaultsRecordRequestId) return;
 
-        // 如果预设不同，先切换
-        if (record.preset_key && record.preset_key !== document.getElementById('presetKey').value) {
-            document.getElementById('presetKey').value = record.preset_key;
+        const targetPresetKey = record.preset_key || document.getElementById('presetKey').value;
+        // 如果预设不同，先切换；即使 key 相同，也要等待初始预设真正加载完成。
+        if (targetPresetKey !== document.getElementById('presetKey').value) {
+            document.getElementById('presetKey').value = targetPresetKey;
             // 找到对应卡片并选中
             document.querySelectorAll('#presetCards > div').forEach(card => {
                 const pkey = card.getAttribute('data-preset');
-                card.classList.toggle('border-primary', pkey === record.preset_key);
-                card.classList.toggle('border-transparent', pkey !== record.preset_key);
+                card.classList.toggle('border-primary', pkey === targetPresetKey);
+                card.classList.toggle('border-transparent', pkey !== targetPresetKey);
             });
-            await loadPreset(record.preset_key);
-            // loadPreset 已同步渲染 DOM，直接填值
-            fillDefaultsData(record);
-        } else {
-            fillDefaultsData(record);
         }
+        if (presetLoading || loadedPresetKey !== targetPresetKey) {
+            const loaded = await loadPreset(targetPresetKey);
+            if (!loaded || requestId !== defaultsRecordRequestId ||
+                    document.getElementById('presetKey').value !== targetPresetKey) return;
+        }
+        // loadPreset 已同步渲染 DOM，直接填值
+        fillDefaultsData(record);
     } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (requestId !== defaultsRecordRequestId) return;
         showToast('加载失败: ' + e.message, 'error');
+    } finally {
+        if (defaultsRecordController === controller) defaultsRecordController = null;
     }
 }
 
@@ -422,17 +499,27 @@ function fillDefaultsData(record) {
             if (input) input.value = val;
         });
     }
-    // Fill column mapping (need contract to be selected first)
+    // 已有映射控件时立即应用；合同尚未加载时只保留无法应用的部分。
     if (record.column_mapping && Object.keys(record.column_mapping).length > 0) {
-        window._pendingMapping = record.column_mapping;
+        const unapplied = applyColumnMapping(record.column_mapping);
+        window._pendingMapping = Object.keys(unapplied).length ? unapplied : null;
     }
     showToast('已加载: ' + record.name);
 }
 
 async function loadAllDefaults() {
+    const requestId = ++savedDefaultsRequestId;
+    if (savedDefaultsController) savedDefaultsController.abort();
+    const controller = new AbortController();
+    savedDefaultsController = controller;
     try {
-        const resp = await fetch('/api/excel-bill/defaults');
-        const data = await resp.json();
+        const resp = await fetch('/api/excel-bill/defaults', {
+            headers: { Accept: 'application/json' },
+            signal: controller.signal,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `请求失败（${resp.status}）`);
+        if (requestId !== savedDefaultsRequestId) return;
         const items = data.defaults || [];
         const menu = document.getElementById('savedDefaultsMenu');
         menu.querySelectorAll('li:not(.menu-title)').forEach(li => li.remove());
@@ -448,16 +535,13 @@ async function loadAllDefaults() {
             });
         }
     } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (requestId !== savedDefaultsRequestId) return;
         console.error('Load all defaults failed:', e);
+    } finally {
+        if (savedDefaultsController === controller) savedDefaultsController = null;
     }
 }
-
-// Refresh saved list when preset changes
-const origSelectPreset = selectPreset;
-selectPreset = function(key, el) {
-    origSelectPreset(key, el);
-    loadSavedDefaultsList();
-};
 
 document.addEventListener('click', function(event) {
     const control = event.target.closest('[data-bill-action]');

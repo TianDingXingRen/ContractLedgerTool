@@ -1,6 +1,6 @@
 """Schema SQL and lightweight migrations for procurement persistence."""
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 6
 
 PROCUREMENT_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS procurement_projects (
@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS project_suppliers (
     contact_person TEXT DEFAULT '',
     contact_phone TEXT DEFAULT '',
     email TEXT DEFAULT '',
+    direct_support_experience TEXT DEFAULT '',
+    aerospace_support_experience TEXT DEFAULT '',
+    qualifications TEXT DEFAULT '',
     invite_status TEXT NOT NULL DEFAULT 'pending',
     quote_status TEXT NOT NULL DEFAULT 'pending',
     remark TEXT DEFAULT '',
@@ -72,6 +75,7 @@ CREATE TABLE IF NOT EXISTS project_files (
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     UNIQUE(project_id, file_type, relative_path),
+    UNIQUE(project_id, file_type, version),
     FOREIGN KEY(project_id) REFERENCES procurement_projects(id) ON DELETE CASCADE
 );
 
@@ -421,4 +425,17 @@ V4_INDEX_STATEMENTS = (
     "ON procurement_projects(updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_project_files_created "
     "ON project_files(project_id, created_at DESC, id DESC)",
+)
+
+
+V5_SUPPLIER_COLUMN_MIGRATIONS = [
+    ('project_suppliers', 'direct_support_experience', "TEXT DEFAULT ''"),
+    ('project_suppliers', 'aerospace_support_experience', "TEXT DEFAULT ''"),
+    ('project_suppliers', 'qualifications', "TEXT DEFAULT ''"),
+]
+
+
+V6_PROJECT_FILE_VERSION_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_project_files_version "
+    "ON project_files(project_id, file_type, version)"
 )

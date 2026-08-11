@@ -363,6 +363,8 @@ class OperationsUiTests(unittest.TestCase):
         self.assertIn('id="contractEditorConfig"', html)
         self.assertIn('"previewBlocks"', html)
         self.assertIn('"previewWarnings"', html)
+        self.assertIn('"templateRevision"', html)
+        self.assertIn('"draftScope"', html)
         self.assertIn('data-testid="editor-missing-fields"', html)
         self.assertIn('data-testid="editor-structure-list"', html)
         self.assertIn('id="fieldNavigator"', html)

@@ -111,8 +111,44 @@
 
 <section id="suppliers" class="apple-section">
   <div class="apple-section-header"><span class="apple-section-title">候选供应商</span></div>
-  <div class="overflow-x-auto"><table class="apple-table"><thead><tr><th>供应商</th><th>联系人</th><th>报价状态</th><th>标准模板</th><th></th></tr></thead><tbody>{% for supplier in project.suppliers %}<tr><td>{{ supplier.supplier_name }}</td><td>{{ supplier.contact_person or '-' }} {{ supplier.contact_phone }}</td><td><span class="apple-badge gray">{{ quote_status_labels.get(supplier.quote_status, supplier.quote_status) }}</span></td><td><form method="post" action="{{ url_for('procurement.procurement_quote_template', project_id=project.id, supplier_id=supplier.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs" type="submit">下载模板</button></form></td><td><div class="flex"><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement.procurement_supplier_edit', project_id=project.id, supplier_id=supplier.id) }}">编辑</a><form method="post" action="{{ url_for('procurement.procurement_supplier_delete', project_id=project.id, supplier_id=supplier.id) }}" data-confirm="确定删除该候选供应商？" data-confirm-title="删除候选供应商" data-confirm-ok="删除" data-confirm-danger="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs text-error">删除</button></form></div></td></tr>{% else %}<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--apple-text3)">尚未添加供应商。直接谈判至少需要一名候选供应商。</td></tr>{% endfor %}</tbody></table></div>
-  <div class="apple-section-body"><form method="post" action="{{ url_for('procurement.procurement_supplier_add', project_id=project.id) }}" class="grid grid-cols-1 md:grid-cols-5 gap-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="input input-bordered input-sm" required name="supplier_name" placeholder="供应商名称" aria-label="供应商名称"><input class="input input-bordered input-sm" name="contact_person" placeholder="联系人" aria-label="供应商联系人"><input class="input input-bordered input-sm" name="contact_phone" placeholder="电话" aria-label="供应商联系电话"><input class="input input-bordered input-sm" type="email" name="email" placeholder="邮箱" aria-label="供应商邮箱"><button class="btn btn-primary btn-sm">添加供应商</button></form></div>
+  <div class="overflow-x-auto">
+    <table class="apple-table" style="min-width:1280px">
+      <thead><tr><th>供应商</th><th>联系人</th><th>电话</th><th>邮箱</th><th>直接配套经验</th><th>是否有航空航天配套经验</th><th>资质</th><th>其他</th><th>报价状态</th><th>标准模板</th><th></th></tr></thead>
+      <tbody>
+        {% for supplier in project.suppliers %}
+        <tr>
+          <td>{{ supplier.supplier_name }}</td>
+          <td>{{ supplier.contact_person or '-' }}</td>
+          <td>{{ supplier.contact_phone or '-' }}</td>
+          <td>{{ supplier.email or '-' }}</td>
+          <td class="whitespace-pre-wrap">{{ supplier.direct_support_experience or '-' }}</td>
+          <td class="whitespace-pre-wrap">{{ supplier.aerospace_support_experience or '-' }}</td>
+          <td class="whitespace-pre-wrap">{{ supplier.qualifications or '-' }}</td>
+          <td class="whitespace-pre-wrap">{{ supplier.remark or '-' }}</td>
+          <td><span class="apple-badge gray">{{ quote_status_labels.get(supplier.quote_status, supplier.quote_status) }}</span></td>
+          <td><form method="post" action="{{ url_for('procurement.procurement_quote_template', project_id=project.id, supplier_id=supplier.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs" type="submit">下载模板</button></form></td>
+          <td><div class="flex"><a class="btn btn-ghost btn-xs" href="{{ url_for('procurement.procurement_supplier_edit', project_id=project.id, supplier_id=supplier.id) }}">编辑</a><form method="post" action="{{ url_for('procurement.procurement_supplier_delete', project_id=project.id, supplier_id=supplier.id) }}" data-confirm="确定删除该候选供应商？" data-confirm-title="删除候选供应商" data-confirm-ok="删除" data-confirm-danger="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-ghost btn-xs text-error">删除</button></form></div></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" style="text-align:center;padding:28px;color:var(--apple-text3)">尚未添加供应商。直接谈判至少需要一名候选供应商。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="apple-section-body">
+    <form method="post" action="{{ url_for('procurement.procurement_supplier_add', project_id=project.id) }}" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input class="input input-bordered input-sm" required name="supplier_name" placeholder="供应商名称" aria-label="供应商名称">
+      <input class="input input-bordered input-sm" name="contact_person" placeholder="联系人" aria-label="供应商联系人">
+      <input class="input input-bordered input-sm" name="contact_phone" placeholder="电话" aria-label="供应商联系电话">
+      <input class="input input-bordered input-sm" type="email" name="email" placeholder="邮箱" aria-label="供应商邮箱">
+      <textarea class="textarea textarea-bordered textarea-sm" rows="3" name="direct_support_experience" placeholder="直接配套经验" aria-label="直接配套经验"></textarea>
+      <textarea class="textarea textarea-bordered textarea-sm" rows="3" name="aerospace_support_experience" placeholder="是否有航空航天配套经验" aria-label="是否有航空航天配套经验"></textarea>
+      <textarea class="textarea textarea-bordered textarea-sm" rows="3" name="qualifications" placeholder="资质" aria-label="资质"></textarea>
+      <textarea class="textarea textarea-bordered textarea-sm" rows="3" name="remark" placeholder="其他" aria-label="其他"></textarea>
+      <div class="md:col-span-2 xl:col-span-4 flex justify-end"><button class="btn btn-primary btn-sm">添加供应商</button></div>
+    </form>
+  </div>
 </section>
 
 <section id="quotes" class="apple-section">

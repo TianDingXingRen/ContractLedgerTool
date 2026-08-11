@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import re
 import uuid
 from pathlib import Path
+
+from utils.file_digest import sha256_file as _sha256_file
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent / 'output' / 'procurement'
@@ -109,11 +110,7 @@ def resolve_download(file_id):
 
 
 def sha256_file(path):
-    digest = hashlib.sha256()
-    with open(path, 'rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return _sha256_file(path)
 
 
 def save_upload(project, file_type, file_storage):

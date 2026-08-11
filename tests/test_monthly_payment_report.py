@@ -141,6 +141,154 @@ def test_monthly_report_groups_nodes_by_contract_serial_without_notice_data(tmp_
     assert report['diagnostics']['unassigned_serial_count'] == 1
 
 
+def test_not_applicable_contract_skips_serial_diagnostics_and_exports_label(
+    tmp_db, tmp_path,
+):
+    contract_id = ledger_store.create_contract({
+        'contract_no': 'HT-NO-SERIAL',
+        'title': '非发次服务合同',
+        'counterparty': '北岳质量技术有限公司',
+        'project_name': '综合保障项目',
+        'coverage_not_applicable': True,
+        'coverage_start': None,
+        'coverage_end': None,
+    }, {}, '/not-applicable.docx')
+    ledger_store.insert_payment_plan(contract_id, {
+        'phase_name': '年度服务款',
+        'due_date': '2026-05-18',
+        'due_amount': 86_400,
+        'confirm_status': 'confirmed',
+    })
+
+    report = ledger_store.build_monthly_payment_report('2026-05')
+    assert len(report['rows']) == 1
+    assert report['rows'][0]['coverage_not_applicable'] is True
+    assert report['diagnostics']['unassigned_serial_count'] == 0
+    assert report['diagnostics']['missing_serial_amount_count'] == 0
+
+    output = tmp_path / 'not-applicable-monthly.xlsx'
+    xlsx_exporter.export_monthly_payment_plan_report(output, report)
+    workbook = load_workbook(output, data_only=False)
+    try:
+        detail = next(
+            sheet for sheet in workbook.worksheets if sheet.title != '汇总'
+        )
+        assert detail['A4'].value == '不适用'
+    finally:
+        workbook.close()
+
+
+def test_not_applicable_monthly_export_marks_preserved_serial_as_historical(
+    tmp_db, tmp_path,
+):
+    contract_id = ledger_store.create_contract({
+        'contract_no': 'HT-NA-HISTORY',
+        'title': '历史关联服务合同',
+        'project_name': '综合保障项目',
+    }, {}, '/not-applicable-history.docx')
+    with ledger_store.get_conn() as conn:
+        serial_id = conn.execute(
+            """
+            INSERT INTO contract_serials
+                (contract_id, serial_no, status, created_at, updated_at)
+            VALUES (?, 9, 'active', ?, ?)
+            """,
+            (contract_id, '2026-01-01', '2026-01-01'),
+        ).lastrowid
+    ledger_store.insert_payment_plan(contract_id, {
+        'contract_serial_id': serial_id,
+        'phase_name': '历史节点',
+        'due_date': '2026-05-18',
+        'due_amount': 86_400,
+        'confirm_status': 'confirmed',
+    })
+    ledger_store.update_contract(contract_id, {
+        'coverage_not_applicable': 1,
+        'coverage_start': None,
+        'coverage_end': None,
+    })
+
+    report = ledger_store.build_monthly_payment_report('2026-05')
+    assert report['rows'][0]['coverage_not_applicable'] is True
+    assert report['rows'][0]['serial_no'] == 9
+    assert report['diagnostics']['unassigned_serial_count'] == 0
+    assert report['diagnostics']['missing_serial_amount_count'] == 0
+
+    output = tmp_path / 'not-applicable-history-monthly.xlsx'
+    xlsx_exporter.export_monthly_payment_plan_report(output, report)
+    workbook = load_workbook(output, data_only=False)
+    try:
+        detail = next(
+            sheet for sheet in workbook.worksheets if sheet.title != '汇总'
+        )
+        assert detail['A4'].value == '第 9 发（历史关联；合同发次不适用）'
+    finally:
+        workbook.close()
+
+
+def test_payment_plan_inherits_and_overrides_subsystem_and_monthly_splits(
+    tmp_db, tmp_path,
+):
+    contract_id = ledger_store.create_contract({
+        'contract_no': 'HT-SUBSYSTEM',
+        'title': '分系统归集合同',
+        'counterparty': '供应商甲',
+        'status': 'active',
+        'project_name': '力箭型号',
+        'subsystem_name': '总体分系统',
+        'coverage_start': 3,
+        'coverage_end': 3,
+    }, {}, '/subsystem.docx')
+    serial = ledger_store.list_contract_serials(contract_id)[0]
+    inherited_id = ledger_store.insert_payment_plan(contract_id, {
+        'contract_serial_id': serial['id'],
+        'phase_name': '总体付款',
+        'due_date': '2026-05-10',
+        'due_amount': 100_000,
+        'confirm_status': 'confirmed',
+    })
+    override_id = ledger_store.insert_payment_plan(contract_id, {
+        'contract_serial_id': serial['id'],
+        'subsystem_name': '动力分系统',
+        'phase_name': '动力付款',
+        'due_date': '2026-05-20',
+        'due_amount': 200_000,
+        'confirm_status': 'confirmed',
+    })
+
+    inherited = ledger_store.get_payment_plan(inherited_id)
+    assert inherited['subsystem_name'] == ''
+    assert inherited['contract_subsystem_name'] == '总体分系统'
+    assert ledger_store.get_payment_plan(override_id)['subsystem_name'] == '动力分系统'
+
+    report = ledger_store.build_monthly_payment_report('2026-05')
+    assert len(report['rows']) == 2
+    assert {row['subsystem_name'] for row in report['rows']} == {
+        '总体分系统', '动力分系统',
+    }
+    assert {item['subsystem_name'] for item in report['projects']} == {
+        '总体分系统', '动力分系统',
+    }
+
+    output = tmp_path / 'subsystems.xlsx'
+    xlsx_exporter.export_monthly_payment_plan_report(output, report)
+    workbook = load_workbook(output, data_only=False)
+    try:
+        assert set(workbook.sheetnames) == {
+            '汇总', '力箭型号-总体分系统', '力箭型号-动力分系统',
+        }
+        summary = workbook['汇总']
+        assert {
+            (summary.cell(row, 2).value, summary.cell(row, 3).value)
+            for row in (3, 4)
+        } == {
+            ('力箭型号', '总体分系统'),
+            ('力箭型号', '动力分系统'),
+        }
+    finally:
+        workbook.close()
+
+
 def test_monthly_report_excludes_void_and_ignores_future_metadata(tmp_db):
     contract_id, serials = _contract_with_serials(title='节点口径合同')
     ledger_store.insert_payment_plans(contract_id, [
@@ -222,28 +370,31 @@ def test_monthly_report_export_matches_template_semantics(tmp_db, tmp_path):
 
     workbook = load_workbook(output, data_only=False)
     try:
-        assert workbook.sheetnames == ['汇总', '火箭项目']
+        assert workbook.sheetnames == ['汇总', '火箭项目-未填写分系统']
         summary = workbook['汇总']
-        detail = workbook['火箭项目']
+        detail = workbook['火箭项目-未填写分系统']
         assert summary['A1'].value is None
         assert summary['B2'].value == '项目'
-        assert summary['C2'].value == '5月计划付款合计'
-        assert summary['D2'].value == '本月计划付款'
-        assert summary['E2'].value == '上月已做计划未付款'
-        assert summary['F2'].value == '可用银行承兑支付金额'
+        assert summary['C2'].value == '所属分系统'
+        assert summary['D2'].value == '5月计划付款合计'
+        assert summary['E2'].value == '本月计划付款'
+        assert summary['F2'].value == '上月已做计划未付款'
+        assert summary['G2'].value == '可用银行承兑支付金额'
         assert summary['B3'].value == '火箭项目'
-        assert summary['C3'].value == '=SUM(D3:E3)'
+        assert summary['C3'].value == '未填写分系统'
+        assert summary['D3'].value == '=SUM(E3:F3)'
         assert summary['B8'].value == '合计：'
         assert summary['B12'].value.startswith('说明：本月计划付款合计包括')
         assert summary.freeze_panes is None
         assert summary.column_dimensions['B'].width == pytest.approx(21.75)
         assert summary['B2'].fill.fgColor.rgb in {'000070C0', '0070C0'}
         assert summary['B2'].font.sz == 14
-        assert detail['A3'].value == '火箭发次\n（项目名称）'
+        assert detail['A3'].value == '火箭发次'
         assert detail['B3'].value == '合同编号'
         assert detail['F3'].value == '合同额'
         assert detail['G3'].value == '付款节点#1\n（金额）'
-        assert detail['A4'].value == '火箭项目'
+        assert detail['A4'].value == 101
+        assert detail['A4'].number_format == '"第 "0" 发"'
         assert detail['B4'].value == 'HT-月报合同'
         assert detail['F4'].value == 120
         assert detail['F4'].data_type == 'n'
@@ -278,11 +429,11 @@ def test_monthly_report_export_matches_template_semantics(tmp_db, tmp_path):
         assert detail.page_setup.orientation == 'portrait'
         assert detail.print_title_rows == '$1:$3'
         assert detail.print_area
-        assert summary['D3'].value == "='火箭项目'!K12"
-        assert summary['E3'].value == "='火箭项目'!K11"
-        assert summary['D3'].number_format == '#,##0.00'
-        assert summary['D3'].alignment.horizontal == 'right'
-        assert summary.print_area == "'汇总'!$B$2:$G$12"
+        assert summary['E3'].value == "='火箭项目-未填写分系统'!K12"
+        assert summary['F3'].value == "='火箭项目-未填写分系统'!K11"
+        assert summary['E3'].number_format == '#,##0.00'
+        assert summary['E3'].alignment.horizontal == 'right'
+        assert summary.print_area == "'汇总'!$B$2:$H$12"
     finally:
         workbook.close()
 
@@ -310,7 +461,10 @@ def test_monthly_export_uses_actual_unique_sheet_titles_and_safe_project_names(
 
     workbook = load_workbook(output, data_only=False)
     try:
-        assert workbook.sheetnames == ['汇总', '=1+1', 'Alpha', 'alpha-2']
+        assert workbook.sheetnames == [
+            '汇总', '=1+1-未填写分系统',
+            'Alpha-未填写分系统', 'alpha-未填写分系统-2',
+        ]
         summary = workbook['汇总']
         project_rows = {
             summary.cell(row_index, 2).value: row_index
@@ -319,14 +473,14 @@ def test_monthly_export_uses_actual_unique_sheet_titles_and_safe_project_names(
         unsafe_name_cell = summary.cell(project_rows["'=1+1"], 2)
         assert unsafe_name_cell.value == "'=1+1"
         assert unsafe_name_cell.data_type == 's'
-        assert summary.cell(project_rows['Alpha'], 4).value.startswith(
-            "='Alpha'!"
+        assert summary.cell(project_rows['Alpha'], 5).value.startswith(
+            "='Alpha-未填写分系统'!"
         )
-        assert summary.cell(project_rows['alpha'], 4).value.startswith(
-            "='alpha-2'!"
+        assert summary.cell(project_rows['alpha'], 5).value.startswith(
+            "='alpha-未填写分系统-2'!"
         )
         for row_index in range(3, 6):
-            formula = summary.cell(row_index, 4).value
+            formula = summary.cell(row_index, 5).value
             referenced_sheet = formula.split("'!", 1)[0][2:].replace("''", "'")
             assert referenced_sheet in workbook.sheetnames
     finally:
@@ -354,7 +508,7 @@ def test_monthly_report_expands_rows_for_long_text(tmp_db, tmp_path):
     workbook = load_workbook(output, data_only=False)
     try:
         summary = workbook['汇总']
-        detail = workbook[project_name]
+        detail = workbook[workbook.sheetnames[1]]
         assert summary['B3'].alignment.wrap_text is True
         assert summary.row_dimensions[3].height > 20
         assert detail.row_dimensions[4].height > 33
@@ -380,7 +534,7 @@ def test_monthly_report_route_and_payment_page(client):
     assert 'type="month"' in page_html
     detail = client.get(f'/contracts/{contract_id}?tab=payments')
     detail_html = detail.get_data(as_text=True)
-    assert '合同编号台账' in detail_html
+    assert '发次台账' in detail_html
     assert 'name="plan_0_contract_serial_id"' in detail_html
     assert '不依赖投产通知' in detail_html
 
@@ -403,7 +557,7 @@ def test_monthly_report_route_and_payment_page(client):
     ) in response.headers['Content-Disposition']
     workbook = load_workbook(io.BytesIO(response.data), data_only=False)
     try:
-        assert workbook.sheetnames == ['汇总', '火箭项目']
+        assert workbook.sheetnames == ['汇总', '火箭项目-未填写分系统']
     finally:
         workbook.close()
     assert client.post(
@@ -423,10 +577,10 @@ def test_empty_monthly_report_has_no_circular_total(tmp_db, tmp_path):
     try:
         assert workbook.sheetnames == ['汇总']
         assert workbook['汇总']['B8'].value == '合计：'
-        assert workbook['汇总']['C8'].value == '=SUM(D8:E8)'
-        assert workbook['汇总']['D8'].value == 0
+        assert workbook['汇总']['D8'].value == '=SUM(E8:F8)'
         assert workbook['汇总']['E8'].value == 0
         assert workbook['汇总']['F8'].value == 0
+        assert workbook['汇总']['G8'].value == 0
         assert workbook['汇总']['B12'].value.startswith(
             '说明：本月计划付款合计包括'
         )

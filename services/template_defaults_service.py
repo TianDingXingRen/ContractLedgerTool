@@ -113,7 +113,11 @@ def _apply_field_default(field, index, submitted_values, errors):
         return
 
     default_value = limit_text(
-        submitted_values.get(f'field_{index}', '')
+        _submitted_field_value(
+            field,
+            index,
+            submitted_values,
+        )
     )
     label = field.get('label', field.get('key'))
     if field_type == 'number' and default_value:
@@ -133,10 +137,31 @@ def _apply_field_default(field, index, submitted_values, errors):
     field['default_value'] = default_value
 
 
+def _submitted_field_value(
+    field,
+    index,
+    submitted_values,
+    *,
+    prefix='field_',
+    default='',
+):
+    """Read current field-id keys first, then legacy positional keys."""
+    field_id = field.get('id')
+    if field_id is not None:
+        field_key = f'{prefix}{field_id}'
+        if field_key in submitted_values:
+            return submitted_values.get(field_key, default)
+    return submitted_values.get(f'{prefix}{index}', default)
+
+
 def _apply_table_default(field, index, submitted_values, errors):
     label = field.get('label', field.get('key'))
-    columns_raw = submitted_values.get(
-        f'table_cols_{field.get("id")}'
+    columns_raw = _submitted_field_value(
+        field,
+        index,
+        submitted_values,
+        prefix='table_cols_',
+        default=None,
     )
     if columns_raw:
         try:
@@ -150,7 +175,11 @@ def _apply_table_default(field, index, submitted_values, errors):
         except (ValueError, field_eval.FormulaError) as exc:
             errors.append(f'{label} 的列定义无效：{exc}')
 
-    raw_value = submitted_values.get(f'field_{index}', '')
+    raw_value = _submitted_field_value(
+        field,
+        index,
+        submitted_values,
+    )
     try:
         rows = json.loads(raw_value) if raw_value else []
         if not isinstance(rows, list):

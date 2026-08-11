@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from database.connection_factory import begin_immediate
+
+from .contract_status_policy import assert_contracts_can_be_voided
+
 
 class ContractLifecycleRepository:
     def __init__(self, get_conn, now_func, validate_choice, statuses, row_to_dict):
@@ -123,13 +127,26 @@ class ContractLifecycleRepository:
             return 0
         now = self._now()
         with self._get_conn() as conn:
+            begin_immediate(conn)
             placeholders = ','.join('?' for _ in ids)
+            active_rows = conn.execute(
+                f"SELECT id FROM contracts WHERE id IN ({placeholders}) "
+                "AND (deleted_at = '' OR deleted_at IS NULL)",
+                ids,
+            ).fetchall()
             cur = conn.execute(
                 f"UPDATE contracts SET deleted_at = ?, updated_at = ? "
                 f"WHERE id IN ({placeholders}) "
                 "AND (deleted_at = '' OR deleted_at IS NULL)",
                 [now, now] + ids,
             )
+            for row in active_rows:
+                conn.execute(
+                    """INSERT INTO contract_history
+                       (contract_id, field, old_value, new_value, changed_at)
+                       VALUES (?, 'deleted_at', '', ?, ?)""",
+                    (row['id'], now, now),
+                )
             return cur.rowcount
 
     def batch_update_status(self, ids, status):
@@ -138,7 +155,10 @@ class ContractLifecycleRepository:
         status = self._validate_choice(status, self._statuses, '合同状态')
         now = self._now()
         with self._get_conn() as conn:
+            begin_immediate(conn)
             placeholders = ','.join('?' for _ in ids)
+            if status == 'void':
+                assert_contracts_can_be_voided(conn, ids)
             old_rows = conn.execute(
                 f'SELECT id, status FROM contracts WHERE id IN ({placeholders})', ids,
             ).fetchall()

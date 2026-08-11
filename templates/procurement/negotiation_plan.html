@@ -82,6 +82,25 @@
   </section>
 
   <section class="apple-section">
+    <div class="apple-section-header">
+      <span class="apple-section-title">备选供应商信息</span>
+      <span class="text-xs text-base-content/50">只读 · {{ view['suppliers']|length }} 家</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="apple-table">
+        <thead><tr><th style="width:80px">序号</th><th>备选供应商名称</th><th>直接配套经验</th><th>是否有航空航天配套经验</th><th>资质</th><th>其他</th></tr></thead>
+        <tbody>
+          {% for supplier in view['suppliers'] %}
+          <tr><td>{{ loop.index }}</td><td>{{ supplier.supplier_name }}</td><td class="whitespace-pre-wrap">{{ supplier.direct_support_experience or '—' }}</td><td class="whitespace-pre-wrap">{{ supplier.aerospace_support_experience or '—' }}</td><td class="whitespace-pre-wrap">{{ supplier.qualifications or '—' }}</td><td class="whitespace-pre-wrap">{{ supplier.remark or '—' }}</td></tr>
+          {% else %}
+          <tr><td colspan="6" style="text-align:center;padding:28px;color:var(--apple-text3)">暂无备选供应商信息</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="apple-section">
     <div class="apple-section-header"><span class="apple-section-title">谈判安排</span></div>
     <div class="apple-section-body grid grid-cols-1 gap-3">
       <label class="form-control gap-2">

@@ -125,7 +125,40 @@ class ContractItemRepository:
         except (TypeError, ValueError) as exc:
             raise ValueError('合同产品 ID 无效') from exc
 
+    def _validate_existing_names(self, rows):
+        """Require explicit deletion before any temporary line renumbering."""
+        for raw in rows:
+            item_id = self._item_id(raw)
+            if (
+                item_id
+                and not raw.get('delete')
+                and not str(raw.get('item_name') or '').strip()
+            ):
+                raise ValueError('合同产品名称不能为空；如需删除请勾选删除')
+
+    def _free_submitted_line_numbers(self, conn, contract_id, rows):
+        submitted_ids = [
+            item_id
+            for raw in rows
+            if (item_id := self._item_id(raw))
+        ]
+        originals = {}
+        for offset, item_id in enumerate(dict.fromkeys(submitted_ids), start=1):
+            current = conn.execute(
+                'SELECT * FROM contract_items WHERE id = ? AND contract_id = ?',
+                (item_id, contract_id),
+            ).fetchone()
+            if not current:
+                raise ValueError('合同产品不存在或不属于当前合同')
+            originals[item_id] = current
+            conn.execute(
+                'UPDATE contract_items SET line_no = ? WHERE id = ?',
+                (-offset, item_id),
+            )
+        return originals
+
     def save(self, contract_id, rows, *, operator=''):
+        rows = list(rows or [])
         now = self.now()
         saved = []
         with self.get_conn() as conn:
@@ -136,27 +169,12 @@ class ContractItemRepository:
             ).fetchone()
             if not contract:
                 raise ValueError('合同不存在、已删除或不可编辑')
-            submitted_ids = []
-            originals = {}
-            for raw in rows or []:
-                item_id = self._item_id(raw)
-                if item_id:
-                    submitted_ids.append(item_id)
-            # Free existing unique line numbers first so line swaps are atomic.
-            for offset, item_id in enumerate(dict.fromkeys(submitted_ids), start=1):
-                current = conn.execute(
-                    'SELECT * FROM contract_items WHERE id = ? AND contract_id = ?',
-                    (item_id, contract_id),
-                ).fetchone()
-                if not current:
-                    raise ValueError('合同产品不存在或不属于当前合同')
-                originals[item_id] = current
-                conn.execute(
-                    'UPDATE contract_items SET line_no = ? WHERE id = ?',
-                    (-offset, item_id),
-                )
+            self._validate_existing_names(rows)
+            originals = self._free_submitted_line_numbers(
+                conn, contract_id, rows
+            )
             existing_lines = {}
-            for index, raw in enumerate(rows or [], start=1):
+            for index, raw in enumerate(rows, start=1):
                 if raw.get('delete'):
                     item_id = self._item_id(raw)
                     if not item_id:

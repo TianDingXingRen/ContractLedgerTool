@@ -69,6 +69,12 @@ def test_ci_and_release_workflows_use_the_shared_quality_gate():
     assert 'requirements-dev.lock' in ci
     assert 'playwright install chromium' in ci
     assert 'build/coverage.xml' in ci
+    dev_audit = (
+        'python -m pip_audit -r requirements-dev.lock '
+        '--no-deps --disable-pip'
+    )
+    assert dev_audit in ci
+    assert 'npm audit --audit-level=moderate' in ci
 
     assert 'python scripts/quality_gate.py release --build-installer' in release
     assert 'RELEASE_TAG:' in release
@@ -81,6 +87,8 @@ def test_ci_and_release_workflows_use_the_shared_quality_gate():
     assert 'CODESIGN_PFX_BASE64' in release
     assert 'CODESIGN_PFX_PASSWORD' in release
     assert 'REQUIRE_CODE_SIGNING=1' in release
+    assert dev_audit in release
+    assert 'npm audit --audit-level=moderate' in release
 
     quality_gate = (ROOT / 'scripts' / 'quality_gate.py').read_text(encoding='utf-8')
     assert 'MODULE_COVERAGE_FLOORS' in quality_gate

@@ -24,9 +24,13 @@
   正式投产通知只允许引用这里的产品。累计已发数量仅统计“已发出、已确认、已关闭”，草稿和已取消通知不占用数量。
 </div>
 
+{% set max_item_rows = 500 %}
+{% set remaining_item_rows = max_item_rows - items|length %}
+{% set padding_item_rows = 3 if remaining_item_rows >= 3 else (remaining_item_rows if remaining_item_rows > 0 else 0) %}
+{% set row_count = items|length + padding_item_rows %}
 <form method="post" id="contract-items-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <input type="hidden" name="item_count" id="item-count" value="{{ items|length + 3 }}">
+  <input type="hidden" name="item_count" id="item-count" value="{{ row_count }}">
   <div class="apple-card overflow-x-auto">
     <table class="apple-table min-w-full" id="contract-items-table">
       <thead><tr>
@@ -35,12 +39,11 @@
         <th>累计已发</th><th>剩余</th><th>操作</th>
       </tr></thead>
       <tbody id="item-rows">
-      {% set row_count = items|length + 3 %}
       {% for index in range(row_count) %}
         {% set item = items[index] if index < items|length else none %}
         <tr data-item-row>
           <td><input type="hidden" name="item_{{ index }}_id" value="{{ item.id if item else '' }}"><input class="input input-bordered input-sm w-16" name="item_{{ index }}_line_no" value="{{ item.line_no if item else index + 1 }}"></td>
-          <td><input class="input input-bordered input-sm min-w-40" name="item_{{ index }}_item_name" value="{{ item.item_name if item else '' }}"></td>
+          <td><input class="input input-bordered input-sm min-w-40" name="item_{{ index }}_item_name" value="{{ item.item_name if item else '' }}" {% if item %}required{% endif %}></td>
           <td><input class="input input-bordered input-sm min-w-32" name="item_{{ index }}_spec_model" value="{{ item.spec_model if item else '' }}"></td>
           <td><input class="input input-bordered input-sm w-28" name="item_{{ index }}_drawing_no" value="{{ item.drawing_no if item else '' }}"></td>
           <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_contracted_qty" inputmode="numeric" value="{{ item.contracted_qty if item else '' }}"></td>

@@ -11,6 +11,8 @@ def test_docs_index_names_canonical_documents():
         '合同生成工具_开发方案与测试方案.md',
         '采购前置工作台与合同生成工具一体化_开发与测试方案.md',
         'UI交互修复方案.md',
+        'docs/technical-debt-audit.md',
+        'docs/technical-debt-audit-2026-07-28.md',
         'requirements.lock',
         'scripts/demo_data.py',
     ]:

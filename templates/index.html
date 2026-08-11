@@ -262,7 +262,7 @@
                 <i data-lucide="milestone" style="color:var(--apple-blue);width:18px;height:18px"></i>
                 项目签署与付款进度
             </div>
-            <div class="apple-section-subtitle">按合同归类号段汇总；草稿和作废合同不计入签署进度</div>
+            <div class="apple-section-subtitle">按合同发次范围汇总；草稿和作废合同不计入签署进度</div>
         </div>
         <a href="{{ url_for('contracts.contract_ledger') }}" class="apple-btn apple-btn-ghost">查看合同台账</a>
     </div>
@@ -279,26 +279,27 @@
                 <tr>
                     <td style="font-weight:600">{{ project.project_name }}</td>
                     <td>
-                        {% if project.signed_to is not none %}
-                        <div style="font-weight:600;color:var(--apple-green)">已签至 {{ project.signed_to }} 号</div>
+                        {% if project.signed_contract_count %}
+                        <div style="font-weight:600;color:var(--apple-green)">{% if project.signed_to is not none %}已签至 {{ project.signed_to }} 发{% else %}已有已签合同{% endif %}</div>
                         <div style="font-size:11px;color:var(--apple-text3)">
-                            {% if project.signed_from is not none %}覆盖 {{ project.signed_from }}–{{ project.signed_to }} 号 · {% endif %}
-                            {{ project.signed_contract_count }} 份
+                            {% if project.signed_from is not none %}覆盖 {{ project.signed_from }}–{{ project.signed_to }} 发 · {% endif %}共 {{ project.signed_contract_count }} 份{% if project.signed_not_applicable_count %} · 不适用 {{ project.signed_not_applicable_count }} 份{% endif %}{% if project.signed_pending_coverage_count %} · 待补发次 {{ project.signed_pending_coverage_count }} 份{% endif %}
                         </div>
                         {% else %}
                         <span style="color:var(--apple-text3)">尚无已签合同</span>
                         {% endif %}
                     </td>
                     <td>
-                        {% if project.planned_to is not none %}
-                        <span style="font-weight:500">计划关联至 {{ project.planned_to }} 号</span>
+                        {% if project.planned_contract_count %}
+                        <div style="font-weight:500">{% if project.planned_to is not none %}计划关联至 {{ project.planned_to }} 发{% else %}已有付款计划{% endif %}</div>
+                        <div style="font-size:11px;color:var(--apple-text3)">涉及 {{ project.planned_contract_count }} 份合同{% if project.planned_not_applicable_count %} · 不适用 {{ project.planned_not_applicable_count }} 份{% endif %}{% if project.planned_pending_coverage_count %} · 待补发次 {{ project.planned_pending_coverage_count }} 份{% endif %}</div>
                         {% else %}
                         <span style="color:var(--apple-text3)">尚无付款计划</span>
                         {% endif %}
                     </td>
                     <td>
-                        {% if project.paid_to is not none %}
-                        <span class="apple-badge green">付款已涉及至 {{ project.paid_to }} 号</span>
+                        {% if project.paid_contract_count %}
+                        <span class="apple-badge green">{% if project.paid_to is not none %}付款已涉及至 {{ project.paid_to }} 发{% else %}已有实际付款{% endif %}</span>
+                        <div style="font-size:11px;color:var(--apple-text3);margin-top:4px">涉及 {{ project.paid_contract_count }} 份合同{% if project.paid_not_applicable_count %} · 不适用 {{ project.paid_not_applicable_count }} 份{% endif %}{% if project.paid_pending_coverage_count %} · 待补发次 {{ project.paid_pending_coverage_count }} 份{% endif %}</div>
                         {% else %}
                         <span style="color:var(--apple-text3)">尚未付款</span>
                         {% endif %}
@@ -313,7 +314,7 @@
     <div style="padding:32px 20px;text-align:center">
         <i data-lucide="folder-tree" style="width:36px;height:36px;margin:0 auto 12px;color:var(--apple-text3)"></i>
         <p style="color:var(--apple-text2);font-size:13px">还没有项目归类数据</p>
-        <p style="color:var(--apple-text3);font-size:12px;margin-top:4px">生成合同时填写所属项目和覆盖号段后，这里会自动形成统计。</p>
+        <p style="color:var(--apple-text3);font-size:12px;margin-top:4px">生成合同时填写项目名称并确认发次范围后，这里会自动形成统计。</p>
     </div>
     {% endif %}
 </section>
@@ -340,9 +341,8 @@
                     <td>{{ c.contract_no or '-' }}</td>
                     <td>
                         <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}"
-                           style="color:var(--apple-blue);text-decoration:none;font-weight:500"
-                           onmouseover="this.style.textDecoration='underline'"
-                           onmouseout="this.style.textDecoration='none'">{{ c.title }}</a>
+                           class="no-underline hover:underline"
+                           style="color:var(--apple-blue);font-weight:500">{{ c.title }}</a>
                     </td>
                     <td>{{ c.counterparty or '-' }}</td>
                     <td><span class="apple-badge {{ 'green' if c.status == 'active' else 'blue' }}">{{ status_labels.get(c.status, c.status) }}</span></td>
@@ -375,9 +375,8 @@
                     </td>
                     <td>
                         <a href="{{ url_for('contracts.contract_detail', contract_id=p.contract_id) }}"
-                           style="color:var(--apple-blue);text-decoration:none;font-weight:500"
-                           onmouseover="this.style.textDecoration='underline'"
-                           onmouseout="this.style.textDecoration='none'">{{ p.contract_title }}</a>
+                           class="no-underline hover:underline"
+                           style="color:var(--apple-blue);font-weight:500">{{ p.contract_title }}</a>
                     </td>
                     <td>{{ p.phase_name or '-' }}</td>
                     <td style="font-weight:600">{{ '%.2f'|format((p.due_amount or 0) - (p.paid_amount or 0)) }}</td>
@@ -404,9 +403,8 @@
             <div style="display:flex;flex-direction:column;gap:2px">
                 {% for c in recent_contracts %}
                 <a href="{{ url_for('contracts.contract_detail', contract_id=c.id) }}"
-                   style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;transition:background 0.15s"
-                   onmouseover="this.style.background='rgba(0,0,0,0.02)'"
-                   onmouseout="this.style.background='transparent'">
+                   class="transition-colors hover:bg-base-200/50"
+                   style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none">
                     <div style="width:34px;height:34px;border-radius:8px;background:rgba(0,122,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                         <i data-lucide="file-text" style="width:16px;height:16px;color:var(--apple-blue)"></i>
                     </div>
@@ -437,9 +435,8 @@
             <div style="display:flex;flex-direction:column;gap:2px">
                 {% for tpl in recent_templates %}
                 <a href="{{ url_for('templates.template_editor', name=tpl.filename) }}"
-                   style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;transition:background 0.15s"
-                   onmouseover="this.style.background='rgba(0,0,0,0.02)'"
-                   onmouseout="this.style.background='transparent'">
+                   class="transition-colors hover:bg-base-200/50"
+                   style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none">
                     <div style="width:34px;height:34px;border-radius:8px;background:rgba(175,82,222,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                         <i data-lucide="layout-grid" style="width:16px;height:16px;color:var(--apple-purple)"></i>
                     </div>

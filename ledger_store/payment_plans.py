@@ -67,7 +67,7 @@ class PaymentPlanRepository:
         try:
             serial_id = int(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError('合同内编号无效') from exc
+            raise ValueError('所属发次无效') from exc
         row = conn.execute(
             """
             SELECT id
@@ -77,7 +77,7 @@ class PaymentPlanRepository:
             (serial_id, contract_id),
         ).fetchone()
         if not row:
-            raise ValueError('合同内编号不存在、已停用或不属于当前合同')
+            raise ValueError('所属发次不存在、已停用或不属于当前合同')
         return serial_id
 
     @staticmethod
@@ -112,6 +112,10 @@ class PaymentPlanRepository:
         contract_serial_id = self._validate_contract_serial(
             conn, contract_id, plan.get('contract_serial_id')
         )
+        # Blank means "inherit the contract's current subsystem".  Keep it
+        # blank in storage so later contract corrections propagate naturally;
+        # report/list queries already fall back to the contract value.
+        subsystem_name = str(plan.get('subsystem_name') or '').strip()[:120]
         explicit_minor, explicit_amount = money_fields.amount_pair(
             plan.get('explicit_amount')
         )
@@ -140,7 +144,7 @@ class PaymentPlanRepository:
         cur = conn.execute(
             """
             INSERT INTO payment_plans (
-                contract_id, contract_serial_id, phase_name, payment_type,
+                contract_id, contract_serial_id, subsystem_name, phase_name, payment_type,
                 trigger_event, trigger_days,
                 expected_trigger_date, due_date, ratio, due_amount, due_amount_minor,
                 paid_amount, paid_amount_minor,
@@ -150,12 +154,13 @@ class PaymentPlanRepository:
                 explicit_amount_minor, calculated_amount_minor, parse_status,
                 reason_codes_json, extractor_version, user_modified,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 contract_id,
                 contract_serial_id,
+                subsystem_name,
                 plan.get('phase_name'),
                 payment_type,
                 plan.get('trigger_event'),
@@ -233,9 +238,13 @@ class PaymentPlanRepository:
                     row = self.row_to_dict(existing)
                     row.update(incoming)
                     if 'contract_serial_id' in incoming:
-                        row['contract_serial_id'] = self._validate_contract_serial(
-                            conn, contract_id, incoming.get('contract_serial_id')
-                        )
+                        incoming_serial_id = incoming.get('contract_serial_id')
+                        if incoming_serial_id == existing['contract_serial_id']:
+                            row['contract_serial_id'] = incoming_serial_id
+                        else:
+                            row['contract_serial_id'] = self._validate_contract_serial(
+                                conn, contract_id, incoming_serial_id
+                            )
                     row['user_modified'] = 1
                     row['parse_status'] = 'manual'
                     row = self.normalize_consistency(row)
@@ -280,6 +289,7 @@ class PaymentPlanRepository:
         page=0,
         per_page=20,
         limit=0,
+        include_void_contracts=False,
     ):
         return list_queries.list_payment_plans(
             self.get_conn,
@@ -293,6 +303,7 @@ class PaymentPlanRepository:
             page=page,
             per_page=per_page,
             limit=limit,
+            include_void_contracts=include_void_contracts,
         )
 
     def get(self, plan_id):
@@ -300,7 +311,11 @@ class PaymentPlanRepository:
             row = conn.execute(
                 """
                 SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty,
-                       c.owner, c.project_name, c.coverage_start, c.coverage_end,
+                       c.owner, c.project_name,
+                       c.status AS contract_status,
+                       c.subsystem_name AS contract_subsystem_name,
+                       c.coverage_start, c.coverage_end,
+                       c.coverage_not_applicable,
                        s.serial_no, s.amount_minor AS serial_amount_minor,
                        s.status AS serial_status
                 FROM payment_plans p
@@ -331,14 +346,28 @@ class PaymentPlanRepository:
                 return 0
             if require_not_void and existing['confirm_status'] == 'void':
                 raise ValueError('已作废的付款计划不能执行快捷操作')
+            if require_not_void:
+                contract = conn.execute(
+                    "SELECT status FROM contracts WHERE id = ? "
+                    "AND (deleted_at = '' OR deleted_at IS NULL)",
+                    (existing['contract_id'],),
+                ).fetchone()
+                if not contract:
+                    raise ValueError('合同记录不存在')
+                if contract['status'] == 'void':
+                    raise ValueError('已作废合同不能执行付款操作')
             merged = self.row_to_dict(existing)
             merged.update(
                 {key: data[key] for key in self.update_fields if key in data}
             )
             if 'contract_serial_id' in data:
-                merged['contract_serial_id'] = self._validate_contract_serial(
-                    conn, existing['contract_id'], data.get('contract_serial_id')
-                )
+                incoming_serial_id = data.get('contract_serial_id')
+                if incoming_serial_id == existing['contract_serial_id']:
+                    merged['contract_serial_id'] = incoming_serial_id
+                else:
+                    merged['contract_serial_id'] = self._validate_contract_serial(
+                        conn, existing['contract_id'], incoming_serial_id
+                    )
             merged = self.normalize_consistency(merged)
             self._validate_void_transition(merged)
             self._validate_invoice_allocation_constraints(
@@ -371,11 +400,25 @@ class PaymentPlanRepository:
             begin_immediate(conn)
             count = 0
             for plan_id in plan_ids:
+                contract_state = conn.execute(
+                    "SELECT c.status FROM payment_plans p "
+                    "JOIN contracts c ON c.id = p.contract_id "
+                    "WHERE p.id = ? AND (c.deleted_at = '' OR c.deleted_at IS NULL)",
+                    (plan_id,),
+                ).fetchone()
+                if contract_state and contract_state['status'] == 'void':
+                    raise ValueError('已作废合同不能确认付款计划')
                 where = 'id = ? AND confirm_status = ?'
                 params = [plan_id, 'pending']
                 if contract_id is not None:
                     where += ' AND contract_id = ?'
                     params.append(contract_id)
+                where += (
+                    " AND EXISTS (SELECT 1 FROM contracts c "
+                    "WHERE c.id = payment_plans.contract_id "
+                    "AND c.status != 'void' "
+                    "AND (c.deleted_at = '' OR c.deleted_at IS NULL))"
+                )
                 cur = conn.execute(
                     "UPDATE payment_plans SET confirm_status = 'confirmed', "
                     f"updated_at = ? WHERE {where}",
@@ -393,13 +436,17 @@ class PaymentPlanRepository:
             prepared = []
             for plan_id in plan_ids:
                 row = conn.execute(
-                    'SELECT * FROM payment_plans WHERE id = ?',
+                    "SELECT p.*, c.status AS contract_status "
+                    "FROM payment_plans p JOIN contracts c ON c.id = p.contract_id "
+                    "WHERE p.id = ? AND (c.deleted_at = '' OR c.deleted_at IS NULL)",
                     (plan_id,),
                 ).fetchone()
                 if not row:
                     raise ValueError('付款计划不存在')
                 if row['confirm_status'] != 'confirmed':
                     raise ValueError('只有已确认的付款计划可以批量登记付款')
+                if row['contract_status'] == 'void':
+                    raise ValueError('已作废合同不能登记付款')
                 if row['payment_status'] == 'paid':
                     continue
                 plan = self.row_to_dict(row)

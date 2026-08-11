@@ -24,10 +24,10 @@ class ContractSerialRepository:
         start = contract['coverage_start']
         end = contract['coverage_end']
         if start is None or end is None:
-            raise ValueError('请先维护合同覆盖起始号和结束号')
+            raise ValueError('请先维护合同起始发次和结束发次')
         start, end = int(start), int(end)
         if start <= 0 or end < start:
-            raise ValueError('合同覆盖号段无效')
+            raise ValueError('合同发次范围无效')
         if end - start + 1 > MAX_SERIALS_PER_CONTRACT:
             raise ValueError(f'单个合同最多维护 {MAX_SERIALS_PER_CONTRACT} 个编号')
         return start, end
@@ -112,13 +112,13 @@ class ContractSerialRepository:
                 try:
                     serial_id = int(entry.get('id'))
                 except (TypeError, ValueError) as exc:
-                    raise ValueError('合同内编号记录无效') from exc
+                    raise ValueError('发次记录无效') from exc
                 if serial_id in seen:
-                    raise ValueError('合同内编号记录重复')
+                    raise ValueError('发次记录重复')
                 seen.add(serial_id)
                 amount_minor = to_minor(entry.get('amount'))
                 if amount_minor is not None and amount_minor < 0:
-                    raise ValueError('本编号金额不能为负数')
+                    raise ValueError('本发金额不能为负数')
                 remark = limit_text(str(entry.get('remark') or '').strip(), 500)
                 cur = conn.execute(
                     """
@@ -129,13 +129,13 @@ class ContractSerialRepository:
                     (amount_minor, remark, now, serial_id, contract_id),
                 )
                 if cur.rowcount == 0:
-                    raise ValueError('合同内编号不存在或不属于当前合同')
+                    raise ValueError('发次不存在或不属于当前合同')
         return len(entries)
 
     def set_bulk_amount(self, contract_id, amount, *, blank_only=True):
         amount_minor = to_minor(amount, allow_none=False)
         if amount_minor < 0:
-            raise ValueError('本编号金额不能为负数')
+            raise ValueError('本发金额不能为负数')
         blank_clause = ' AND amount_minor IS NULL' if blank_only else ''
         with self.get_conn() as conn:
             cur = conn.execute(

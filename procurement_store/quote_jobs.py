@@ -2,7 +2,10 @@
 
 import json
 
+from database.connection_factory import begin_immediate
 from utils.money import SQLITE_MAX_INTEGER
+
+from . import project_components
 
 
 def _quote_is_award_locked(conn, quote_id):
@@ -128,6 +131,10 @@ def mark_mapping_job_confirmed(get_conn, now_func, job_id):
 def confirm_import_job(get_conn, audit, now_func, job_id):
     now = now_func()
     with get_conn() as conn:
+        # Serialize the status check, project-file version allocation, and
+        # quote creation.  Concurrent confirmations then observe a committed
+        # job state instead of both acting on the same parsed snapshot.
+        begin_immediate(conn)
         job_row = conn.execute(
             'SELECT * FROM quote_import_jobs WHERE id = ?', (job_id,)
         ).fetchone()
@@ -150,14 +157,17 @@ def confirm_import_job(get_conn, audit, now_func, job_id):
 
         payload = json.loads(job['payload_json'])
         header = payload['header']
-        cur = conn.execute(
-            """INSERT INTO project_files
-               (project_id, file_type, relative_path, original_name, sha256, size_bytes, version, created_at)
-               VALUES (?, 'supplier_quote', ?, ?, ?, ?, 1, ?)""",
-            (job['project_id'], job['relative_path'], job['original_name'], job['file_sha256'],
-             int(payload.get('size_bytes') or 0), now),
+        file_id = project_components.register_project_file(
+            get_conn,
+            now_func,
+            job['project_id'],
+            'supplier_quote',
+            job['relative_path'],
+            original_name=job['original_name'],
+            sha256=job['file_sha256'],
+            size_bytes=int(payload.get('size_bytes') or 0),
+            connection=conn,
         )
-        file_id = cur.lastrowid
         cur = conn.execute(
             """INSERT INTO supplier_quotes
                (project_id, supplier_id, quote_round, quote_date, quote_valid_until,

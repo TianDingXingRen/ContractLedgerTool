@@ -34,8 +34,10 @@ def money_column_numbers(columns):
 
 PAYMENT_PLAN_COLUMNS = (
     ColumnDefinition('序号', 6),
-    ColumnDefinition('所属项目', 22),
-    ColumnDefinition('覆盖范围', 16),
+    ColumnDefinition('项目名称', 22),
+    ColumnDefinition('所属分系统', 18),
+    ColumnDefinition('所属发次', 14),
+    ColumnDefinition('发次范围', 16),
     ColumnDefinition('合同编号', 18),
     ColumnDefinition('合同名称', 26),
     ColumnDefinition('对方单位', 24),
@@ -51,8 +53,9 @@ PAYMENT_PLAN_COLUMNS = (
 
 CONTRACT_COLUMNS = (
     ColumnDefinition('序号', 6),
-    ColumnDefinition('所属项目', 22),
-    ColumnDefinition('覆盖范围', 16),
+    ColumnDefinition('项目名称', 22),
+    ColumnDefinition('所属分系统', 18),
+    ColumnDefinition('发次范围', 16),
     ColumnDefinition('合同编号', 18),
     ColumnDefinition('合同名称', 26),
     ColumnDefinition('对方单位', 24),
@@ -65,7 +68,7 @@ CONTRACT_COLUMNS = (
 )
 
 MONTHLY_BASE_COLUMNS = (
-    ColumnDefinition('火箭发次\n（项目名称）', 15.83203125),
+    ColumnDefinition('火箭发次', 15.83203125),
     ColumnDefinition('合同编号', 12.08203125),
     ColumnDefinition('合同名称', 10.25),
     ColumnDefinition('甲方', 7.75),
@@ -86,6 +89,7 @@ MONTHLY_TAIL_COLUMNS = (
 
 MONTHLY_SUMMARY_COLUMNS = (
     ColumnDefinition('项目', 21.75),
+    ColumnDefinition('所属分系统', 19.75),
     ColumnDefinition('{month}计划付款合计', 28.08203125, MONEY_FORMAT),
     ColumnDefinition('本月计划付款', 22.08203125, MONEY_FORMAT),
     ColumnDefinition('上月已做计划未付款', 27.58203125, MONEY_FORMAT),

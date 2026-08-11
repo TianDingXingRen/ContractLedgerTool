@@ -110,6 +110,50 @@ def test_quote_import_and_quote_queries_match_public_wrappers(tmp_db):
         raise AssertionError('confirmed quote file hash should not be imported twice')
 
 
+def test_confirmed_quote_files_receive_monotonic_project_versions(tmp_db):
+    import procurement_store
+
+    procurement_store.init_db()
+    project_id, supplier_id, item_id = _project_with_supplier_and_item(
+        procurement_store
+    )
+
+    quote_ids = []
+    for quote_round in (1, 2):
+        job_id = procurement_store.create_import_job({
+            'project_id': project_id,
+            'supplier_id': supplier_id,
+            'quote_round': quote_round,
+            'original_name': f'quote-{quote_round}.xlsx',
+            'relative_path': (
+                f'procurement/QJ-001/quotes/quote-{quote_round}.xlsx'
+            ),
+            'file_sha256': f'quote-hash-{quote_round}',
+            'parser_version': 'test',
+            'payload': _quote_payload(item_id),
+            'errors': [],
+            'warnings': [],
+        })
+        quote_ids.append(procurement_store.confirm_import_job(job_id))
+
+    files = sorted(
+        (
+            row for row in procurement_store.list_project_files(project_id)
+            if row['file_type'] == 'supplier_quote'
+        ),
+        key=lambda row: row['version'],
+    )
+    assert [row['version'] for row in files] == [1, 2]
+    assert [row['relative_path'] for row in files] == [
+        'procurement/QJ-001/quotes/quote-1.xlsx',
+        'procurement/QJ-001/quotes/quote-2.xlsx',
+    ]
+    assert [
+        procurement_store.get_quote(quote_id)['original_file_id']
+        for quote_id in quote_ids
+    ] == [row['id'] for row in files]
+
+
 def test_quote_mapping_jobs_match_public_wrappers(tmp_db):
     import ledger_store
     import procurement_store

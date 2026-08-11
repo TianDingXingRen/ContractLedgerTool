@@ -8,14 +8,28 @@ from utils import field_utils
 from utils.generation_utils import has_payment_content
 from utils.security import (
     MAX_PLAN_ROWS,
+    MAX_SUBSYSTEM_NAME_LENGTH,
     MAX_TEXT_VALUE_LENGTH,
     limit_text,
 )
 
 
+_MAX_SQLITE_INTEGER = (1 << 63) - 1
+
+
 def payment_filter_args(form_or_args):
+    raw_contract_id = str(
+        form_or_args.get('contract_id', '') or ''
+    ).strip()
+    try:
+        contract_id = int(raw_contract_id) if raw_contract_id else ''
+    except (TypeError, ValueError):
+        contract_id = ''
+    if contract_id != '' and not 1 <= contract_id <= _MAX_SQLITE_INTEGER:
+        contract_id = ''
     return {
         'view': str(form_or_args.get('view', 'work') or 'work').strip(),
+        'contract_id': contract_id,
         'confirm_status': str(
             form_or_args.get('confirm_status', '') or ''
         ).strip(),
@@ -55,9 +69,9 @@ def contract_serial_entries(form, max_rows):
     try:
         count = int(form.get('serial_count', 0))
     except (TypeError, ValueError) as exc:
-        raise ValueError('合同内编号数量无效') from exc
+        raise ValueError('发次数量无效') from exc
     if count < 0 or count > max_rows:
-        raise ValueError(f'合同内编号数量不能超过 {max_rows}')
+        raise ValueError(f'发次数量不能超过 {max_rows}')
     return [
         {
             'id': form.get(f'serial_{idx}_id', ''),
@@ -217,10 +231,14 @@ def payment_row_from_form(idx, form):
     try:
         contract_serial_id = int(contract_serial_raw) if contract_serial_raw else None
     except (TypeError, ValueError) as exc:
-        raise ValueError('合同内编号无效') from exc
+        raise ValueError('所属发次无效') from exc
     return {
         'id': str(form.get(prefix + 'id', '') or '').strip(),
         'contract_serial_id': contract_serial_id,
+        'subsystem_name': limit_text(
+            str(form.get(prefix + 'subsystem_name', '') or '').strip(),
+            MAX_SUBSYSTEM_NAME_LENGTH,
+        ),
         'phase_name': limit_text(str(form.get(prefix + 'phase_name', '') or '').strip(), 120),
         'payment_type': str(form.get(prefix + 'payment_type', 'conditional') or 'conditional').strip(),
         'trigger_event': limit_text(str(form.get(prefix + 'trigger_event', '') or '').strip(), 200),

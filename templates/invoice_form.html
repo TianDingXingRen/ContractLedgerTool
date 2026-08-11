@@ -3,7 +3,7 @@
 {% block breadcrumb %}发票管理 / {{ '编辑' if invoice and invoice.id else '登记' }}发票{% endblock %}
 {% block content %}
 {% set allocations = invoice.allocations if invoice and invoice.allocations else [{'contract_id': selected_contract_id or '', 'production_notice_id':'', 'payment_plan_id':'', 'allocated_amount':'', 'remark':''}] %}
-{% set allocation_rows = allocations|length + 2 %}
+{% set allocation_rows = [allocations|length + 2, 100]|min %}
 <div class="ui-page">
   {% if error %}<div class="ui-alert" role="alert">{{ error }}</div>{% endif %}
   <header class="ui-page-header"><div><h1 class="ui-page-title">{{ '编辑进项发票' if invoice and invoice.id else '登记进项发票' }}</h1><p class="ui-page-subtitle">填写票面信息，并按实际业务关系分摊到合同、投产通知和付款计划</p></div><div class="ui-page-actions"><a class="ui-button secondary" href="{{ url_for('invoices.invoice_detail', invoice_id=invoice.id) if invoice and invoice.id else url_for('invoices.invoice_list') }}">取消并返回</a></div></header>

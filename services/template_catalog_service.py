@@ -6,7 +6,9 @@ import os
 import uuid
 from dataclasses import dataclass
 
+import ledger_store
 import template_def
+from services.contract_editor_service import build_draft_revision
 from services.contract_preview_service import editor_preview_model
 from services.office_parse_service import generate_docx_isolated
 from runtime.flask_paths import current_runtime_paths
@@ -54,8 +56,11 @@ class TemplateEditorView:
     fields: list
     template_name: str
     template_filename: str
+    template_revision: str
+    draft_scope: str
     preview_blocks: list
     preview_warnings: list
+    project_names: list
 
 
 @dataclass(frozen=True)
@@ -110,8 +115,11 @@ def open_template_editor(name):
         fields=fields,
         template_name=definition.name,
         template_filename=os.path.basename(path),
+        template_revision=build_draft_revision(path, fields),
+        draft_scope='template::',
         preview_blocks=preview_model.get('blocks', []),
         preview_warnings=preview_model.get('warnings', []),
+        project_names=ledger_store.list_project_names(),
     )
 
 

@@ -2,17 +2,22 @@
 'use strict';
 
 document.addEventListener('DOMContentLoaded', function() {
-  fields.filter(function(field) { return field.field_type === 'table'; }).forEach(function(field) {
-    initTable(field.id);
-  });
-  recalcAllFields();
-  updateProgress();
-  bindEditorFilters();
-  bindAssistPanel();
-  setEditorFilter('all');
   draftRestoring = true;
-  restoreDraft();
-  draftRestoring = false;
+  try {
+    fields.filter(function(field) { return field.field_type === 'table'; }).forEach(function(field) {
+      initTable(field.id);
+    });
+    recalcAllFields();
+    updateProgress();
+    bindEditorFilters();
+    bindAssistPanel();
+    setEditorFilter('all');
+    restoreDraft();
+  } finally {
+    // Table construction calls updateTableData(), so the restoring guard must
+    // cover initialization as well as loading a saved draft.
+    draftRestoring = false;
+  }
   bindDraftAutoSave();
 });
 

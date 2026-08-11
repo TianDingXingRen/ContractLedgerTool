@@ -521,8 +521,10 @@
 
     function updateProgress() {
         let filled = 0;
+        let fillableTotal = 0;
         document.querySelectorAll('.field-item').forEach(item => {
             if (item.classList.contains('field-calc')) return;
+            fillableTotal++;
             if (item.querySelector('.table-editor')) {
                 const tableFilled = tableFieldHasContent(item.id.replace('field_', ''));
                 item.dataset.filled = tableFilled ? '1' : '0';
@@ -534,7 +536,10 @@
             if (isFilled) filled++;
         });
         filledCount.textContent = filled;
-        const pct = totalFields > 0 ? Math.round((filled / totalFields) * 100) : 0;
+        if (filledCount.nextSibling && filledCount.nextSibling.nodeType === 3) {
+            filledCount.nextSibling.nodeValue = '/' + fillableTotal;
+        }
+        const pct = fillableTotal > 0 ? Math.round((filled / fillableTotal) * 100) : 100;
         progressFill.style.width = pct + '%';
         var progress = document.getElementById('editorProgress');
         var progressPercent = document.getElementById('progressPercent');
@@ -832,16 +837,13 @@
         const columns = columnsData[fid] || [];
         const context = {};
         tr.querySelectorAll('.table-cell-input').forEach(inp => {
-            const val = parseFloat(inp.value) || 0;
-            context[inp.dataset.colKey] = val;
+            context[inp.dataset.colKey] = inp.value || 0;
         });
+        const calculated = window.ContractFormulaEngine.calculateTableRow(columns, context);
         tr.querySelectorAll('[data-formula]').forEach(td => {
-            const formula = td.dataset.formula;
-            if (!formula) return;
-            try {
-                const result = safeEval(formula, context);
-                td.textContent = result.toFixed(2);
-            } catch(e) { td.textContent = '?'; }
+            td.textContent = calculated[td.dataset.colKey] == null
+                ? '?'
+                : calculated[td.dataset.colKey];
         });
     }
 
@@ -900,10 +902,10 @@
         }
         if (startCol < 0) return;
 
-        // 跳过公式列
+        // 跳过公式列；粘贴的下一格映射到下一可编辑列，而不是静默丢弃。
         const editableCols = [];
         columns.forEach(function(col, ci) {
-            if (col.field_type !== 'calculated') editableCols.push(ci);
+            if (ci >= startCol && col.field_type !== 'calculated') editableCols.push(ci);
         });
 
         // 确保有足够的行
@@ -919,9 +921,8 @@
             const tr2 = tbody.querySelector('tr[data-row-index="' + rowIdx + '"]');
             if (!tr2) continue;
             for (var dc = 0; dc < data[dr].length; dc++) {
-                const colIdx = startCol + dc;
-                if (colIdx >= columns.length) break;
-                if (columns[colIdx].field_type === 'calculated') continue;
+                const colIdx = editableCols[dc];
+                if (colIdx === undefined) break;
                 const inp = tr2.querySelector('.table-cell-input[data-col-key="' + columns[colIdx].key + '"]');
                 if (inp) {
                     inp.value = data[dr][dc];
@@ -962,9 +963,6 @@
         return result;
     }
 
-    // ── Safe eval (from formula-engine.js) ──
-    var safeEval = window.ContractFormulaEngine.safeEval;
-
     // ── Save defaults ──
     document.getElementById('saveDefaultsBtn').addEventListener('click', function() {
         var btn = this;
@@ -985,6 +983,9 @@
 
     var pendingPreflight = null;
     var preflightReturnFocus = null;
+    var generationInFlight = false;
+    var generationButtonSnapshots = [];
+    var activeGenerateButton = null;
 
     function announceEditorStatus(message) {
         var status = document.getElementById('editorStatusLive');
@@ -1052,24 +1053,60 @@
             : '生成前检查完成，有 ' + warnings.length + ' 项提醒，请确认。');
     }
 
-    function setGenerating(btn, text) {
-        btn.disabled = true;
-        btn.setAttribute('aria-disabled', 'true');
-        btn.innerHTML = text;
+    function setGenerateButtonContent(button, content) {
+        if (!button) return;
+        if (button.tagName === 'INPUT') button.value = content.replace(/<[^>]+>/g, '');
+        else button.innerHTML = content;
     }
 
-    function resetGenerateButton(btn, origText) {
-        btn.disabled = false;
-        btn.removeAttribute('aria-disabled');
-        btn.innerHTML = origText;
+    function beginGenerationAttempt(form, submitter, text) {
+        if (generationInFlight) return false;
+        generationInFlight = true;
+        activeGenerateButton = submitter || document.getElementById('generateBtn');
+        generationButtonSnapshots = Array.from(
+            form.querySelectorAll('button[type="submit"], input[type="submit"]')
+        ).map(function(button) {
+            var snapshot = {
+                button: button,
+                disabled: button.disabled,
+                hadAriaDisabled: button.hasAttribute('aria-disabled'),
+                ariaDisabled: button.getAttribute('aria-disabled'),
+                content: button.tagName === 'INPUT' ? button.value : button.innerHTML
+            };
+            button.disabled = true;
+            button.setAttribute('aria-disabled', 'true');
+            return snapshot;
+        });
+        setGenerateButtonContent(activeGenerateButton, text);
+        return true;
     }
 
-    function performGeneration(form, actionUrl, btn, origText, overlay) {
+    function setGenerationStatus(text) {
+        setGenerateButtonContent(activeGenerateButton, text);
+    }
+
+    function finishGenerationAttempt() {
+        generationButtonSnapshots.forEach(function(snapshot) {
+            snapshot.button.disabled = snapshot.disabled;
+            if (snapshot.hadAriaDisabled) {
+                snapshot.button.setAttribute('aria-disabled', snapshot.ariaDisabled);
+            } else {
+                snapshot.button.removeAttribute('aria-disabled');
+            }
+            if (snapshot.button.tagName === 'INPUT') snapshot.button.value = snapshot.content;
+            else snapshot.button.innerHTML = snapshot.content;
+        });
+        generationButtonSnapshots = [];
+        activeGenerateButton = null;
+        generationInFlight = false;
+    }
+
+    function performGeneration(form, actionUrl, overlay) {
         Object.keys(columnsData).forEach(function(fid) {
             try { syncColumnsInput(parseInt(fid)); } catch(e) {}
         });
         var formData = new FormData(form);
-        setGenerating(btn, '<span class="loading loading-spinner"></span> 生成中…');
+        setGenerationStatus('<span class="loading loading-spinner"></span> 生成中…');
         overlay.classList.add('active');
         document.getElementById('editorForm').setAttribute('aria-busy', 'true');
         announceEditorStatus('正在生成合同文档。');
@@ -1110,7 +1147,7 @@
             document.body.appendChild(a); a.click(); a.remove();
             overlay.classList.remove('active');
             document.getElementById('editorForm').removeAttribute('aria-busy');
-            resetGenerateButton(btn, origText);
+            finishGenerationAttempt();
             if (result.genErrors) {
                 showToast('部分合同生成出错：' + result.genErrors, 'error');
             } else if (result.ledgerError) {
@@ -1124,7 +1161,7 @@
         .catch(function(err) {
             overlay.classList.remove('active');
             document.getElementById('editorForm').removeAttribute('aria-busy');
-            resetGenerateButton(btn, origText);
+            finishGenerationAttempt();
             showToast(err.message || '生成失败', 'error');
             announceEditorStatus('生成失败：' + (err.message || '未知错误'));
             console.error(err);
@@ -1134,29 +1171,37 @@
     // ── Form submit ──
     document.getElementById('editorForm').addEventListener('submit', function(e) {
         e.preventDefault();
+        if (generationInFlight) return;
         var overlay = document.getElementById('loadingOverlay');
-        var btn = document.getElementById('generateBtn');
-        var origText = btn.innerHTML;
+        var btn = e.submitter || document.getElementById('generateBtn');
         preflightReturnFocus = document.activeElement;
 
         var projectInput = document.getElementById('projectName');
         var coverageStartInput = document.getElementById('coverageStart');
         var coverageEndInput = document.getElementById('coverageEnd');
+        var coverageModeInput = document.querySelector('input[name="coverage_mode"]:checked');
+        var coverageMode = coverageModeInput ? coverageModeInput.value : '';
         var projectName = projectInput ? projectInput.value.trim() : '';
         var coverageStart = coverageStartInput ? coverageStartInput.value.trim() : '';
         var coverageEnd = coverageEndInput ? coverageEndInput.value.trim() : '';
-        if ((coverageStart && !coverageEnd) || (!coverageStart && coverageEnd)) {
-            showToast('覆盖范围的起始号和结束号需要同时填写', 'error');
+        if (!coverageMode) {
+            showToast('请选择填写数字范围或不适用', 'error');
+            var firstCoverageMode = document.getElementById('coverageModeRange');
+            if (firstCoverageMode) firstCoverageMode.focus();
+            return;
+        }
+        if (coverageMode === 'range' && (!coverageStart || !coverageEnd)) {
+            showToast('填写数字范围时，起始发次和结束发次均为必填', 'error');
             (coverageStart ? coverageEndInput : coverageStartInput).focus();
             return;
         }
-        if ((coverageStart || coverageEnd) && !projectName) {
-            showToast('填写覆盖范围前，请先填写所属项目', 'error');
+        if (coverageMode === 'range' && !projectName) {
+            showToast('填写发次范围前，请先填写项目名称', 'error');
             projectInput.focus();
             return;
         }
-        if (coverageStart && coverageEnd && Number(coverageStart) > Number(coverageEnd)) {
-            showToast('覆盖范围起始号不能大于结束号', 'error');
+        if (coverageMode === 'range' && Number(coverageStart) > Number(coverageEnd)) {
+            showToast('起始发次不能大于结束发次', 'error');
             coverageStartInput.focus();
             return;
         }
@@ -1200,7 +1245,11 @@
         // Batch mode: POST to /generate-batch, handle zip
         var isBatch = document.getElementById('batchToggle') && document.getElementById('batchToggle').checked;
         var actionUrl = generationActionUrl(isBatch, form);
-        setGenerating(btn, '<span class="loading loading-spinner"></span> 检查中…');
+        if (!beginGenerationAttempt(
+            form,
+            btn,
+            '<span class="loading loading-spinner"></span> 检查中…'
+        )) return;
 
         runPreflight(form, isBatch)
             .then(function(payload) {
@@ -1210,18 +1259,18 @@
                     pendingPreflight = blocking.length ? null : {
                         form: form,
                         actionUrl: actionUrl,
-                        btn: btn,
-                        origText: origText,
                         overlay: overlay
                     };
                     showPreflightPanel(payload);
-                    resetGenerateButton(btn, origText);
+                    // Warning confirmation owns the single-flight lock until
+                    // confirm/close. Blocking issues release it for correction.
+                    if (blocking.length) finishGenerationAttempt();
                     return;
                 }
-                performGeneration(form, actionUrl, btn, origText, overlay);
+                performGeneration(form, actionUrl, overlay);
             })
             .catch(function(err) {
-                resetGenerateButton(btn, origText);
+                finishGenerationAttempt();
                 showToast(err.message || '生成前复核失败', 'error');
                 console.error(err);
             });
@@ -1232,12 +1281,13 @@
         document.getElementById('preflightPanel').classList.add('hidden');
         var pending = pendingPreflight;
         pendingPreflight = null;
-        performGeneration(pending.form, pending.actionUrl, pending.btn, pending.origText, pending.overlay);
+        performGeneration(pending.form, pending.actionUrl, pending.overlay);
     });
 
     document.getElementById('preflightCloseBtn').addEventListener('click', function() {
         pendingPreflight = null;
         document.getElementById('preflightPanel').classList.add('hidden');
+        if (generationInFlight) finishGenerationAttempt();
         if (preflightReturnFocus && typeof preflightReturnFocus.focus === 'function') {
             preflightReturnFocus.focus();
         }
@@ -1256,9 +1306,13 @@
         }
         currentGeneratedUrl = blobUrl;
 
-        // 清除草稿（生成成功后无需保留）
+        // 部分批量失败或台账写入失败时保留当前输入，便于修正后重试。
         if (window.ContractEditor.draft) {
-            window.ContractEditor.draft.clear();
+            if (result.genErrors || result.ledgerError) {
+                window.ContractEditor.draft.preserve();
+            } else {
+                window.ContractEditor.draft.clear();
+            }
         }
 
         const panel = document.getElementById('generationResultPanel');
@@ -1313,40 +1367,3 @@
     });
 
     updateProgress();
-
-    // ── Tab key: 在字段间跳转 ──
-    document.addEventListener('keydown', function(e) {
-        if (e.key !== 'Tab') return;
-        var active = document.activeElement;
-        if (!active || !active.closest) return;
-        var isFieldInput = active.closest('.field-item') || active.closest('.table-cell-input') ||
-                           active.closest('textarea') || active.closest('select');
-        if (!isFieldInput) return;
-
-        var allInputs = [];
-        document.querySelectorAll('.field-item').forEach(function(item) {
-            if (item.classList.contains('field-calc')) return;
-            if (item.classList.contains('hidden')) return;
-            var inputs = item.querySelectorAll('input:not([type="hidden"]):not([readonly]), textarea, select');
-            inputs.forEach(function(inp) { allInputs.push(inp); });
-        });
-        if (allInputs.length === 0) return;
-
-        var idx = allInputs.indexOf(active);
-        if (idx < 0) return;
-
-        e.preventDefault();
-        var next;
-        if (e.shiftKey) {
-            next = idx > 0 ? allInputs[idx - 1] : allInputs[allInputs.length - 1];
-        } else {
-            next = idx < allInputs.length - 1 ? allInputs[idx + 1] : allInputs[0];
-        }
-        next.focus();
-        if (next.closest('.table-field-wrap')) {
-            next.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-        if (next.closest('.field-item')) {
-            next.closest('.field-item').scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-    });

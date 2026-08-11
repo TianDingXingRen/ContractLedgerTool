@@ -1,5 +1,9 @@
 """Project item, supplier, and file persistence helpers."""
 
+from contextlib import nullcontext
+
+from database.connection_factory import begin_immediate
+
 
 def list_project_items(get_conn, project_id):
     with get_conn() as conn:
@@ -133,11 +137,16 @@ def update_project_supplier(
         before = dict(row)
         conn.execute(
             """UPDATE project_suppliers SET supplier_name = ?, normalized_name = ?,
-                      contact_person = ?, contact_phone = ?, email = ?, remark = ?, updated_at = ?
+                      contact_person = ?, contact_phone = ?, email = ?,
+                      direct_support_experience = ?, aerospace_support_experience = ?,
+                      qualifications = ?, remark = ?, updated_at = ?
                WHERE id = ?""",
             (name, normalize_name(name), data.get('contact_person') or '',
              data.get('contact_phone') or '', data.get('email') or '',
-             data.get('remark') or '', now_func(), supplier_id),
+             data.get('direct_support_experience') or '',
+             data.get('aerospace_support_experience') or '',
+             data.get('qualifications') or '', data.get('remark') or '',
+             now_func(), supplier_id),
         )
         audit(conn, 'project_supplier', supplier_id, 'update', before=before, after=data)
 
@@ -151,10 +160,14 @@ def add_project_supplier(
         cur = conn.execute(
             """INSERT INTO project_suppliers
                (project_id, supplier_name, normalized_name, contact_person, contact_phone,
-                email, invite_status, quote_status, remark, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                email, direct_support_experience, aerospace_support_experience,
+                qualifications, invite_status, quote_status, remark, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (project_id, name, normalize_name(name), data.get('contact_person') or '',
              data.get('contact_phone') or '', data.get('email') or '',
+             data.get('direct_support_experience') or '',
+             data.get('aerospace_support_experience') or '',
+             data.get('qualifications') or '',
              data.get('invite_status') or 'pending', data.get('quote_status') or 'pending',
              data.get('remark') or '', now, now),
         )
@@ -204,9 +217,11 @@ def delete_project_supplier(get_conn, audit, project_id, supplier_id):
 
 def register_project_file(
     get_conn, now_func, project_id, file_type, relative_path,
-    original_name='', sha256='', size_bytes=0,
+    original_name='', sha256='', size_bytes=0, *, connection=None,
 ):
-    with get_conn() as conn:
+    manager = nullcontext(connection) if connection is not None else get_conn()
+    with manager as conn:
+        begin_immediate(conn)
         existing = conn.execute(
             'SELECT id FROM project_files WHERE project_id = ? AND file_type = ? AND relative_path = ?',
             (project_id, file_type, relative_path),

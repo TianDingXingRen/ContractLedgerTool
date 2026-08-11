@@ -239,9 +239,9 @@ def test_contract_export_writes_untrusted_formula_as_text(tmp_path):
     workbook = load_workbook(output, data_only=False)
     try:
         sheet = workbook.active
-        assert sheet.cell(4, 4).data_type == 's'
-        assert sheet.cell(4, 4).value.startswith("'=")
         assert sheet.cell(4, 5).data_type == 's'
+        assert sheet.cell(4, 5).value.startswith("'=")
+        assert sheet.cell(4, 6).data_type == 's'
     finally:
         workbook.close()
 

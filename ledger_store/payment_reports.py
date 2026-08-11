@@ -92,14 +92,17 @@ def _plan_condition(plan):
 
 def _summarize_projects(report_rows):
     summaries = []
-    by_project = defaultdict(list)
+    by_project_subsystem = defaultdict(list)
     for row in report_rows:
-        by_project[row['project_name']].append(row)
-    for project_name, project_rows in by_project.items():
+        by_project_subsystem[
+            (row['project_name'], row['subsystem_name'])
+        ].append(row)
+    for (project_name, subsystem_name), project_rows in by_project_subsystem.items():
         current_minor = sum(row['current_month_minor'] for row in project_rows)
         previous_minor = sum(row['previous_unpaid_minor'] for row in project_rows)
         summaries.append({
             'project_name': project_name,
+            'subsystem_name': subsystem_name,
             'current_month_minor': current_minor,
             'previous_unpaid_minor': previous_minor,
             'planned_total_minor': current_minor + previous_minor,
@@ -111,6 +114,44 @@ def _summarize_projects(report_rows):
     return summaries
 
 
+def _group_report_plans(plans, month_end):
+    """Normalize grouping keys and count actionable serial assignments."""
+    grouped = defaultdict(list)
+    unassigned_serial_count = 0
+    for source_plan in plans:
+        plan = dict(source_plan)
+        plan['effective_subsystem_name'] = (
+            str(plan.get('subsystem_name') or '').strip()
+            or str(plan.get('contract_subsystem_name') or '').strip()
+            or '未填写分系统'
+        )
+        due_minor = plan.get('due_amount_minor')
+        paid_minor = plan.get('paid_amount_minor') or 0
+        outstanding = max((due_minor or 0) - paid_minor, 0)
+        due_date = str(plan.get('due_date') or '')
+        is_relevant_unpaid = bool(
+            outstanding and (not due_date or due_date <= month_end)
+        )
+        has_active_serial = (
+            plan.get('contract_serial_id') is not None
+            and plan.get('serial_status') == 'active'
+        )
+        if (
+            not plan.get('coverage_not_applicable')
+            and not has_active_serial
+            and is_relevant_unpaid
+        ):
+            unassigned_serial_count += 1
+        grouped[
+            (
+                plan['contract_id'],
+                plan['effective_subsystem_name'],
+                plan['contract_serial_id'],
+            )
+        ].append(plan)
+    return grouped, unassigned_serial_count
+
+
 def build_monthly_payment_report(get_conn, row_to_dict, report_month):
     report_month = normalize_report_month(report_month)
     month_start, month_end = _month_bounds(report_month)
@@ -119,7 +160,9 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
             """
             SELECT p.*,
                    c.contract_no, c.title AS contract_title, c.counterparty,
-                   c.owner, c.project_name, c.values_json,
+                   c.owner, c.project_name, c.coverage_not_applicable,
+                   c.subsystem_name AS contract_subsystem_name,
+                   c.values_json,
                    s.serial_no, s.amount_minor AS serial_amount_minor,
                    s.status AS serial_status
               FROM payment_plans p
@@ -127,6 +170,7 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
               LEFT JOIN contract_serials s ON s.id = p.contract_serial_id
              WHERE p.confirm_status IN ('pending', 'confirmed')
                AND (c.deleted_at = '' OR c.deleted_at IS NULL)
+               AND c.status != 'void'
              ORDER BY c.project_name, c.id, s.serial_no,
                       COALESCE(p.due_date, '9999-12-31'), p.id
             """
@@ -139,24 +183,13 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
         'missing_due_amount_count': 0,
         'missing_serial_amount_count': 0,
     }
-    grouped = defaultdict(list)
-    for plan in plans:
-        due_minor = plan.get('due_amount_minor')
-        paid_minor = plan.get('paid_amount_minor') or 0
-        outstanding = max((due_minor or 0) - paid_minor, 0)
-        due_date = str(plan.get('due_date') or '')
-        is_relevant_unpaid = bool(outstanding and (not due_date or due_date <= month_end))
-        if (
-            plan.get('contract_serial_id') is None
-            or plan.get('serial_status') != 'active'
-        ):
-            if is_relevant_unpaid:
-                diagnostics['unassigned_serial_count'] += 1
-        grouped[(plan['contract_id'], plan['contract_serial_id'])].append(plan)
+    grouped, diagnostics['unassigned_serial_count'] = _group_report_plans(
+        plans, month_end
+    )
 
     report_rows = []
     missing_serial_amount_ids = set()
-    for (_contract_id, serial_id), serial_plans in grouped.items():
+    for (_contract_id, subsystem_name, serial_id), serial_plans in grouped.items():
         current_minor = 0
         previous_minor = 0
         current_plans = []
@@ -183,8 +216,13 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
 
         planned_minor = current_minor + previous_minor
         first = serial_plans[0]
-        if first.get('serial_amount_minor') is None:
-            missing_serial_amount_ids.add((_contract_id, serial_id))
+        if (
+            not first.get('coverage_not_applicable')
+            and first.get('serial_amount_minor') is None
+        ):
+            missing_serial_amount_ids.add(
+                (_contract_id, subsystem_name, serial_id)
+            )
         metadata = _metadata_text(first, serial_plans)
         planned_metadata = _metadata_text(
             first,
@@ -218,9 +256,13 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
             })
         report_rows.append({
             'project_name': first.get('project_name') or '未归类项目',
+            'subsystem_name': subsystem_name,
             'contract_serial_id': serial_id,
             'serial_no': first.get('serial_no'),
             'serial_amount_minor': first.get('serial_amount_minor'),
+            'coverage_not_applicable': bool(
+                first.get('coverage_not_applicable')
+            ),
             'contract_no': first.get('contract_no') or '',
             'contract_title': first.get('contract_title') or '',
             'party_a': _labeled_value(metadata, 'party_a'),
@@ -246,6 +288,7 @@ def build_monthly_payment_report(get_conn, row_to_dict, report_month):
     report_rows.sort(
         key=lambda row: (
             row['project_name'],
+            row['subsystem_name'],
             row['contract_no'],
             row['serial_no'] if row['serial_no'] is not None else 10**18,
         )
