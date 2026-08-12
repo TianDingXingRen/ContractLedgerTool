@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from database.connection_factory import begin_immediate
 
-from . import list_queries, money_fields
+from . import list_queries, money_fields, payment_plan_policy
 
 
 def effective_invoice_allocation_minor(conn, plan_id):
@@ -219,6 +219,9 @@ class PaymentPlanRepository:
                 plan_id = change.get('id')
                 if change.get('delete'):
                     if plan_id:
+                        payment_plan_policy.assert_can_delete(
+                            conn, plan_id, contract_id
+                        )
                         cur = conn.execute(
                             'DELETE FROM payment_plans WHERE id = ? AND contract_id = ?',
                             (plan_id, contract_id),
@@ -484,4 +487,8 @@ class PaymentPlanRepository:
             sql += ' AND contract_id = ?'
             params.append(contract_id)
         with self.get_conn() as conn:
-            conn.execute(sql, params)
+            begin_immediate(conn)
+            payment_plan_policy.assert_can_delete(
+                conn, plan_id, contract_id
+            )
+            return conn.execute(sql, params).rowcount

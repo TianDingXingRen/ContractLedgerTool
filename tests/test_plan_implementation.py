@@ -165,6 +165,33 @@ def test_table_formula_errors_block_preflight_and_generation(app, client):
     assert ledger_store.list_contracts(per_page=10)['total'] == 0
 
 
+def test_table_formulas_recalculate_forward_dependencies_and_ignore_stale_values():
+    columns = [
+        {
+            'key': 'total', 'label': '总计', 'field_type': 'calculated',
+            'formula': 'subtotal * 2', 'decimal_places': 2,
+        },
+        {'key': 'price', 'label': '单价', 'field_type': 'number'},
+        {
+            'key': 'subtotal', 'label': '小计', 'field_type': 'calculated',
+            'formula': 'price + 1', 'decimal_places': 2,
+        },
+    ]
+    fields = [{
+        'id': 0, 'key': 'items', 'label': '明细',
+        'field_type': 'table', 'columns': columns,
+    }]
+    values = {'items': [{
+        'price': '10',
+        'subtotal': '999999',
+        'total': '888888',
+    }]}
+
+    assert helpers.recalculate_table_fields(fields, values) == []
+    assert values['items'][0]['subtotal'] == '11.00'
+    assert values['items'][0]['total'] == '22.00'
+
+
 def test_contract_number_unique_and_batch_history(tmp_db):
     summary = {'contract_no': 'HT-001', 'title': '测试合同'}
     first_id = ledger_store.create_contract(summary, {}, 'a.docx')

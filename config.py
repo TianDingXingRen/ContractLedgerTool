@@ -20,6 +20,7 @@ CONFIG_DEFAULTS = {
         "/generate": [10, 60],
         "/generate-batch": [5, 60],
         "/template/upload-style": [20, 60],
+        "/backups/full/upload": [3, 60],
     },
     "RATE_LIMIT_DEFAULT": [30, 60],
     "RATE_LIMIT_GLOBAL": [120, 60],
@@ -57,6 +58,7 @@ class Config:
         '/generate': (10, 60),
         '/generate-batch': (5, 60),
         '/template/upload-style': (20, 60),
+        '/backups/full/upload': (3, 60),
     }
     RATE_LIMIT_DEFAULT = (30, 60)
     RATE_LIMIT_GLOBAL = (120, 60)       # 单个 IP 全局限制：(N次, M秒)

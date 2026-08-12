@@ -12,10 +12,12 @@ import logging
 import uuid
 from datetime import datetime
 
+import field_eval
 from utils.security import path_within as _path_within
 from utils.constants import FieldType
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+MAX_SAFE_FIELD_ID = (2 ** 53) - 1
 
 
 def _ensure_dir():
@@ -24,6 +26,48 @@ def _ensure_dir():
 
 class TemplateValidationError(Exception):
     pass
+
+
+def normalize_field_ids(fields):
+    """Migrate legacy field IDs to unique non-negative integers in-place.
+
+    Canonical decimal strings are preserved numerically for compatibility.
+    Missing, malformed and duplicate IDs receive the smallest available ID,
+    after reserving every usable legacy ID so normalization is deterministic.
+    """
+    if not isinstance(fields, list):
+        return fields
+
+    def legacy_integer(value):
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value if 0 <= value <= MAX_SAFE_FIELD_ID else None
+        if isinstance(value, str) and re.fullmatch(r'0|[1-9]\d*', value):
+            if len(value) > 16:
+                return None
+            parsed = int(value)
+            return parsed if parsed <= MAX_SAFE_FIELD_ID else None
+        return None
+
+    candidates = [
+        legacy_integer(field.get('id')) if isinstance(field, dict) else None
+        for field in fields
+    ]
+    reserved = {candidate for candidate in candidates if candidate is not None}
+    claimed = set()
+    next_id = 0
+    for field, candidate in zip(fields, candidates):
+        if not isinstance(field, dict):
+            continue
+        if candidate is not None and candidate not in claimed:
+            field['id'] = candidate
+            claimed.add(candidate)
+            continue
+        while next_id in reserved or next_id in claimed:
+            next_id += 1
+        field['id'] = next_id
+        claimed.add(next_id)
+        next_id += 1
+    return fields
 
 
 class TemplateDef:
@@ -35,6 +79,7 @@ class TemplateDef:
 
     def __init__(self, data=None):
         self.data = data or self._default()
+        normalize_field_ids(self.data.get('fields'))
         self._path = None
 
     @staticmethod
@@ -60,10 +105,6 @@ class TemplateDef:
         """从文件加载模板定义"""
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        # 确保所有字段都有 id（兼容手动创建/旧版模板）
-        for i, field in enumerate(data.get('fields', [])):
-            if 'id' not in field:
-                field['id'] = i
         obj = cls(data)
         obj._path = path
         return obj
@@ -71,6 +112,7 @@ class TemplateDef:
     def save(self, path=None):
         """保存模板定义到文件（自动备份旧版本）"""
         _ensure_dir()
+        normalize_field_ids(self.data.get('fields'))
         self._path = path or self._path or self._default_path()
         _backup_before_save(self._path)
         tmp = self._path + f'.tmp-{uuid.uuid4().hex}'
@@ -104,7 +146,20 @@ class TemplateDef:
             errors.append('fields 必须是数组')
         else:
             seen_keys = set()
+            seen_ids = set()
             for i, f in enumerate(self.data['fields']):
+                field_id = f.get('id')
+                if (
+                    not isinstance(field_id, int)
+                    or isinstance(field_id, bool)
+                    or field_id < 0
+                    or field_id > MAX_SAFE_FIELD_ID
+                ):
+                    errors.append(f'fields[{i}] id 必须是非负安全整数')
+                elif field_id in seen_ids:
+                    errors.append(f'fields[{i}] 字段 id 重复: {field_id}')
+                else:
+                    seen_ids.add(field_id)
                 key = f.get('key')
                 if not key:
                     errors.append(f'fields[{i}] 缺少 key')
@@ -147,6 +202,15 @@ class TemplateDef:
                                 errors.append(f'fields[{i}].columns[{ci}] select 类型缺少 options')
                             if col.get('field_type') == 'calculated' and not col.get('formula'):
                                 errors.append(f'fields[{i}].columns[{ci}] calculated 类型缺少 formula')
+                        if f.get('columns'):
+                            try:
+                                field_eval.sort_table_columns_by_dependency(
+                                    f.get('columns', [])
+                                )
+                            except field_eval.FormulaError as exc:
+                                errors.append(
+                                    f'fields[{i}] 表格公式依赖无效: {exc}'
+                                )
                 loc = f.get('location', {})
                 loc_type = loc.get('type')
                 if loc_type not in self.VALID_LOCATION_TYPES:
@@ -171,7 +235,6 @@ class TemplateDef:
 
         if not errors:
             try:
-                import field_eval
                 field_eval.sort_fields_by_dependency(self.data['fields'])
             except Exception as e:
                 errors.append(f'计算字段依赖无效: {e}')

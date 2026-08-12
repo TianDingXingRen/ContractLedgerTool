@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import zipfile
 
@@ -77,6 +78,42 @@ def test_full_backup_rejects_extreme_compression_ratio(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match='压缩比异常'):
         handover_service.validate_full_backup_package(package)
+
+
+def test_full_backup_rejects_archive_above_upload_contract(
+    tmp_path, monkeypatch
+):
+    package = tmp_path / 'oversize.zip'
+    with zipfile.ZipFile(package, 'w') as archive:
+        archive.writestr('manifest.json', b'{}')
+    monkeypatch.setattr(
+        handover_archive,
+        'MAX_FULL_PACKAGE_ARCHIVE_BYTES',
+        package.stat().st_size - 1,
+    )
+
+    with pytest.raises(ValueError, match='压缩文件过大'):
+        handover_service.validate_full_backup_package(package)
+
+
+def test_failed_full_backup_upload_removes_partial_temp_file(
+    tmp_path, monkeypatch
+):
+    class FailingUpload:
+        filename = 'backup.zip'
+
+        @staticmethod
+        def save(path):
+            with open(path, 'wb') as stream:
+                stream.write(b'partial upload')
+            raise OSError('simulated interrupted upload')
+
+    monkeypatch.setattr(handover_service, '_package_dir', lambda: str(tmp_path))
+
+    with pytest.raises(OSError, match='interrupted upload'):
+        handover_service.upload_full_backup_package(FailingUpload())
+
+    assert not any(name.startswith('.upload_') for name in os.listdir(tmp_path))
 
 
 def test_empty_sqlite_file_is_not_accepted_as_application_backup(tmp_path):

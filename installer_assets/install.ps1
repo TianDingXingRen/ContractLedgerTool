@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$InstallMarkerName = ".contract-ledger-tool-install"
 
 function Write-Step($Text) {
     Write-Host ""
@@ -50,6 +51,112 @@ function Assert-SafeInstallDirectory($Path) {
         throw "Refusing to install on the Desktop. Choose a dedicated application directory."
     }
     return $Resolved
+}
+
+function Test-RecognizedInstallDirectory($Path) {
+    $marker = Join-Path $Path $InstallMarkerName
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+        try {
+            $MarkerInfo = Get-Item -LiteralPath $marker -ErrorAction Stop
+            if ($MarkerInfo.Length -le 128) {
+                $MarkerValue = (Get-Content -LiteralPath $marker -Raw -ErrorAction Stop).Trim()
+                if ($MarkerValue -ceq "ContractLedgerTool") {
+                    return $true
+                }
+            }
+        } catch {
+            # An unreadable or malformed marker is not ownership evidence.
+        }
+    }
+
+    # A completed pre-marker installer registered its exact install location.
+    $TrustedLegacyLocation = $false
+    $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ContractLedgerTool"
+    try {
+        $RegisteredPath = (Get-ItemProperty -LiteralPath $RegistryPath `
+            -Name InstallLocation -ErrorAction Stop).InstallLocation
+        if (-not [string]::IsNullOrWhiteSpace($RegisteredPath)) {
+            $Registered = [System.IO.Path]::GetFullPath($RegisteredPath).TrimEnd('\')
+            $Candidate = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+            if ($Candidate.Equals($Registered, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $TrustedLegacyLocation = $true
+            }
+        }
+    } catch {
+        # Missing or unreadable registration is not proof of ownership.
+    }
+
+    # File-name signatures are accepted only at dedicated legacy default paths.
+    # They are never sufficient evidence for a custom non-empty folder.
+    $LegacyDefault = [System.IO.Path]::GetFullPath(
+        (Join-Path $env:LOCALAPPDATA "Programs\ContractLedgerTool")
+    ).TrimEnd('\')
+    $LegacySourceDefault = [System.IO.Path]::GetFullPath(
+        (Join-Path $env:LOCALAPPDATA "ContractLedgerTool")
+    ).TrimEnd('\')
+    $Candidate = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if ($Candidate.Equals($LegacyDefault, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $TrustedLegacyLocation = $true
+    }
+    $IsLegacySourceDefault = $Candidate.Equals(
+        $LegacySourceDefault,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+    if (-not $TrustedLegacyLocation -and -not $IsLegacySourceDefault) {
+        return $false
+    }
+
+    if ($TrustedLegacyLocation) {
+        $bundledFiles = @("ContractLedgerTool.exe", "start.ps1", "version.txt")
+        $isBundledInstall = $true
+        foreach ($name in $bundledFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Path $name) -PathType Leaf)) {
+                $isBundledInstall = $false
+                break
+            }
+        }
+        if ($isBundledInstall) {
+            return $true
+        }
+    }
+
+    # Source installations created by the legacy install.ps1 workflow.
+    $legacyFiles = @("app.py", "start.ps1", "setup_autostart.ps1", "version.txt")
+    foreach ($name in $legacyFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Path $name) -PathType Leaf)) {
+            return $false
+        }
+    }
+    return (
+        (Test-Path -LiteralPath (Join-Path $Path ".venv") -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path "data") -PathType Container)
+    )
+}
+
+function Assert-InstallDirectoryOwnership($Path) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Install path exists but is not a directory: $Path"
+    }
+    $DirectoryInfo = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($DirectoryInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Install directory cannot be a symbolic link or junction: $Path"
+    }
+
+    $existingItems = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop)
+    if ($existingItems.Count -eq 0) {
+        return $false
+    }
+    if (Test-RecognizedInstallDirectory $Path) {
+        return $true
+    }
+
+    throw (
+        "Install directory is not empty and is not a recognized " +
+        "ContractLedgerTool installation: $Path. Choose an empty directory."
+    )
 }
 
 function Set-WritableIfExists($Path) {
@@ -499,6 +606,7 @@ $AppExeSource = Join-Path $PackageRoot "ContractLedgerTool.exe"
 if (-not (Test-Path -LiteralPath $AppExeSource)) {
     throw "Package is incomplete: ContractLedgerTool.exe was not found."
 }
+$IsExistingInstallation = Assert-InstallDirectoryOwnership $InstallDir
 
 Write-Step "Installing offline application files"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -555,7 +663,11 @@ try {
 
 # Destructive cleanup and system integration changes happen only after the new
 # executable passes its isolated HTTP and SQLite self-check.
-Clear-LegacyProgramFiles $InstallDir
+if ($IsExistingInstallation) {
+    Clear-LegacyProgramFiles $InstallDir
+}
+Set-Content -LiteralPath (Join-Path $InstallDir $InstallMarkerName) `
+    -Value "ContractLedgerTool" -Encoding Ascii
 
 if (-not $SkipSystemIntegrationCleanup) {
     Clear-ExistingAutostart

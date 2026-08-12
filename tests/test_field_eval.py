@@ -83,6 +83,48 @@ class SortByDependencyTests(unittest.TestCase):
             field_eval.sort_fields_by_dependency(fields)
         self.assertIn('my_total', str(cm.exception))
 
+
+class SortTableColumnsByDependencyTests(unittest.TestCase):
+    def test_forward_dependency_is_topologically_sorted(self):
+        columns = [
+            {
+                'key': 'total', 'label': '总计',
+                'field_type': 'calculated', 'formula': 'subtotal * 2',
+            },
+            {'key': 'price', 'label': '单价', 'field_type': 'number'},
+            {
+                'key': 'subtotal', 'label': '小计',
+                'field_type': 'calculated', 'formula': 'price + 1',
+            },
+        ]
+        ordered = field_eval.sort_table_columns_by_dependency(columns)
+        self.assertEqual(
+            [column['key'] for column in ordered],
+            ['price', 'subtotal', 'total'],
+        )
+
+    def test_unknown_dependency_is_rejected(self):
+        columns = [{
+            'key': 'total', 'label': '总计',
+            'field_type': 'calculated', 'formula': 'missing + 1',
+        }]
+        with self.assertRaisesRegex(field_eval.FormulaError, '缺少依赖: missing'):
+            field_eval.sort_table_columns_by_dependency(columns)
+
+    def test_cycle_is_rejected(self):
+        columns = [
+            {
+                'key': 'a', 'label': 'A',
+                'field_type': 'calculated', 'formula': 'b + 1',
+            },
+            {
+                'key': 'b', 'label': 'B',
+                'field_type': 'calculated', 'formula': 'a + 1',
+            },
+        ]
+        with self.assertRaisesRegex(field_eval.FormulaError, '循环依赖'):
+            field_eval.sort_table_columns_by_dependency(columns)
+
 class ResolveTableAggregateTests(unittest.TestCase):
     def test_sum(self):
         self.assertEqual(field_eval.resolve_table_aggregate([{'v': 100}, {'v': 200}], 'v', 'SUM'), 300)

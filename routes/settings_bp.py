@@ -24,6 +24,7 @@ import template_def
 from config import config as app_config
 from runtime.flask_paths import current_runtime_paths
 from services import data_protection_service, handover_service
+from services.handover_archive import MAX_FULL_PACKAGE_ARCHIVE_BYTES
 from utils.autostart import (
     autostart_status,
     disable_autostart,
@@ -246,7 +247,7 @@ def register(app):
             'backups.html',
             backups=ledger_store.list_backups(),
             full_packages=handover_service.list_full_backup_packages(),
-            handover_owners=handover_service.list_handover_owners(),
+            handover_owners=handover_service.list_handover_owners(), full_backup_max_archive_bytes=MAX_FULL_PACKAGE_ARCHIVE_BYTES,
         )
 
     @bp.route('/backups/create', methods=['POST'])
@@ -320,11 +321,6 @@ def register(app):
             if wants_json():
                 return jsonify({'success': False, 'message': message}), 400
             return redirect(url_for('settings.backups', error=message))
-        except Exception as e:
-            get_logger().error('完整数据包上传失败: %s', e, exc_info=True)
-            if wants_json():
-                return jsonify({'success': False, 'message': GENERIC_ERROR}), 400
-            return redirect(url_for('settings.backups', error=GENERIC_ERROR))
 
     @bp.route('/backups/full/<filename>/download')
     def full_backup_download(filename):

@@ -23,24 +23,11 @@ from utils.money import to_minor, from_minor
 from utils.logger import get_logger
 from utils.security import MAX_TEXT_VALUE_LENGTH, limit_text, validate_office_archive
 from utils.template_paths import safe_template_path
+from procurement_store.constants import STATUS_TRANSITIONS
 
 
 MAX_PROCUREMENT_IMPORT_ROWS = 1000
 MAX_PROCUREMENT_QUANTITY = Decimal('1000000000000')
-STATUS_TRANSITIONS = {
-    'draft': {'documents_ready', 'inquiry_sent', 'quotes_received', 'archived'},
-    'documents_ready': {'draft', 'inquiry_sent', 'quotes_received', 'archived'},
-    'inquiry_sent': {'documents_ready', 'quotes_received', 'archived'},
-    'quotes_received': {'inquiry_sent', 'clarifying', 'negotiating', 'award_draft', 'award_confirmed', 'archived'},
-    'clarifying': {'quotes_received', 'negotiating', 'award_draft', 'award_confirmed', 'archived'},
-    'negotiating': {'quotes_received', 'clarifying', 'award_draft', 'award_confirmed', 'archived'},
-    'award_draft': {'quotes_received', 'award_confirmed', 'archived'},
-    'award_confirmed': {'award_draft', 'contract_draft', 'archived'},
-    'contract_draft': {'award_confirmed', 'contract_created', 'archived'},
-    'contract_created': {'archived'},
-    'archived': {'draft', 'contract_created'},
-}
-
 STAGE_STATUS_MAP = {
     'project': 'draft',
     'items': 'draft',
@@ -356,7 +343,9 @@ def jump_to_stage(project_id, target_stage, note=''):
     if target_already_available:
         next_status = before_status
     if next_status != before_status:
-        procurement_store.transition_project_status(project_id, next_status, note=note)
+        procurement_store.transition_project_status(
+            project_id, next_status, note=note, allow_forward_skip=True
+        )
     procurement_store.record_workflow_jump(
         project_id, target_stage, missing, note=note,
         before_status=before_status, after_status=next_status,

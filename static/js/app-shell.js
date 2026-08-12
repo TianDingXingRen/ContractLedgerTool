@@ -290,6 +290,37 @@ function toastCenter() {
   }
 
   document.addEventListener('submit', (event) => {
+    const backupUpload = event.target.closest
+      ? event.target.closest('form[data-full-backup-upload]')
+      : null;
+    if (backupUpload) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (backupUpload.dataset.uploading === '1') return;
+      backupUpload.dataset.uploading = '1';
+      const submit = backupUpload.querySelector('button[type="submit"]');
+      if (submit) submit.disabled = true;
+      window.ContractToolApi.request(backupUpload.action, {
+        method: 'POST',
+        body: new FormData(backupUpload),
+      }).then((response) => {
+        if (response.redirected) {
+          window.location.assign(response.url);
+          return;
+        }
+        return response.text().then((body) => {
+          if (!response.ok) throw new Error(
+            window.ContractToolApi.responseMessage(response, body)
+          );
+          window.location.reload();
+        });
+      }).catch((error) => {
+        delete backupUpload.dataset.uploading;
+        if (submit) submit.disabled = false;
+        showToast(error.message || '完整数据包上传失败', 'error');
+      });
+      return;
+    }
     const form = event.target.closest ? event.target.closest('form[data-confirm]') : null;
     if (!form || form.dataset.confirmed === '1') return;
     event.preventDefault();

@@ -455,7 +455,10 @@ def test_contract_editor_renders_service_model(app, monkeypatch):
     response = client.get('/editor')
 
     assert response.status_code == 200
-    assert response.get_json()['template_name'] == '测试模板'
+    model = response.get_json()
+    assert model['template_name'] == '测试模板'
+    assert len(model['draft_page_id']) == 32
+    assert model['draft_page_id'].isalnum()
 
 
 def test_contract_home_renders_dashboard_snapshot(app, monkeypatch):
@@ -513,6 +516,41 @@ def test_contract_editor_service_recovers_legacy_fields(
     assert model['batch_allowed'] is True
     assert len(model['template_revision']) == 64
     assert model['draft_scope'] == 'template::'
+
+
+def test_contract_editor_service_normalizes_duplicate_and_string_field_ids(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        contract_editor_service,
+        'template_path_from_session',
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        contract_editor_service,
+        'editor_preview_model',
+        lambda *_args: {'blocks': [], 'warnings': []},
+    )
+    monkeypatch.setattr(
+        contract_editor_service.ledger_store,
+        'list_project_names',
+        lambda: [],
+    )
+    data = {
+        'fields': [
+            {'id': '7', 'key': 'first'},
+            {'id': 7, 'key': 'duplicate'},
+            {'id': 'not-a-number', 'key': 'invalid'},
+        ],
+    }
+
+    model = contract_editor_service.build_editor_model(data, object())
+
+    assert [field['id'] for field in model['fields']] == [7, 0, 1]
+    assert all(
+        isinstance(field['id'], int) and field['id'] >= 0
+        for field in model['fields']
+    )
 
 
 def test_editor_draft_revision_tracks_template_content(tmp_path):

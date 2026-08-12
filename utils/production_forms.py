@@ -32,41 +32,58 @@ def _normalized_date(value, label, *, required=False):
 
 def contract_item_rows(form):
     count = _item_row_count(form, '合同产品行数')
-    return [
-        {
-            'id': form.get(f'item_{index}_id', ''),
-            'line_no': form.get(
-                f'item_{index}_line_no', index + 1
-            ),
-            'item_code': form.get(
-                f'item_{index}_item_code', ''
-            ),
-            'item_name': form.get(
-                f'item_{index}_item_name', ''
-            ),
-            'spec_model': form.get(
-                f'item_{index}_spec_model', ''
-            ),
-            'drawing_no': form.get(
-                f'item_{index}_drawing_no', ''
-            ),
-            'contracted_qty': form.get(
-                f'item_{index}_contracted_qty', ''
-            ),
-            'unit': form.get(f'item_{index}_unit', '个'),
-            'unit_price': form.get(
-                f'item_{index}_unit_price', ''
-            ),
-            'serial_start': form.get(
-                f'item_{index}_serial_start', ''
-            ),
-            'serial_end': form.get(
-                f'item_{index}_serial_end', ''
-            ),
-            'delete': form.get(f'item_{index}_delete') == '1',
-        }
-        for index in range(count)
-    ]
+    return [_contract_item_row(form, index) for index in range(count)]
+
+
+def _contract_item_row(form, index):
+    return {
+        'id': form.get(f'item_{index}_id', ''),
+        'line_no': form.get(
+            f'item_{index}_line_no', index + 1
+        ),
+        'item_code': form.get(
+            f'item_{index}_item_code', ''
+        ),
+        'item_name': form.get(
+            f'item_{index}_item_name', ''
+        ),
+        'spec_model': form.get(
+            f'item_{index}_spec_model', ''
+        ),
+        'drawing_no': form.get(
+            f'item_{index}_drawing_no', ''
+        ),
+        'contracted_qty': form.get(
+            f'item_{index}_contracted_qty', ''
+        ),
+        'unit': form.get(f'item_{index}_unit', '个'),
+        'unit_price': form.get(
+            f'item_{index}_unit_price', ''
+        ),
+        'serial_start': form.get(
+            f'item_{index}_serial_start', ''
+        ),
+        'serial_end': form.get(
+            f'item_{index}_serial_end', ''
+        ),
+        'delete': form.get(f'item_{index}_delete') == '1',
+    }
+
+
+def contract_item_rows_for_redisplay(form):
+    """Recover posted rows safely when the submitted row count is invalid."""
+    indexes = set()
+    for key in form:
+        parts = str(key).split('_', 2)
+        if len(parts) != 3 or parts[0] != 'item':
+            continue
+        try:
+            index = int(parts[1])
+        except ValueError:
+            continue
+        if 0 <= index < MAX_ITEM_ROWS:
+            indexes.add(index)
+    return [_contract_item_row(form, index) for index in sorted(indexes)]
 
 
 def production_notice_rows(form):

@@ -333,11 +333,89 @@
     recalcAllFields();
   }
 
+  function formulaDependencies(formula) {
+    var dependencies = [];
+    var seen = {};
+    var functions = {SUM: true, AVG: true, MAX: true, MIN: true, COUNT: true};
+    var tokenPattern = /(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?|([A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*)/g;
+    var match;
+    while ((match = tokenPattern.exec(String(formula || ''))) !== null) {
+      var name = match[1];
+      if (!name || functions[name] || seen[name]) continue;
+      seen[name] = true;
+      dependencies.push(name);
+    }
+    return dependencies;
+  }
+
+  function sortTableColumnsByDependency(columns) {
+    columns = columns || [];
+    var allKeys = {};
+    var resolved = {};
+    var inputColumns = [];
+    var remaining = [];
+    columns.forEach(function(column) {
+      if (!column || !column.key) {
+        if (column && column.field_type === 'calculated') {
+          throw new Error('计算列缺少 key');
+        }
+        return;
+      }
+      if (allKeys[column.key]) throw new Error('表格列 key 重复: ' + column.key);
+      allKeys[column.key] = true;
+      if (column.field_type === 'calculated') {
+        if (!String(column.formula || '').trim()) {
+          throw new Error((column.label || column.key) + ' 缺少公式');
+        }
+        remaining.push(column);
+      } else {
+        inputColumns.push(column);
+        resolved[column.key] = true;
+      }
+    });
+
+    var ordered = [];
+    while (remaining.length) {
+      var nextRemaining = [];
+      var progressed = false;
+      remaining.forEach(function(column) {
+        var dependencies = formulaDependencies(column.formula);
+        if (dependencies.every(function(key) { return resolved[key]; })) {
+          ordered.push(column);
+          resolved[column.key] = true;
+          progressed = true;
+        } else {
+          nextRemaining.push(column);
+        }
+      });
+      remaining = nextRemaining;
+      if (!progressed) break;
+    }
+
+    if (remaining.length) {
+      var problems = remaining.map(function(column) {
+        var missing = formulaDependencies(column.formula).filter(function(key) {
+          return !allKeys[key];
+        });
+        return (column.label || column.key || '未命名列') +
+          (missing.length ? ' 缺少依赖: ' + missing.join(', ') : ' 存在循环依赖');
+      });
+      throw new Error(problems.join('；'));
+    }
+    return inputColumns.concat(ordered);
+  }
+
   function calculateTableRow(columns, initialContext) {
     var context = {};
-    Object.keys(initialContext || {}).forEach(function (key) { context[key] = initialContext[key]; });
+    (columns || []).forEach(function(column) {
+      if (column.field_type !== 'calculated' && column.key) {
+        context[column.key] = Object.prototype.hasOwnProperty.call(initialContext || {}, column.key)
+          ? initialContext[column.key]
+          : 0;
+      }
+    });
     var formatted = {};
-    (columns || []).forEach(function (column) {
+    sortTableColumnsByDependency(columns).forEach(function (column) {
       if (column.field_type !== 'calculated' || !column.key || !column.formula) return;
       try {
         var result = safeEval(column.formula, context);
@@ -346,7 +424,6 @@
         context[column.key] = text;
       } catch (error) {
         formatted[column.key] = '?';
-        context[column.key] = 0;
       }
     });
     return formatted;
@@ -356,6 +433,7 @@
     safeEval: safeEval,
     roundHalfUp: roundHalfUp,
     formatNumber: formatNumber,
+    sortTableColumnsByDependency: sortTableColumnsByDependency,
     calculateTableRow: calculateTableRow,
     recalcField: recalcField,
     recalcAllFields: recalcAllFields,

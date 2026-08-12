@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from core.domain_errors import ConflictError
+from database.connection_factory import begin_immediate
+
 from . import money_fields
 
 
@@ -257,11 +260,13 @@ class InvoiceRepository:
             if amount_minor is None or amount_minor <= 0:
                 raise ValueError('发票分摊金额必须大于 0')
             contract = conn.execute(
-                'SELECT id FROM contracts WHERE id = ? AND deleted_at = ?',
+                'SELECT id, status FROM contracts WHERE id = ? AND deleted_at = ?',
                 (contract_id, ''),
             ).fetchone()
             if not contract:
                 raise ValueError('发票分摊所选合同不存在')
+            if contract['status'] == 'void':
+                raise ValueError('已作废合同不能新增或修改发票分摊')
             notice_id = int(raw.get('production_notice_id') or 0) or None
             payment_plan_id = int(raw.get('payment_plan_id') or 0) or None
             if notice_id:
@@ -356,7 +361,63 @@ class InvoiceRepository:
             )
         return allocated_total
 
-    def save(self, data, allocations, invoice_id=None):
+    @staticmethod
+    def _validated_revision(invoice_id, expected_revision):
+        if invoice_id and expected_revision is None:
+            raise ValueError('编辑发票必须提供版本，请刷新页面后重试')
+        if expected_revision is None:
+            return None
+        try:
+            revision = int(expected_revision)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('发票版本无效，请刷新页面后重试') from exc
+        if revision <= 0:
+            raise ValueError('发票版本无效，请刷新页面后重试')
+        return revision
+
+    @staticmethod
+    def _assert_existing_editable(
+        conn,
+        invoice_id,
+        expected_revision,
+        *,
+        invoice_status,
+        original_invoice_id,
+        total_amount_minor,
+    ):
+        existing = conn.execute(
+            """SELECT id, invoice_status, original_invoice_id,
+                      total_amount_minor, revision
+                 FROM invoices WHERE id = ?""",
+            (invoice_id,),
+        ).fetchone()
+        if not existing:
+            raise ValueError('发票不存在')
+        if existing['revision'] != expected_revision:
+            raise ConflictError(
+                '发票已被其他页面修改，请刷新后核对最新内容再提交'
+            )
+        if existing['invoice_status'] == 'red' and (
+            invoice_status != 'red'
+            or original_invoice_id != existing['original_invoice_id']
+        ):
+            raise ValueError('已生效红字发票不能变更状态或关联原发票')
+        active_red = conn.execute(
+            """SELECT id, total_amount_minor FROM invoices
+                 WHERE original_invoice_id = ?
+                   AND invoice_status = 'red'
+                 LIMIT 1""",
+            (invoice_id,),
+        ).fetchone()
+        if active_red and (
+            invoice_status != 'valid'
+            or total_amount_minor != active_red['total_amount_minor']
+        ):
+            raise ValueError('原发票已有生效红字发票，不能变更有效状态或价税合计')
+
+    def save(
+        self, data, allocations, invoice_id=None, *, expected_revision=None
+    ):
         invoice_no = str(data.get('invoice_no') or '').strip()
         if not invoice_no:
             raise ValueError('发票号码不能为空')
@@ -393,42 +454,22 @@ class InvoiceRepository:
             raise ValueError('只有红字发票可以关联原发票')
         if invoice_id and original_invoice_id == invoice_id:
             raise ValueError('红字发票不能关联自身')
+        expected_revision = self._validated_revision(
+            invoice_id, expected_revision
+        )
         now = self.now()
         try:
             with self.get_conn() as conn:
-                existing_invoice = None
+                begin_immediate(conn)
                 if invoice_id:
-                    existing_invoice = conn.execute(
-                        """SELECT id, invoice_status, original_invoice_id,
-                                  total_amount_minor
-                           FROM invoices WHERE id = ?""",
-                        (invoice_id,),
-                    ).fetchone()
-                    if not existing_invoice:
-                        raise ValueError('发票不存在')
-                    if existing_invoice['invoice_status'] == 'red' and (
-                        invoice_status != 'red'
-                        or original_invoice_id
-                        != existing_invoice['original_invoice_id']
-                    ):
-                        raise ValueError(
-                            '已生效红字发票不能变更状态或关联原发票'
-                        )
-                    active_red = conn.execute(
-                        """SELECT id, total_amount_minor FROM invoices
-                           WHERE original_invoice_id = ?
-                             AND invoice_status = 'red'
-                           LIMIT 1""",
-                        (invoice_id,),
-                    ).fetchone()
-                    if active_red and (
-                        invoice_status != 'valid'
-                        or amounts['total_amount_minor']
-                        != active_red['total_amount_minor']
-                    ):
-                        raise ValueError(
-                            '原发票已有生效红字发票，不能变更有效状态或价税合计'
-                        )
+                    self._assert_existing_editable(
+                        conn,
+                        invoice_id,
+                        expected_revision,
+                        invoice_status=invoice_status,
+                        original_invoice_id=original_invoice_id,
+                        total_amount_minor=amounts['total_amount_minor'],
+                    )
                 if original_invoice_id:
                     original = conn.execute(
                         """SELECT id, invoice_status, total_amount_minor
@@ -464,7 +505,7 @@ class InvoiceRepository:
                     str(data.get('remark') or '').strip(),
                 )
                 if invoice_id:
-                    conn.execute(
+                    cur = conn.execute(
                         """UPDATE invoices SET
                                invoice_code = ?, invoice_no = ?, invoice_type = ?,
                                issue_date = ?, received_date = ?, seller_name = ?,
@@ -472,9 +513,14 @@ class InvoiceRepository:
                                currency = ?, amount_ex_tax_minor = ?, tax_amount_minor = ?,
                                total_amount_minor = ?, tax_rate_bps = ?, invoice_status = ?,
                                review_status = ?, deduction_status = ?, original_invoice_id = ?,
-                               remark = ?, updated_at = ? WHERE id = ?""",
-                        (*params, now, invoice_id),
+                               remark = ?, updated_at = ?, revision = revision + 1
+                         WHERE id = ? AND revision = ?""",
+                        (*params, now, invoice_id, expected_revision),
                     )
+                    if cur.rowcount == 0:
+                        raise ConflictError(
+                            '发票已被其他页面修改，请刷新后核对最新内容再提交'
+                        )
                     action = 'edit'
                 else:
                     cur = conn.execute(

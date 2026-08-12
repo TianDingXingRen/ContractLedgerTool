@@ -780,6 +780,11 @@ def restore_contract(contract_id):
     return _contract_lifecycle.restore(contract_id)
 
 
+def contract_has_payment_execution_trace(contract_id):
+    """Return whether hard deletion would erase payment execution history."""
+    return _contract_lifecycle.has_payment_execution_trace(contract_id)
+
+
 def permanently_delete_contract(contract_id):
     """永久删除合同及其关联数据（仅限已在回收站中的合同）"""
     return _contract_lifecycle.permanently_delete(contract_id)

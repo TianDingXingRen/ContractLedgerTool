@@ -64,6 +64,10 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('window.showToast', script)
         self.assertIn('window.confirmAction', script)
         self.assertIn('window.showNotice', script)
+        self.assertIn('form[data-full-backup-upload]', script)
+        self.assertIn('window.ContractToolApi.request', script)
+        with open(os.path.join(app.RESOURCE_DIR, 'templates', 'backups.html'), encoding='utf-8') as f:
+            self.assertIn('data-full-backup-upload', f.read())
         self.assertIn("dataset.appShell = 'ready'", script)
         self.assertNotIn('tailwind.config =', script)
 
@@ -265,6 +269,10 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('$cmd.IndexOf("app.py"', script)
         self.assertIn('Clear-ExistingAutostart', script)
         self.assertIn('Clear-LegacyProgramFiles', script)
+        self.assertIn('Assert-InstallDirectoryOwnership', script)
+        self.assertIn('.contract-ledger-tool-install', script)
+        self.assertIn('InstallLocation', script)
+        self.assertIn('dedicated legacy default', script)
         self.assertIn('Set-WritableIfExists', script)
         self.assertIn('Unregister-ScheduledTask', script)
         self.assertIn('New-DesktopLauncher', script)
@@ -323,6 +331,7 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertNotIn('"data"', cleanup_block)
         self.assertNotIn('contracts.db', cleanup_block)
         self.assertIn('foreach ($dir in @("data", "output", "sessions", "uploads", "templates", "static", "logs"))', script)
+        self.assertIn('if ($IsExistingInstallation)', script)
 
 
 if __name__ == '__main__':

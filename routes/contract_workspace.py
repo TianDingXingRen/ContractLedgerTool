@@ -170,5 +170,8 @@ def register_contract_workspace(bp):
             today_str=date.today().strftime('%Y-%m-%d'),
             project_names=ledger_store.list_project_names(),
             procurement_linked=procurement_store.contract_has_refs(contract_id),
+            payment_execution_locked=(
+                ledger_store.contract_has_payment_execution_trace(contract_id)
+            ),
             error=request.args.get('error', ''),
         )

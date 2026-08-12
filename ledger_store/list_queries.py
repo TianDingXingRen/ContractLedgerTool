@@ -1,5 +1,7 @@
 """List and search queries for contracts and payment plans."""
 
+from .payment_plan_policy import execution_trace_predicate
+
 
 def list_contracts(
     get_conn,
@@ -134,7 +136,8 @@ def list_payment_plans(
         count_sql = f'SELECT COUNT(*) {base_sql}{where}'
         offset = max(0, (page - 1) * per_page)
         sql = f"""
-            SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
+            SELECT p.*, NOT {execution_trace_predicate('p')} AS can_delete,
+                   c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                    c.amount_minor AS contract_amount_minor, c.project_name,
                    c.subsystem_name AS contract_subsystem_name,
                    c.coverage_start, c.coverage_end,
@@ -157,7 +160,8 @@ def list_payment_plans(
         }
 
     sql = f"""
-        SELECT p.*, c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
+        SELECT p.*, NOT {execution_trace_predicate('p')} AS can_delete,
+               c.contract_no, c.title AS contract_title, c.counterparty, c.owner,
                c.amount_minor AS contract_amount_minor, c.project_name,
                c.subsystem_name AS contract_subsystem_name,
                c.coverage_start, c.coverage_end,

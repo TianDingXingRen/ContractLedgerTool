@@ -315,11 +315,21 @@ assert.equal(calcB.value, '1.01');
 assert.equal(calcC.value, '2.02');
 assert.equal(hiddenC.value, '2.02');
 const table = engine.calculateTableRow([
-  {key: 'subtotal', field_type: 'calculated', formula: 'price', decimal_places: 2},
   {key: 'total', field_type: 'calculated', formula: 'subtotal * 2', decimal_places: 2},
-], {price: 1.005});
+  {key: 'price', field_type: 'number'},
+  {key: 'subtotal', field_type: 'calculated', formula: 'price', decimal_places: 2},
+], {price: 1.005, subtotal: 999, total: 888});
 assert.deepEqual(table, {subtotal: '1.01', total: '2.02'});
+assert.throws(() => engine.sortTableColumnsByDependency([
+  {key: 'a', label: 'A', field_type: 'calculated', formula: 'b + 1'},
+  {key: 'b', label: 'B', field_type: 'calculated', formula: 'a + 1'},
+]), /循环依赖/);
+assert.throws(() => engine.sortTableColumnsByDependency([
+  {key: 'a', label: 'A', field_type: 'calculated', formula: 'missing + 1'},
+]), /缺少依赖: missing/);
 assert.deepEqual(engine.calculateTableRow([
+  {key: 'price', field_type: 'number'},
+  {key: 'rate', field_type: 'number'},
   {key: 'total', field_type: 'calculated', formula: 'price * rate', decimal_places: 2},
 ], {price: '1,000.25', rate: '12%'}), {total: '120.03'});
 """
@@ -376,7 +386,13 @@ assert.deepEqual(engine.calculateTableRow([
 
         self.assertLess(bootstrap.index('draftRestoring = true;'), bootstrap.index('initTable(field.id);'))
         self.assertIn('finally {', bootstrap)
-        self.assertIn("var draftKey = 'ct_draft_v3_'", draft)
+        self.assertIn("var sharedDraftKey = 'ct_draft_v3_'", draft)
+        self.assertIn("var tabDraftPrefix = 'ct_draft_v4_'", draft)
+        self.assertIn('return tabDraftPrefix + tabId;', draft)
+        self.assertIn('editorConfig.draftPageId', draft)
+        self.assertIn('sessionStorage.getItem(draftTabStorageKey)', draft)
+        self.assertIn('localStorage.getItem(draftOwnerKey)', draft)
+        self.assertIn('candidate.key === sharedDraftKey', draft)
         self.assertIn('data._template_schema = draftTemplateSchema;', draft)
         self.assertIn('data._template_schema !== draftTemplateSchema', draft)
         self.assertIn('data._template_revision = draftTemplateRevision;', draft)
@@ -384,6 +400,139 @@ assert.deepEqual(engine.calculateTableRow([
         self.assertIn('data._template_revision !== draftTemplateRevision', draft)
         self.assertIn('data._draft_scope !== draftScope', draft)
         self.assertIn('function parseDraftTables(data)', draft)
+
+    def test_editor_drafts_are_isolated_across_tabs_and_clear_locally(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node.js is not installed')
+        with open(
+            os.path.join(app.RESOURCE_DIR, 'static', 'js', 'editor-draft.js'),
+            encoding='utf-8',
+        ) as f:
+            draft = f.read()
+
+        harness = r"""
+const assert = require('node:assert/strict');
+const sharedLocal = new Map();
+function storage(values) {
+  return {
+    get length() { return values.size; },
+    key(index) { return Array.from(values.keys())[index] || null; },
+    getItem(key) { return values.has(key) ? values.get(key) : null; },
+    setItem(key, value) { values.set(key, String(value)); },
+    removeItem(key) { values.delete(key); },
+  };
+}
+function openTab(pageId, sessionValues) {
+  const listeners = {};
+  const context = {
+    console: console,
+    Date: Date,
+    Math: Math,
+    JSON: JSON,
+    Object: Object,
+    Array: Array,
+    String: String,
+    Number: Number,
+    Uint32Array: Uint32Array,
+    setTimeout() { return 1; },
+    clearTimeout() {},
+    setInterval() {},
+    editorConfig: {
+      fields: [], templateFilename: 'sales.contract-template',
+      templateRevision: 'rev-1', draftScope: 'template::', draftPageId: pageId,
+    },
+    columnsData: {},
+    localStorage: storage(sharedLocal),
+    sessionStorage: storage(sessionValues),
+    document: {
+      querySelectorAll() { return []; },
+      querySelector() { return null; },
+      getElementById() { return null; },
+    },
+    updateProgress() {}, recalcAllFields() {},
+  };
+  context.window = {
+    ContractEditor: {},
+    crypto: {randomUUID() { return pageId + 'fallback'; }},
+    addEventListener(name, callback) { listeners[name] = callback; },
+  };
+  vm.runInNewContext(source, context);
+  return {context, listeners};
+}
+const tabAStorage = new Map();
+const tabA = openTab('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', tabAStorage);
+tabA.context.window.ContractEditor.draft.save();
+const tabAKeys = Array.from(sharedLocal.keys()).filter(key => key.startsWith('ct_draft_v4_'));
+assert.equal(tabAKeys.length, 1);
+
+const tabB = openTab('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', new Map());
+tabB.context.window.ContractEditor.draft.save();
+const distinctKeys = Array.from(sharedLocal.keys()).filter(key => key.startsWith('ct_draft_v4_'));
+assert.equal(distinctKeys.length, 2);
+tabB.context.window.ContractEditor.draft.clear();
+assert.equal(sharedLocal.has(tabAKeys[0]), true);
+assert.equal(Array.from(sharedLocal.keys()).filter(key => key.startsWith('ct_draft_v4_')).length, 1);
+
+// Duplicated tabs inherit sessionStorage. The page token/owner claim forks the
+// duplicate and copies the original draft without deleting it.
+const tabC = openTab('cccccccccccccccccccccccccccccccc', new Map(tabAStorage));
+assert.equal(tabC.context.window.ContractEditor.draft.restore(), false);
+assert.equal(sharedLocal.has(tabAKeys[0]), true);
+tabC.context.window.ContractEditor.draft.save();
+assert.equal(Array.from(sharedLocal.keys()).filter(key => key.startsWith('ct_draft_v4_')).length, 2);
+
+const oldTabCKey = tabC.context.draftKey;
+tabC.listeners.storage({
+  key: tabC.context.draftOwnerKey,
+  newValue: 'dddddddddddddddddddddddddddddddd',
+});
+assert.notEqual(tabC.context.draftKey, oldTabCKey);
+assert.equal(sharedLocal.has(oldTabCKey), true);
+
+// pageshow safely reclaims the same page identity after pagehide.
+const tabCKeyAfterFork = tabC.context.draftKey;
+tabC.listeners.pagehide();
+tabC.listeners.pageshow();
+assert.equal(tabC.context.draftKey, tabCKeyAfterFork);
+assert.equal(sharedLocal.get(tabC.context.draftOwnerKey), tabC.context.draftInstanceId);
+
+// Initialization prunes only invalid/expired v4 entries for this exact
+// template identity, leaving fresh and unrelated-template drafts untouched.
+const expiredTab = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const invalidTab = 'ffffffffffffffffffffffffffffffff';
+const freshTab = 'gggggggggggggggggggggggggggggggg';
+const prefix = tabC.context.tabDraftPrefix;
+sharedLocal.set(prefix + expiredTab, JSON.stringify({_saved_at: '2000-01-01T00:00:00.000Z'}));
+sharedLocal.set(tabC.context.tabOwnerKey(expiredTab), 'expired-owner');
+sharedLocal.set(prefix + invalidTab, '{');
+sharedLocal.set(tabC.context.tabOwnerKey(invalidTab), 'invalid-owner');
+sharedLocal.set(prefix + freshTab, JSON.stringify({_saved_at: new Date().toISOString()}));
+sharedLocal.set(tabC.context.tabOwnerKey(freshTab), 'fresh-owner');
+const unrelatedKey = 'ct_draft_v4_other.contract-template_otherhash_' + expiredTab;
+sharedLocal.set(unrelatedKey, JSON.stringify({_saved_at: '2000-01-01T00:00:00.000Z'}));
+tabC.context.pruneExpiredTabDrafts();
+assert.equal(sharedLocal.has(prefix + expiredTab), false);
+assert.equal(sharedLocal.get(tabC.context.tabOwnerKey(expiredTab)), 'expired-owner');
+assert.equal(sharedLocal.has(prefix + invalidTab), false);
+assert.equal(sharedLocal.get(tabC.context.tabOwnerKey(invalidTab)), 'invalid-owner');
+assert.equal(sharedLocal.has(prefix + freshTab), true);
+assert.equal(sharedLocal.get(tabC.context.tabOwnerKey(freshTab)), 'fresh-owner');
+assert.equal(sharedLocal.has(unrelatedKey), true);
+"""
+        result = subprocess.run(
+            [node, '-'],
+            input=(
+                "const vm = require('node:vm');\n"
+                + "const source = " + repr(draft) + ";\n"
+                + harness
+            ),
+            text=True,
+            encoding='utf-8',
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def test_editor_bootstrap_keeps_table_initialization_clean(self):
         node = shutil.which('node')

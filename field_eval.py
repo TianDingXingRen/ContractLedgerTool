@@ -321,7 +321,71 @@ def sort_fields_by_dependency(fields):
     return input_fields + ordered_calcs
 
 
-def _get_calc_deps(field):
+def sort_table_columns_by_dependency(columns):
+    """Return table columns in a safe calculation order.
+
+    Editable columns retain their original order.  Calculated columns are
+    topologically sorted from the names referenced by their formulas.  This
+    deliberately does not accept an existing calculated cell value as a
+    dependency substitute: every calculated dependency must itself be
+    resolved during this pass.
+    """
+    calc_value = FieldType.CALCULATED.value
+    input_columns = [
+        column for column in columns
+        if column.get('field_type') != calc_value
+    ]
+    calc_columns = [
+        column for column in columns
+        if column.get('field_type') == calc_value
+    ]
+    for column in calc_columns:
+        if not column.get('key'):
+            raise FormulaError('计算列缺少 key')
+        if not str(column.get('formula') or '').strip():
+            name = column.get('label') or column.get('key')
+            raise FormulaError(f'{name} 缺少公式')
+    column_keys = [column.get('key') for column in columns if column.get('key')]
+    if len(column_keys) != len(set(column_keys)):
+        raise FormulaError('表格列 key 不能重复')
+    all_keys = set(column_keys)
+    resolved = {
+        column.get('key') for column in input_columns if column.get('key')
+    }
+    ordered_calcs = []
+    remaining = list(calc_columns)
+
+    while remaining:
+        next_remaining = []
+        progressed = False
+        for column in remaining:
+            dependencies = _get_calc_deps(column, include_declared=False)
+            if dependencies <= resolved:
+                ordered_calcs.append(column)
+                resolved.add(column.get('key'))
+                progressed = True
+            else:
+                next_remaining.append(column)
+        remaining = next_remaining
+        if not progressed:
+            break
+
+    if remaining:
+        problem_parts = []
+        for column in remaining:
+            dependencies = _get_calc_deps(column, include_declared=False)
+            missing = sorted(dependencies - all_keys)
+            name = column.get('label') or column.get('key') or '未命名列'
+            if missing:
+                problem_parts.append(f'{name} 缺少依赖: {", ".join(missing)}')
+            else:
+                problem_parts.append(f'{name} 存在循环依赖')
+        raise FormulaError('；'.join(problem_parts))
+
+    return input_columns + ordered_calcs
+
+
+def _get_calc_deps(field, *, include_declared=True):
     """获取计算字段的依赖列表（单次 AST walk，避免重复解析）"""
     formula = field.get('formula', '')
     deps = set()
@@ -355,8 +419,9 @@ def _get_calc_deps(field):
             pass  # 运算符/上下文节点，由父节点处理
         elif not isinstance(node, (ast.Expression, ast.Name, ast.Module)):
             raise FormulaError(f'不支持的表达式: {type(node).__name__}')
-    field_deps = field.get('depends_on', [])
-    deps.update(field_deps)
+    if include_declared:
+        field_deps = field.get('depends_on', [])
+        deps.update(field_deps)
     return deps
 
 

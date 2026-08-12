@@ -53,9 +53,7 @@ def build_draft_scope(session_data):
 def build_editor_model(session_data, runtime_paths):
     """Build the editor view model without exposing storage to the route."""
     fields = session_data.get('fields', [])
-    for index, field in enumerate(fields):
-        if 'id' not in field:
-            field['id'] = index
+    template_def.normalize_field_ids(fields)
 
     template_path = template_path_from_session(
         session_data,

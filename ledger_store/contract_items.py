@@ -136,6 +136,17 @@ class ContractItemRepository:
             ):
                 raise ValueError('合同产品名称不能为空；如需删除请勾选删除')
 
+    def _validate_unique_item_ids(self, rows):
+        """Reject a stale or forged form that submits one stored row twice."""
+        submitted_ids = set()
+        for raw in rows:
+            item_id = self._item_id(raw)
+            if not item_id:
+                continue
+            if item_id in submitted_ids:
+                raise ValueError('合同产品 ID 不能重复提交')
+            submitted_ids.add(item_id)
+
     def _free_submitted_line_numbers(self, conn, contract_id, rows):
         submitted_ids = [
             item_id
@@ -169,6 +180,7 @@ class ContractItemRepository:
             ).fetchone()
             if not contract:
                 raise ValueError('合同不存在、已删除或不可编辑')
+            self._validate_unique_item_ids(rows)
             self._validate_existing_names(rows)
             originals = self._free_submitted_line_numbers(
                 conn, contract_id, rows

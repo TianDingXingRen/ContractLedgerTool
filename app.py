@@ -33,6 +33,7 @@ from utils.logger import setup_logging, get_logger, close_logging
 from config import config as app_config
 from runtime.context import apply_runtime_context, create_runtime_context
 from runtime.services import create_runtime_services
+from services.handover_archive import MAX_FULL_PACKAGE_UPLOAD_REQUEST_BYTES
 
 # ── Path resolution ──
 
@@ -229,6 +230,9 @@ def create_app(runtime_base_dir=None, resource_dir=None, run_maintenance=True, t
     app.config['SESSION_COOKIE_SECURE'] = not is_loopback_host(app_config.HOST)
     app.config['TRUSTED_HOSTS'] = list(app_config.TRUSTED_HOSTS)
     app.config['MAX_CONTENT_LENGTH'] = app_config.MAX_CONTENT_LENGTH_MB * 1024 * 1024
+    app.config['FULL_BACKUP_MAX_CONTENT_LENGTH'] = (
+        MAX_FULL_PACKAGE_UPLOAD_REQUEST_BYTES
+    )
     app.config['CONTRACT_TOOL_BIND_HOST'] = app_config.HOST
     app.config['CONTRACT_TOOL_BIND_PORT'] = app_config.PORT
     app.extensions['runtime_paths'] = RUNTIME_PATHS

@@ -24,7 +24,8 @@ from . import comparison_workflow
 from . import project_components
 from . import project_queries
 from . import quote_jobs
-from .constants import PROJECT_STATUSES
+from .constants import PROJECT_STATUSES as PROJECT_STATUSES
+from .status_transitions import transition_project as _transition_project
 from .schema import (
     CURRENT_SCHEMA_VERSION,
     PROCUREMENT_SCHEMA_SQL,
@@ -193,21 +194,23 @@ def list_projects(status='', q='', page=1, per_page=20):
     )
 
 
-def transition_project_status(project_id, new_status, note=''):
-    if new_status not in PROJECT_STATUSES:
-        raise ValueError('采购项目状态无效')
+def transition_project_status(
+    project_id, new_status, note='', *, allow_forward_skip=False
+):
     with ledger_store.get_conn() as conn:
-        row = conn.execute('SELECT * FROM procurement_projects WHERE id = ?', (project_id,)).fetchone()
-        if not row:
-            raise ValueError('采购项目不存在')
-        before = dict(row)
-        archived_at = _now() if new_status == 'archived' else (before.get('archived_at') or '')
-        conn.execute(
-            'UPDATE procurement_projects SET status = ?, archived_at = ?, updated_at = ? WHERE id = ?',
-            (new_status, archived_at, _now(), project_id),
+        now = _now()
+        before_status = _transition_project(
+            conn,
+            project_id,
+            new_status,
+            now,
+            allow_forward_skip=allow_forward_skip,
         )
-        _audit(conn, 'project', project_id, 'status_change', before={'status': before['status']},
-               after={'status': new_status}, note=note)
+        if before_status != new_status:
+            _audit(
+                conn, 'project', project_id, 'status_change',
+                before={'status': before_status}, after={'status': new_status}, note=note,
+            )
 
 
 def record_workflow_jump(project_id, target_stage, skipped_stages=None, note='', before_status='', after_status=''):
@@ -397,6 +400,9 @@ def update_clarification(question_id, data):
 def save_negotiation_round(project_id, round_no, meeting_date, summary, commitments):
     now = _now()
     with ledger_store.get_conn() as conn:
+        _transition_project(
+            conn, project_id, 'negotiating', now, allow_forward_skip=True
+        )
         row = conn.execute(
             'SELECT id FROM negotiation_rounds WHERE project_id = ? AND round_no = ?',
             (project_id, round_no),
@@ -429,10 +435,6 @@ def save_negotiation_round(project_id, round_no, meeting_date, summary, commitme
                  item.get('delivery_period') or '', item.get('payment_terms') or '',
                  item.get('commitment') or '', now, now),
             )
-        conn.execute(
-            "UPDATE procurement_projects SET status = 'negotiating', updated_at = ? WHERE id = ?",
-            (now, project_id),
-        )
         _audit(conn, 'negotiation_round', round_id, 'save', after={'round_no': round_no})
         return round_id
 

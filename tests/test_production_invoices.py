@@ -324,6 +324,7 @@ def test_invoice_allocation_reconciles_contract_notice_and_payment(tmp_db):
             },
             [{'contract_id': contract_id, 'allocated_amount': 114}],
             invoice_id=invoice_id,
+            expected_revision=invoice['revision'],
         )
 
     with pytest.raises(ValueError, match='已存在'):
@@ -577,7 +578,10 @@ def test_invoice_state_machine_requires_full_allocation_and_excludes_void(tmp_db
     )
     invoice = ledger_store.get_invoice(invoice_id)
     invoice['invoice_status'] = 'void'
-    ledger_store.save_invoice(invoice, [], invoice_id=invoice_id)
+    ledger_store.save_invoice(
+        invoice, [], invoice_id=invoice_id,
+        expected_revision=invoice['revision'],
+    )
     assert ledger_store.get_production_notice(notice_id)['allocated_amount'] == 0
 
 
@@ -622,12 +626,16 @@ def test_full_red_invoice_offsets_original_allocation(tmp_db):
             original,
             original['allocations'],
             invoice_id=original_id,
+            expected_revision=original['revision'],
         )
 
     original = ledger_store.get_invoice(original_id)
     original['invoice_status'] = 'void'
     with pytest.raises(ValueError, match='已有生效红字发票'):
-        ledger_store.save_invoice(original, [], invoice_id=original_id)
+        ledger_store.save_invoice(
+            original, [], invoice_id=original_id,
+            expected_revision=original['revision'],
+        )
 
     with ledger_store.get_conn() as conn, pytest.raises(
         sqlite3.IntegrityError,
@@ -690,12 +698,18 @@ def test_effective_red_invoice_cannot_be_voided_or_retargeted(tmp_db):
     red_invoice['invoice_status'] = 'void'
     red_invoice['original_invoice_id'] = None
     with pytest.raises(ValueError, match='已生效红字发票不能变更'):
-        ledger_store.save_invoice(red_invoice, [], invoice_id=red_id)
+        ledger_store.save_invoice(
+            red_invoice, [], invoice_id=red_id,
+            expected_revision=red_invoice['revision'],
+        )
 
     red_invoice = ledger_store.get_invoice(red_id)
     red_invoice['original_invoice_id'] = alternate_id
     with pytest.raises(ValueError, match='已生效红字发票不能变更'):
-        ledger_store.save_invoice(red_invoice, [], invoice_id=red_id)
+        ledger_store.save_invoice(
+            red_invoice, [], invoice_id=red_id,
+            expected_revision=red_invoice['revision'],
+        )
 
     stored_red = ledger_store.get_invoice(red_id)
     assert stored_red['invoice_status'] == 'red'

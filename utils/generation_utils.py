@@ -131,25 +131,46 @@ def recalculate_table_fields(fields, field_values):
         if not isinstance(rows_data, list):
             rows_data = []
         columns = field.get('columns', [])
+        calculated_keys = {
+            column.get('key') for column in columns
+            if column.get('key')
+            and column.get('field_type') == FieldType.CALCULATED
+        }
+        for row in rows_data:
+            if isinstance(row, dict):
+                for calculated_key in calculated_keys:
+                    row.pop(calculated_key, None)
+        try:
+            ordered_columns = field_eval.sort_table_columns_by_dependency(
+                columns
+            )
+        except field_eval.FormulaError as exc:
+            errors.append(
+                f'{field.get("label", field.get("key", "表格"))}公式依赖无效：{exc}'
+            )
+            continue
         for row_index, row in enumerate(rows_data, start=1):
             if not isinstance(row, dict):
                 continue
-            for col in columns:
+            # Calculated values submitted by the browser are display-only and
+            # must never become authoritative server-side inputs.
+            ctx = {
+                col.get('key'): to_calc_number(row.get(col.get('key'), '0'))
+                for col in columns
+                if col.get('key')
+                and col.get('field_type') != FieldType.CALCULATED
+            }
+            for col in ordered_columns:
                 if col.get('field_type') != 'calculated' or not col.get('formula'):
                     continue
                 col_key = col.get('key')
                 if not col_key:
                     continue
                 try:
-                    ctx = {}
-                    for c in columns:
-                        ck = c.get('key')
-                        if not ck:
-                            continue
-                        ctx[ck] = to_calc_number(row.get(ck, '0'))
                     result = field_eval.safe_eval_decimal(col['formula'], ctx)
                     decimals = int(col.get('decimal_places', 2))
                     row[col_key] = field_eval.format_number_text(result, decimals)
+                    ctx[col_key] = row[col_key]
                 except (field_eval.FormulaError, ValueError, TypeError) as exc:
                     row[col_key] = ''
                     errors.append(

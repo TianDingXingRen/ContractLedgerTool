@@ -839,7 +839,13 @@
         tr.querySelectorAll('.table-cell-input').forEach(inp => {
             context[inp.dataset.colKey] = inp.value || 0;
         });
-        const calculated = window.ContractFormulaEngine.calculateTableRow(columns, context);
+        let calculated;
+        try {
+            calculated = window.ContractFormulaEngine.calculateTableRow(columns, context);
+        } catch (error) {
+            console.warn('表格公式依赖无效', error);
+            calculated = {};
+        }
         tr.querySelectorAll('[data-formula]').forEach(td => {
             td.textContent = calculated[td.dataset.colKey] == null
                 ? '?'

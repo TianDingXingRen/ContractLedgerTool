@@ -210,7 +210,10 @@ def test_contract_item_frontend_enforces_required_name_and_row_limit():
         encoding='utf-8'
     )
 
-    assert '{% if item %}required{% endif %}' in template
+    assert (
+        '{% if item and (item.id or item.item_name) %}'
+        'required{% endif %}'
+    ) in template
     assert 'const MAX_ITEM_ROWS = 500;' in script
     assert 'if (index >= MAX_ITEM_ROWS)' in script
     assert 'item_${index}_item_name" required' in script
