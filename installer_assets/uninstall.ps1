@@ -106,7 +106,8 @@ $ManagedFiles = @(
     "setup_autostart.ps1",
     "setup_autostart_remove.ps1",
     "version.txt",
-    ".installed_version"
+    ".installed_version",
+    ".contract-ledger-tool-install"
 )
 foreach ($Name in $ManagedFiles) {
     Remove-IfPresent (Join-Path $InstallDir $Name)

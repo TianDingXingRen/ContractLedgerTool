@@ -5,6 +5,7 @@ from __future__ import annotations
 from database.connection_factory import begin_immediate
 
 from .contract_status_policy import assert_contracts_can_be_voided
+from .payment_plan_policy import contract_has_execution_trace
 
 
 class ContractLifecycleRepository:
@@ -89,8 +90,13 @@ class ContractLifecycleRepository:
                 )
             return cur.rowcount
 
+    def has_payment_execution_trace(self, contract_id):
+        with self._get_conn() as conn:
+            return contract_has_execution_trace(conn, contract_id)
+
     def permanently_delete(self, contract_id):
         with self._get_conn() as conn:
+            begin_immediate(conn)
             row = conn.execute(
                 "SELECT id FROM contracts WHERE id = ? "
                 "AND deleted_at != '' AND deleted_at IS NOT NULL",
@@ -100,6 +106,8 @@ class ContractLifecycleRepository:
                 return 0
             if self._has_procurement_refs(conn, contract_id):
                 raise ValueError('该合同已关联采购项目，为保留审计记录不能永久删除')
+            if contract_has_execution_trace(conn, contract_id):
+                raise ValueError('该合同已有付款或业务执行记录，为保留审计记录不能永久删除')
             if self._has_execution_refs(conn, contract_id):
                 raise ValueError('该合同已有投产通知或发票分摊，为保留审计记录不能永久删除')
             conn.execute('DELETE FROM contract_history WHERE contract_id = ?', (contract_id,))
@@ -111,8 +119,11 @@ class ContractLifecycleRepository:
 
     def discard_unlinked(self, contract_id):
         with self._get_conn() as conn:
+            begin_immediate(conn)
             if self._has_procurement_refs(conn, contract_id):
                 raise ValueError('合同已建立采购关联，不能作为生成失败记录清理')
+            if contract_has_execution_trace(conn, contract_id):
+                raise ValueError('合同已有付款或业务执行记录，不能作为失败记录清理')
             if self._has_execution_refs(conn, contract_id):
                 raise ValueError('合同已有投产通知或发票分摊，不能作为失败记录清理')
             conn.execute('DELETE FROM contract_history WHERE contract_id = ?', (contract_id,))

@@ -99,11 +99,13 @@ def procurement_project_new():
             return render_template(
                 'procurement/project_form.html',
                 project=None,
+                form_data=dict(request.form),
                 error=error,
             ), 400
     return render_template(
         'procurement/project_form.html',
         project=None,
+        form_data=None,
         error='',
     )
 
@@ -127,7 +129,8 @@ def procurement_project_edit(project_id):
             error = form_error('采购项目更新失败', exc)
             return render_template(
                 'procurement/project_form.html',
-                project=form_data,
+                project=project,
+                form_data=form_data,
                 error=error,
             ), 400
     project['budget_amount'] = money(
@@ -139,6 +142,7 @@ def procurement_project_edit(project_id):
     return render_template(
         'procurement/project_form.html',
         project=project,
+        form_data=None,
         error='',
     )
 

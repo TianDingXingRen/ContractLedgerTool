@@ -41,7 +41,7 @@ LEGACY_FILE_BUDGETS = {
 LEGACY_FUNCTION_BUDGETS = {
     ('excel_bill_service.py', '_init_presets'): 168,
     ('routes/excel_bill_bp.py', 'register'): 178,
-    ('routes/settings_bp.py', 'register'): 218,
+    ('routes/settings_bp.py', 'register'): 213,
     ('services/handover_service.py', 'build_handover_data'): 202,
     ('xlsx_exporter.py', 'export_handover_checklist'): 162,
     ('xlsx_exporter.py', 'export_monthly_payment_plan_report'): 404,

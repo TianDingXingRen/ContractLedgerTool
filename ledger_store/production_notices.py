@@ -7,6 +7,12 @@ import sqlite3
 from datetime import date
 
 from database.connection_factory import begin_immediate
+from .production_notice_guards import (
+    active_contract,
+    ensure_event_has_no_payment,
+    ensure_notice_has_no_invoice_allocations,
+    require_conditional_update,
+)
 
 
 ACTIVE_NOTICE_STATUSES = {'issued', 'acknowledged', 'closed'}
@@ -138,6 +144,7 @@ class ProductionNoticeRepository:
                 """
                 SELECT pn.*, c.contract_no, c.title AS contract_title,
                        c.counterparty AS contract_counterparty,
+                       c.status AS contract_status,
                        COALESCE((SELECT SUM(ia.allocated_amount_minor)
                                  FROM invoice_allocations ia
                                  JOIN invoices i ON i.id = ia.invoice_id
@@ -299,12 +306,8 @@ class ProductionNoticeRepository:
     def create(self, contract_id, header, rows):
         now = self.now()
         with self.get_conn() as conn:
-            contract = conn.execute(
-                'SELECT * FROM contracts WHERE id = ? AND deleted_at = ?',
-                (contract_id, ''),
-            ).fetchone()
-            if not contract:
-                raise ValueError('合同不存在')
+            begin_immediate(conn)
+            contract = active_contract(conn, contract_id)
             notice_no = str(header.get('notice_no') or '').strip() or self._next_notice_no(conn)
             cur = conn.execute(
                 """INSERT INTO production_notices (
@@ -328,6 +331,7 @@ class ProductionNoticeRepository:
 
     def save_draft(self, notice_id, header, rows):
         with self.get_conn() as conn:
+            begin_immediate(conn)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()
@@ -335,13 +339,15 @@ class ProductionNoticeRepository:
                 raise ValueError('投产通知不存在')
             if notice['status'] != 'draft':
                 raise ValueError('只有草稿状态的投产通知可以编辑')
+            active_contract(conn, notice['contract_id'])
             notice_no = str(header.get('notice_no') or '').strip()
             if not notice_no:
                 raise ValueError('投产通知编号不能为空')
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE production_notices
                    SET notice_no = ?, notice_date = ?, supplier_name = ?,
-                       project_name = ?, remark = ?, updated_at = ? WHERE id = ?""",
+                       project_name = ?, remark = ?, updated_at = ?
+                   WHERE id = ? AND status = 'draft'""",
                 (
                     notice_no, str(header.get('notice_date') or '').strip(),
                     str(header.get('supplier_name') or '').strip(),
@@ -349,6 +355,7 @@ class ProductionNoticeRepository:
                     str(header.get('remark') or '').strip(), self.now(), notice_id,
                 ),
             )
+            require_conditional_update(cursor)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()
@@ -413,45 +420,9 @@ class ProductionNoticeRepository:
                     )
         return items
 
-    @staticmethod
-    def _ensure_event_has_no_payment(conn, event_id):
-        if not event_id:
-            return
-        paid = conn.execute(
-            """SELECT 1 FROM payment_plans
-               WHERE trigger_event_id = ? AND paid_amount_minor > 0 LIMIT 1""",
-            (event_id,),
-        ).fetchone()
-        if paid:
-            raise ValueError('该投产通知已发生付款，不能取消或用新版本替代')
-
-    @staticmethod
-    def _ensure_notice_has_no_invoice_allocations(conn, notice_id):
-        allocated = conn.execute(
-            """SELECT 1
-               FROM invoice_allocations ia
-               JOIN invoices i ON i.id = ia.invoice_id
-               JOIN production_notices pn ON pn.id = ?
-               LEFT JOIN payment_plans pp ON pp.id = ia.payment_plan_id
-               WHERE (
-                   ia.production_notice_id = pn.id
-                   OR pp.trigger_event_id = pn.payment_trigger_event_id
-               )
-                 AND i.invoice_status = 'valid'
-                 AND NOT EXISTS (
-                     SELECT 1 FROM invoices red
-                     WHERE red.original_invoice_id = i.id
-                       AND red.invoice_status = 'red'
-                 )
-               LIMIT 1""",
-            (notice_id,),
-        ).fetchone()
-        if allocated:
-            raise ValueError('该投产通知已有发票分摊，请先冲销或解除分摊')
-
     def _cancel_impl(self, conn, notice, operator, reason, action='cancel'):
-        self._ensure_event_has_no_payment(conn, notice['payment_trigger_event_id'])
-        self._ensure_notice_has_no_invoice_allocations(conn, notice['id'])
+        ensure_event_has_no_payment(conn, notice['payment_trigger_event_id'])
+        ensure_notice_has_no_invoice_allocations(conn, notice['id'])
         now = self.now()
         if notice['payment_trigger_event_id']:
             conn.execute(
@@ -473,12 +444,14 @@ class ProductionNoticeRepository:
                 'UPDATE payment_trigger_events SET metadata_json = ?, updated_at = ? WHERE id = ?',
                 (json.dumps(metadata, ensure_ascii=False), now, notice['payment_trigger_event_id']),
             )
-        conn.execute(
+        cursor = conn.execute(
             """UPDATE production_notices
                SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
-                   cancellation_reason = ?, updated_at = ? WHERE id = ?""",
-            (now, operator or '', reason, now, notice['id']),
+                   cancellation_reason = ?, updated_at = ?
+               WHERE id = ? AND status = ?""",
+            (now, operator or '', reason, now, notice['id'], notice['status']),
         )
+        require_conditional_update(cursor)
         self._history(
             conn, notice['id'], action, notice['status'], 'cancelled', operator, reason
         )
@@ -493,6 +466,7 @@ class ProductionNoticeRepository:
                 raise ValueError('投产通知不存在')
             if notice['status'] != 'draft':
                 raise ValueError('只有草稿状态的投产通知可以正式发出')
+            active_contract(conn, notice['contract_id'])
             other_active = conn.execute(
                 """SELECT id, version FROM production_notices
                    WHERE contract_id = ? AND notice_no = ? AND id != ?
@@ -541,12 +515,14 @@ class ProductionNoticeRepository:
             )
             now = self.now()
             try:
-                conn.execute(
+                cursor = conn.execute(
                     """UPDATE production_notices
                        SET status = 'issued', issued_at = ?, issued_by = ?,
-                           payment_trigger_event_id = ?, updated_at = ? WHERE id = ?""",
+                           payment_trigger_event_id = ?, updated_at = ?
+                       WHERE id = ? AND status = 'draft'""",
                     (now, operator or '', event_id, now, notice_id),
                 )
+                require_conditional_update(cursor)
             except sqlite3.IntegrityError as exc:
                 if '只能有一个生效版本' in str(exc):
                     raise ValueError('同一投产通知只能有一个生效版本') from exc
@@ -559,33 +535,38 @@ class ProductionNoticeRepository:
 
     def acknowledge(self, notice_id, operator=''):
         with self.get_conn() as conn:
+            begin_immediate(conn)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()
             if not notice or notice['status'] != 'issued':
                 raise ValueError('只有已发出的投产通知可以确认收悉')
             now = self.now()
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE production_notices
                    SET status = 'acknowledged', acknowledged_at = ?,
-                       acknowledged_by = ?, updated_at = ? WHERE id = ?""",
+                       acknowledged_by = ?, updated_at = ?
+                   WHERE id = ? AND status = 'issued'""",
                 (now, operator or '', now, notice_id),
             )
+            require_conditional_update(cursor)
             self._history(conn, notice_id, 'acknowledge', 'issued', 'acknowledged', operator)
 
     def close(self, notice_id, operator=''):
         with self.get_conn() as conn:
+            begin_immediate(conn)
             notice = conn.execute(
                 'SELECT * FROM production_notices WHERE id = ?', (notice_id,)
             ).fetchone()
             if not notice or notice['status'] not in {'issued', 'acknowledged'}:
                 raise ValueError('只有已发出或已确认的投产通知可以关闭')
             now = self.now()
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE production_notices SET status = 'closed', closed_at = ?,
-                   updated_at = ? WHERE id = ?""",
-                (now, now, notice_id),
+                   updated_at = ? WHERE id = ? AND status = ?""",
+                (now, now, notice_id, notice['status']),
             )
+            require_conditional_update(cursor)
             self._history(conn, notice_id, 'close', notice['status'], 'closed', operator)
 
     def cancel(self, notice_id, operator='', reason=''):
@@ -610,8 +591,9 @@ class ProductionNoticeRepository:
             ).fetchone()
             if not notice or notice['status'] not in ACTIVE_NOTICE_STATUSES:
                 raise ValueError('只有生效中的投产通知可以创建修订版')
-            self._ensure_event_has_no_payment(conn, notice['payment_trigger_event_id'])
-            self._ensure_notice_has_no_invoice_allocations(conn, notice['id'])
+            active_contract(conn, notice['contract_id'])
+            ensure_event_has_no_payment(conn, notice['payment_trigger_event_id'])
+            ensure_notice_has_no_invoice_allocations(conn, notice['id'])
             existing_draft = conn.execute(
                 """SELECT version FROM production_notices
                    WHERE contract_id = ? AND notice_no = ? AND status = 'draft'

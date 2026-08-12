@@ -172,7 +172,7 @@ def parse_table_columns(form, idx, label):
                 raise ValueError(f'{col_label}{exc}') from exc
         columns.append(column)
         col_idx += 1
-    return columns or [
+    columns = columns or [
         {
             'key': 'col_0',
             'label': '内容',
@@ -180,6 +180,8 @@ def parse_table_columns(form, idx, label):
             'formula': '',
         }
     ]
+    field_eval.sort_table_columns_by_dependency(columns)
+    return columns
 
 
 def parse_single_field(form, idx, fields_so_far):

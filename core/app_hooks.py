@@ -127,8 +127,26 @@ def register_security_hooks(app, config):
     @app.before_request
     def _protect_post_requests():
         if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+            # Flask evaluates MAX_CONTENT_LENGTH while request.form is first
+            # parsed below. Full backup packages have a separate, bounded
+            # contract because the application itself can create multi-GB
+            # restorable archives.
+            if request.endpoint == 'settings.full_backup_upload':
+                request.max_content_length = app.config[
+                    'FULL_BACKUP_MAX_CONTENT_LENGTH'
+                ]
+                expected = session.get('_csrf_token')
+                provided = request.headers.get('X-CSRF-Token')
+                if not expected or not provided or not hmac_compare(expected, provided):
+                    abort(400, description='CSRF token missing or invalid')
+                allowed, retry = _check_rate_limit(config)
+                if not allowed:
+                    if wants_json():
+                        return api_error('请求过于频繁，请稍后再试', 429)
+                    abort(429, description=f'请求过于频繁，请 {retry} 秒后再试')
+                return None
             expected = session.get('_csrf_token')
-            provided = request.form.get('csrf_token') or request.headers.get('X-CSRF-Token')
+            provided = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token')
             if not expected or not provided or not hmac_compare(expected, provided):
                 abort(400, description='CSRF token missing or invalid')
             allowed, retry = _check_rate_limit(config)

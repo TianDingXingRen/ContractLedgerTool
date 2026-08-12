@@ -16,6 +16,16 @@ MAX_FULL_PACKAGE_UNCOMPRESSED = 5 * 1024 * 1024 * 1024
 MAX_FULL_PACKAGE_MEMBER_SIZE = 1024 * 1024 * 1024
 MAX_FULL_PACKAGE_COMPRESSION_RATIO = 300
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+# A deflated ZIP can be slightly larger than its input for incompressible data,
+# and also carries per-member metadata.  Keep a bounded allowance above the
+# uncompressed contract so every package accepted by the creator can travel
+# through the restore-upload endpoint without disabling request size limits.
+MAX_FULL_PACKAGE_ARCHIVE_BYTES = (
+    MAX_FULL_PACKAGE_UNCOMPRESSED + 64 * 1024 * 1024
+)
+MAX_FULL_PACKAGE_UPLOAD_REQUEST_BYTES = (
+    MAX_FULL_PACKAGE_ARCHIVE_BYTES + 16 * 1024 * 1024
+)
 
 
 def read_optional_text(path):
@@ -64,6 +74,9 @@ def member_allowed(name, roots, manifest_name):
 
 def validate_package_archive(zf):
     """Enforce size, path, encryption and compression limits for a package."""
+    archive_path = getattr(zf, 'filename', None)
+    if archive_path and os.path.getsize(archive_path) > MAX_FULL_PACKAGE_ARCHIVE_BYTES:
+        raise ValueError('完整数据包压缩文件过大')
     archive_infos = zf.infolist()
     if not archive_infos or len(archive_infos) > MAX_FULL_PACKAGE_MEMBERS:
         raise ValueError('完整数据包包含异常数量的文件')

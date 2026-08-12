@@ -21,6 +21,7 @@ def test_requirements_lock_pins_runtime_dependencies():
     assert all('>=' not in requirement and '<' not in requirement
                for requirement, _details in entries)
     assert all('--hash=sha256:' in details for _requirement, details in entries)
+    assert re.search(r'(?im)^flask>=3\.1,<4\.0$', requirements)
 
 
 def _numeric_version(value):

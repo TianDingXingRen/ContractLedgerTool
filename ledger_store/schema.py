@@ -1,6 +1,6 @@
 """Schema SQL and migrations for the contract ledger database."""
 
-from . import classification_schema, invoice_constraints
+from . import classification_schema, invoice_constraints, invoice_revision_schema
 
 LEDGER_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS contracts (
@@ -260,6 +260,7 @@ CREATE TABLE IF NOT EXISTS invoices (
         CHECK(deduction_status IN ('not_applicable','pending','deducted')),
     original_invoice_id INTEGER,
     remark TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(original_invoice_id) REFERENCES invoices(id)
@@ -346,7 +347,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
-CURRENT_SCHEMA_VERSION = 70
+CURRENT_SCHEMA_VERSION = 71
 
 
 # Indexes introduced by historical migrations but required immediately for a
@@ -677,7 +678,7 @@ MIGRATIONS = [
     (61, "CREATE INDEX IF NOT EXISTS idx_contract_serials_contract ON contract_serials(contract_id, status, serial_no);", "DROP INDEX IF EXISTS idx_contract_serials_contract;"),
     (62, "ALTER TABLE payment_plans ADD COLUMN contract_serial_id INTEGER REFERENCES contract_serials(id);", "ALTER TABLE payment_plans DROP COLUMN contract_serial_id;"),
     (63, "CREATE INDEX IF NOT EXISTS idx_payment_serial ON payment_plans(contract_serial_id, due_date) WHERE contract_serial_id IS NOT NULL;", "DROP INDEX IF EXISTS idx_payment_serial;"),
-] + invoice_constraints.INVOICE_CONSTRAINT_MIGRATIONS + classification_schema.CLASSIFICATION_MIGRATIONS
+] + invoice_constraints.INVOICE_CONSTRAINT_MIGRATIONS + classification_schema.CLASSIFICATION_MIGRATIONS + invoice_revision_schema.INVOICE_REVISION_MIGRATIONS
 
 
 # Data backfills are named separately from DDL so migration execution remains

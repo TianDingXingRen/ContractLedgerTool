@@ -6,11 +6,39 @@ from flask import redirect, render_template, request, url_for
 
 from core.domain_errors import NotFoundError
 from services import production_commands, production_queries
-from utils.production_forms import contract_item_rows
+from utils.production_forms import (
+    contract_item_rows,
+    contract_item_rows_for_redisplay,
+)
 
 
 def _not_found_response(exc):
     return exc.public_message, exc.status_code
+
+
+def _submitted_item_context(context, rows, operator):
+    """Overlay posted values on read-model rows for an error response."""
+    existing = {
+        int(item['id']): item
+        for item in context.get('items', [])
+        if item.get('id')
+    }
+    submitted = []
+    for raw in rows:
+        try:
+            item_id = int(raw.get('id') or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        item = dict(existing.get(item_id, {}))
+        item.update(raw)
+        item['id'] = raw.get('id', '')
+        item.setdefault('issued_qty', 0)
+        item.setdefault('remaining_qty', None)
+        item.setdefault('amount', None)
+        submitted.append(item)
+    context['form_items'] = submitted
+    context['operator'] = operator
+    return context
 
 
 def register_contract_item_routes(bp):
@@ -20,15 +48,19 @@ def register_contract_item_routes(bp):
     )
     def contract_items_page(contract_id):
         error = request.args.get('error', '')
+        submitted_rows = None
+        operator = ''
         try:
             context = production_queries.contract_item_page(contract_id)
             if request.method == 'POST':
+                operator = str(
+                    request.form.get('operator', '') or ''
+                ).strip()
+                submitted_rows = contract_item_rows(request.form)
                 production_commands.save_contract_items(
                     contract_id,
-                    contract_item_rows(request.form),
-                    operator=str(
-                        request.form.get('operator', '') or ''
-                    ).strip(),
+                    submitted_rows,
+                    operator=operator,
                 )
                 return redirect(
                     url_for(
@@ -41,6 +73,14 @@ def register_contract_item_routes(bp):
         except ValueError as exc:
             error = str(exc)
             context = production_queries.contract_item_page(contract_id)
+            if request.method == 'POST' and submitted_rows is None:
+                submitted_rows = contract_item_rows_for_redisplay(
+                    request.form
+                )
+            if submitted_rows is not None:
+                context = _submitted_item_context(
+                    context, submitted_rows, operator
+                )
 
         return (
             render_template(

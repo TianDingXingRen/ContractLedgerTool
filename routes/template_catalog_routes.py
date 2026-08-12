@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from flask import (
     redirect,
     render_template,
@@ -50,6 +52,7 @@ def register_template_catalog_routes(bp):
             template_filename=view.template_filename,
             template_revision=view.template_revision,
             draft_scope=view.draft_scope,
+            draft_page_id=uuid.uuid4().hex,
             preview_blocks=view.preview_blocks,
             preview_warnings=view.preview_warnings,
             project_names=view.project_names,

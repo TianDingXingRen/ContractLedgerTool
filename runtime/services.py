@@ -58,5 +58,6 @@ def create_runtime_services(paths: RuntimePaths, *, max_upload_bytes=50 * 1024 *
             output_dir=paths.output_dir,
             staging_dir=paths.generation_staging_dir,
             recovery_dir=paths.generation_recovery_dir,
+            additional_staging_dirs=(paths.uploads_dir,),
         ),
     )

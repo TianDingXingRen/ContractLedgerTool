@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 
 from flask import redirect, render_template, request, session, url_for
 
@@ -37,6 +38,7 @@ def editor():
         data,
         current_runtime_paths(),
     )
+    model['draft_page_id'] = uuid.uuid4().hex
     return render_template('editor.html', **model)
 
 

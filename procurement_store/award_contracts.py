@@ -9,6 +9,7 @@ from .constants import (
     DEFAULT_CONTRACT_ROLLBACK_STATUS,
     PROJECT_STATUSES,
 )
+from .status_transitions import transition_project
 
 
 def create_award_recommendation(
@@ -16,6 +17,9 @@ def create_award_recommendation(
 ):
     now = now_func()
     with get_conn() as conn:
+        transition_project(
+            conn, project_id, AWARD_CONFIRMED_STATUS, now, allow_forward_skip=True
+        )
         version = conn.execute(
             'SELECT COALESCE(MAX(version), 0) + 1 FROM award_recommendations WHERE project_id = ?',
             (project_id,),
@@ -49,10 +53,6 @@ def create_award_recommendation(
             "UPDATE award_recommendations SET status = 'superseded' WHERE project_id = ? AND id != ? AND status = 'confirmed'",
             (project_id, recommendation_id),
         )
-        conn.execute(
-            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
-            (AWARD_CONFIRMED_STATUS, now, project_id),
-        )
         audit(conn, 'award_recommendation', recommendation_id, 'confirm', after=data)
         return recommendation_id
 
@@ -62,6 +62,9 @@ def create_split_award_recommendation(get_conn, audit, now_func, project_id, dat
     primary = selections[0]
     supplier_names = list(dict.fromkeys(item['supplier_name'] for item in selections))
     with get_conn() as conn:
+        transition_project(
+            conn, project_id, AWARD_CONFIRMED_STATUS, now, allow_forward_skip=True
+        )
         version = conn.execute(
             'SELECT COALESCE(MAX(version), 0) + 1 FROM award_recommendations WHERE project_id = ?',
             (project_id,),
@@ -95,10 +98,6 @@ def create_split_award_recommendation(get_conn, audit, now_func, project_id, dat
         conn.execute(
             "UPDATE award_recommendations SET status = 'superseded' WHERE project_id = ? AND id != ? AND status = 'confirmed'",
             (project_id, recommendation_id),
-        )
-        conn.execute(
-            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
-            (AWARD_CONFIRMED_STATUS, now, project_id),
         )
         audit(
             conn, 'award_recommendation', recommendation_id, 'confirm_split',
@@ -142,6 +141,7 @@ def get_or_create_contract_data_sheet(
         ).fetchone()
         if existing:
             return dict(existing)
+        transition_project(conn, project_id, 'contract_draft', now)
         cur = conn.execute(
             """INSERT INTO contract_data_sheets
                (project_id, recommendation_id, schema_version, payload_json, status, created_at, updated_at)
@@ -149,10 +149,6 @@ def get_or_create_contract_data_sheet(
             (project_id, recommendation_id, json.dumps(payload, ensure_ascii=False), now, now),
         )
         sheet_id = cur.lastrowid
-        conn.execute(
-            "UPDATE procurement_projects SET status = 'contract_draft', updated_at = ? WHERE id = ?",
-            (now, project_id),
-        )
         return row_to_dict(
             conn.execute('SELECT * FROM contract_data_sheets WHERE id = ?', (sheet_id,)).fetchone()
         )
@@ -201,6 +197,13 @@ def complete_contract_link(
                 (sheet['project_id'], contract_id, sheet['recommendation_id'], now),
             )
             return existing['id']
+        transition_project(
+            conn,
+            sheet['project_id'],
+            CONTRACT_CREATED_STATUS,
+            now,
+            allow_forward_skip=True,
+        )
         cur = conn.execute(
             """INSERT INTO project_contract_links
                (project_id, recommendation_id, data_sheet_id, contract_id, created_at)
@@ -214,10 +217,6 @@ def complete_contract_link(
         conn.execute(
             "UPDATE award_recommendations SET status = 'converted', updated_at = ? WHERE id = ?",
             (now, sheet['recommendation_id']),
-        )
-        conn.execute(
-            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
-            (CONTRACT_CREATED_STATUS, now, sheet['project_id']),
         )
         conn.execute(
             """INSERT OR IGNORE INTO procurement_contract_refs
@@ -247,15 +246,18 @@ def add_contract_ref(
         contract = conn.execute('SELECT id FROM contracts WHERE id = ?', (contract_id,)).fetchone()
         if not contract:
             raise ValueError('合同不存在')
+        transition_project(
+            conn,
+            project_id,
+            CONTRACT_CREATED_STATUS,
+            now,
+            allow_forward_skip=True,
+        )
         conn.execute(
             """INSERT OR IGNORE INTO procurement_contract_refs
                (project_id, contract_id, source_type, source_id, created_at)
                VALUES (?, ?, ?, ?, ?)""",
             (project_id, contract_id, source_type or 'direct_contract', source_id, now),
-        )
-        conn.execute(
-            "UPDATE procurement_projects SET status = ?, updated_at = ? WHERE id = ?",
-            (CONTRACT_CREATED_STATUS, now, project_id),
         )
         audit(
             conn, 'project', project_id, 'contract_ref_create',

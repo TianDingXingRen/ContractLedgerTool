@@ -13,7 +13,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="apple-btn apple-btn-ghost" type="submit">从定标结果同步</button>
     </form>
-    {% if items %}<a class="apple-btn apple-btn-primary" href="{{ url_for('production.production_notice_new', contract_id=contract.id) }}">新建投产通知</a>{% endif %}
+    {% if items and contract.status != 'void' %}<a class="apple-btn apple-btn-primary" href="{{ url_for('production.production_notice_new', contract_id=contract.id) }}">新建投产通知</a>{% elif items %}<button class="apple-btn apple-btn-primary" type="button" disabled title="已作废合同不能创建投产通知">合同已作废</button>{% endif %}
   </div>
 </div>
 
@@ -25,9 +25,10 @@
 </div>
 
 {% set max_item_rows = 500 %}
-{% set remaining_item_rows = max_item_rows - items|length %}
-{% set padding_item_rows = 3 if remaining_item_rows >= 3 else (remaining_item_rows if remaining_item_rows > 0 else 0) %}
-{% set row_count = items|length + padding_item_rows %}
+{% set edit_items = form_items if form_items is defined and form_items is not none else items %}
+{% set remaining_item_rows = max_item_rows - edit_items|length %}
+{% set padding_item_rows = 0 if form_items is defined and form_items is not none else (3 if remaining_item_rows >= 3 else (remaining_item_rows if remaining_item_rows > 0 else 0)) %}
+{% set row_count = edit_items|length + padding_item_rows %}
 <form method="post" id="contract-items-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="item_count" id="item-count" value="{{ row_count }}">
@@ -40,21 +41,21 @@
       </tr></thead>
       <tbody id="item-rows">
       {% for index in range(row_count) %}
-        {% set item = items[index] if index < items|length else none %}
+        {% set item = edit_items[index] if index < edit_items|length else none %}
         <tr data-item-row>
           <td><input type="hidden" name="item_{{ index }}_id" value="{{ item.id if item else '' }}"><input class="input input-bordered input-sm w-16" name="item_{{ index }}_line_no" value="{{ item.line_no if item else index + 1 }}"></td>
-          <td><input class="input input-bordered input-sm min-w-40" name="item_{{ index }}_item_name" value="{{ item.item_name if item else '' }}" {% if item %}required{% endif %}></td>
+          <td><input class="input input-bordered input-sm min-w-40" name="item_{{ index }}_item_name" value="{{ item.item_name if item else '' }}" {% if item and (item.id or item.item_name) %}required{% endif %}></td>
           <td><input class="input input-bordered input-sm min-w-32" name="item_{{ index }}_spec_model" value="{{ item.spec_model if item else '' }}"></td>
           <td><input class="input input-bordered input-sm w-28" name="item_{{ index }}_drawing_no" value="{{ item.drawing_no if item else '' }}"></td>
           <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_contracted_qty" inputmode="numeric" value="{{ item.contracted_qty if item else '' }}"></td>
           <td><input class="input input-bordered input-sm w-16" name="item_{{ index }}_unit" value="{{ item.unit if item else '个' }}"></td>
           <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_serial_start" inputmode="numeric" value="{{ item.serial_start if item and item.serial_start is not none else '' }}"></td>
           <td><input class="input input-bordered input-sm w-24" name="item_{{ index }}_serial_end" inputmode="numeric" value="{{ item.serial_end if item and item.serial_end is not none else '' }}"></td>
-          <td><input class="input input-bordered input-sm w-28" name="item_{{ index }}_unit_price" inputmode="decimal" value="{{ '%.2f'|format(item.unit_price) if item and item.unit_price is not none else '' }}"></td>
+          <td><input class="input input-bordered input-sm w-28" name="item_{{ index }}_unit_price" inputmode="decimal" value="{{ item.unit_price if form_items is defined and form_items is not none and item else ('%.2f'|format(item.unit_price) if item and item.unit_price is not none else '') }}"></td>
           <td class="whitespace-nowrap">{{ '¥%.2f'|format(item.amount) if item and item.amount is not none else '—' }}</td>
           <td>{{ item.issued_qty if item else 0 }}</td>
-          <td class="font-semibold {{ 'text-red-600' if item and item.remaining_qty < 0 else '' }}">{{ item.remaining_qty if item else '—' }}</td>
-          <td>{% if item %}<label class="text-xs text-red-600"><input type="checkbox" name="item_{{ index }}_delete" value="1"> 删除</label>{% endif %}</td>
+          <td class="font-semibold {{ 'text-red-600' if item and item.remaining_qty is not none and item.remaining_qty < 0 else '' }}">{{ item.remaining_qty if item and item.remaining_qty is not none else '—' }}</td>
+          <td>{% if item and item.id %}<label class="text-xs text-red-600"><input type="checkbox" name="item_{{ index }}_delete" value="1" {{ 'checked' if item.delete }}> 删除</label>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -62,7 +63,7 @@
   </div>
   <div class="flex items-center justify-between mt-4">
     <button class="apple-btn apple-btn-ghost" type="button" id="add-item-row">增加一行</button>
-    <div class="flex items-center gap-2"><input class="input input-bordered input-sm" name="operator" placeholder="变更人（建议填写）"><button class="apple-btn apple-btn-primary" type="submit">保存产品基线</button></div>
+    <div class="flex items-center gap-2"><input class="input input-bordered input-sm" name="operator" value="{{ operator or '' }}" placeholder="变更人（建议填写）"><button class="apple-btn apple-btn-primary" type="submit">保存产品基线</button></div>
   </div>
 </form>
 

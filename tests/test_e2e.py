@@ -103,3 +103,30 @@ def test_complete_document_generation_round_trip(tmp_path):
     assert table_rows[2] == ['防松螺母', '100', '2.30']
     assert '{' not in paragraphs
     assert all('{' not in cell for row in table_rows for cell in row)
+
+
+def test_template_load_deterministically_migrates_legacy_field_ids(tmp_path):
+    template_path = tmp_path / 'legacy.contract-template'
+    template_path.write_text(json.dumps({
+        'format_version': '1.0',
+        'template_name': '旧模板',
+        'source_docx': '',
+        'fields': [
+            {'id': '7'},
+            {'id': 7},
+            {'id': 'bad'},
+            {},
+            {'id': 2},
+        ],
+    }), encoding='utf-8')
+
+    first = template_def.TemplateDef.load(template_path)
+    second = template_def.TemplateDef.load(template_path)
+
+    assert [field['id'] for field in first.data['fields']] == [7, 0, 1, 3, 2]
+    assert first.data['fields'] == second.data['fields']
+
+    migrated_path = tmp_path / 'migrated.contract-template'
+    first.save(str(migrated_path))
+    migrated = json.loads(migrated_path.read_text(encoding='utf-8'))
+    assert [field['id'] for field in migrated['fields']] == [7, 0, 1, 3, 2]

@@ -56,6 +56,7 @@ def production_notice_page(status='', contract_id=None, page=1):
         'summary': ledger_store.summarize_production_notices(
             contract_id=contract_id, status=safe_status
         ),
+        'contract': ledger_store.get_contract(contract_id) if contract_id else None,
     }
 
 

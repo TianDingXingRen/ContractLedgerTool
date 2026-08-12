@@ -429,6 +429,7 @@ def normalize_table_columns(field, submitted_cols):
 
     if not normalized:
         raise ValueError('列定义不能为空')
+    field_eval.sort_table_columns_by_dependency(normalized)
     return normalized
 
 

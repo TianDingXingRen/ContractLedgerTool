@@ -12,6 +12,7 @@ from flask import Blueprint, current_app, jsonify, redirect, render_template, re
 from werkzeug.utils import safe_join, secure_filename
 
 import ledger_store
+from core.domain_errors import ConflictError
 from utils.field_utils import float_or_none, normalize_date
 from utils.logger import get_logger
 
@@ -87,6 +88,19 @@ def _allocation_rows(form):
             'remark': form.get(f'allocation_{index}_remark', ''),
         })
     return rows
+
+
+def _invoice_revision(form):
+    raw = str(form.get('revision', '') or '').strip()
+    if not raw:
+        raise ValueError('缺少发票版本，请刷新页面后重新提交')
+    try:
+        revision = int(raw)
+    except ValueError as exc:
+        raise ValueError('发票版本无效，请刷新页面后重新提交') from exc
+    if revision <= 0:
+        raise ValueError('发票版本无效，请刷新页面后重新提交')
+    return revision
 
 
 def _invoice_form_context(invoice=None, *, error='', selected_contract_id=None):
@@ -171,6 +185,8 @@ def _register_invoice_routes(bp):
         contract = ledger_store.get_contract(contract_id)
         if not contract or contract.get('deleted_at'):
             return jsonify({'error': '合同不存在'}), 404
+        if contract.get('status') == 'void':
+            return jsonify({'error': '已作废合同不能新增或修改发票分摊'}), 409
         notices = [
             item for item in ledger_store.list_production_notices(contract_id)
             if item['status'] in {'issued', 'acknowledged', 'closed'}
@@ -239,8 +255,20 @@ def _register_invoice_routes(bp):
                 ledger_store.save_invoice(
                     _invoice_data(request.form), allocations,
                     invoice_id=invoice_id,
+                    expected_revision=_invoice_revision(request.form),
                 )
                 return redirect(url_for('invoices.invoice_detail', invoice_id=invoice_id))
+            except ConflictError as exc:
+                submitted = dict(request.form)
+                submitted['id'] = invoice_id
+                submitted['allocations'] = allocations
+                submitted['files'] = invoice.get('files', [])
+                return render_template(
+                    'invoice_form.html',
+                    **_invoice_form_context(
+                        submitted, error=exc.public_message
+                    ),
+                ), exc.status_code
             except ValueError as exc:
                 submitted = dict(request.form)
                 submitted['id'] = invoice_id

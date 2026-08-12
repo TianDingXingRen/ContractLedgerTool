@@ -123,8 +123,7 @@ def _create_full_backup_package_unlocked(label='handover', paths=None):
         raise ValueError('完整数据包路径无效')
 
     temp_db = os.path.join(packages_dir, f'.package_db_{uuid.uuid4().hex}.db')
-    records = []
-    roots = []
+    records, roots = [], []
     try:
         _copy_database(ledger_store.DB_PATH, temp_db)
         database_info = _validate_application_database(
@@ -168,6 +167,7 @@ def _create_full_backup_package_unlocked(label='handover', paths=None):
                 MANIFEST_NAME,
                 json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8'),
             )
+        validate_full_backup_package(target_path, paths)
     except Exception:
         _remove_file_if_exists(packages_dir, target_name)
         raise
@@ -191,7 +191,7 @@ def list_full_backup_packages():
     packages_dir = _package_dir()
     rows = []
     for filename in os.listdir(packages_dir):
-        if not filename.lower().endswith('.zip'):
+        if filename.startswith('.') or not filename.lower().endswith('.zip'):
             continue
         path = os.path.abspath(os.path.join(packages_dir, filename))
         if not path_within(packages_dir, path) or not os.path.isfile(path):
@@ -219,7 +219,7 @@ def list_full_backup_packages():
 
 def full_package_path(filename):
     name = os.path.basename(filename or '')
-    if not name.lower().endswith('.zip'):
+    if name.startswith('.') or not name.lower().endswith('.zip'):
         raise FileNotFoundError('完整数据包不存在')
     path = os.path.abspath(os.path.join(_package_dir(), name))
     if not path_within(_package_dir(), path) or not os.path.isfile(path):
@@ -314,8 +314,8 @@ def upload_full_backup_package(file_storage, paths=None):
 
     packages_dir = _package_dir()
     temp_path = os.path.abspath(os.path.join(packages_dir, f'.upload_{uuid.uuid4().hex}.zip'))
-    file_storage.save(temp_path)
     try:
+        file_storage.save(temp_path)
         validate_full_backup_package(temp_path, paths)
         target_name = (
             f'uploaded_{datetime.now().strftime("%Y%m%d_%H%M%S")}_'

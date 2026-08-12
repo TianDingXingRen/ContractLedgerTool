@@ -36,10 +36,11 @@
       {% elif tab == 'payments' %}
       <button class="ui-button primary" type="button" data-drawer-open="newPlanDrawer"><i data-lucide="plus"></i>新增付款计划</button>
       {% elif tab == 'production' %}
-        {% if contract_items %}<a class="ui-button primary" href="{{ url_for('production.production_notice_new', contract_id=contract.id) }}"><i data-lucide="send"></i>发投产通知</a>
+        {% if contract.status == 'void' %}<button class="ui-button primary" type="button" disabled title="已作废合同不能创建或签发投产通知"><i data-lucide="send"></i>合同已作废</button>
+        {% elif contract_items %}<a class="ui-button primary" href="{{ url_for('production.production_notice_new', contract_id=contract.id) }}"><i data-lucide="send"></i>发投产通知</a>
         {% else %}<a class="ui-button primary" href="{{ url_for('production.contract_items_page', contract_id=contract.id) }}"><i data-lucide="boxes"></i>维护产品基线</a>{% endif %}
       {% elif tab == 'invoices' %}
-      <a class="ui-button primary" href="{{ url_for('invoices.invoice_new', contract_id=contract.id) }}"><i data-lucide="receipt-text"></i>登记发票</a>
+        {% if contract.status != 'void' %}<a class="ui-button primary" href="{{ url_for('invoices.invoice_new', contract_id=contract.id) }}"><i data-lucide="receipt-text"></i>登记发票</a>{% else %}<button class="ui-button primary" type="button" disabled title="已作废合同不能登记发票分摊"><i data-lucide="receipt-text"></i>合同已作废</button>{% endif %}
       {% endif %}
       <a class="ui-button secondary" href="{{ url_for('contracts.contract_ledger') }}">返回台账</a>
       <details class="ui-menu">
@@ -55,13 +56,15 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="ui-menu-item danger" type="submit"><i data-lucide="trash-2"></i>移入回收站</button>
           </form>
-          {% elif not procurement_linked %}
+          {% elif procurement_linked %}
+          <span class="ui-menu-item" style="cursor:not-allowed;color:var(--ui-text-faint)" title="采购关联合同需保留审计记录，不能永久删除"><i data-lucide="info"></i>采购关联合同需保留审计记录，不能永久删除</span>
+          {% elif payment_execution_locked %}
+          <span class="ui-menu-item" style="cursor:not-allowed;color:var(--ui-text-faint)" title="合同已有付款或业务执行记录，不能永久删除"><i data-lucide="info"></i>付款执行记录需保留，不能永久删除</span>
+          {% else %}
           <form method="post" action="{{ url_for('contracts.contract_permanent_delete', contract_id=contract.id) }}" data-confirm="永久删除后无法恢复，确定继续？" data-confirm-title="永久删除合同" data-confirm-ok="永久删除" data-confirm-danger="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="ui-menu-item danger" type="submit"><i data-lucide="trash-2"></i>永久删除</button>
           </form>
-          {% else %}
-          <span class="ui-menu-item" style="cursor:not-allowed;color:var(--ui-text-faint)" title="采购关联合同需保留审计记录，不能永久删除"><i data-lucide="info"></i>采购关联合同需保留审计记录，不能永久删除</span>
           {% endif %}
         </div>
       </details>
@@ -208,7 +211,7 @@
             {% if p.confirm_status == 'pending' %}<form method="post" action="{{ url_for('payments.payment_plan_quick_update', plan_id=p.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="confirm"><input type="hidden" name="return_contract_id" value="{{ contract.id }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="return_anchor" value="payment-plan-{{ p.id }}"><button class="ui-button secondary compact" type="submit">确认</button></form>{% endif %}
             {% if p.payment_status != 'paid' %}<button class="ui-button secondary compact" type="button" data-drawer-open="payDrawer{{ p.id }}">登记付款</button>{% endif %}
 	            <button class="ui-button ghost compact" type="button" data-drawer-open="planDrawer{{ p.id }}">编辑</button>
-	            <form method="post" action="{{ url_for('payments.payment_plans_save', contract_id=contract.id) }}" data-confirm="确定删除这条付款计划吗？"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="plan_count" value="1"><input type="hidden" name="plan_0_id" value="{{ p.id }}"><input type="hidden" name="plan_0_delete" value="1"><button class="ui-button ghost danger compact" type="submit" aria-label="删除 {{ p.phase_name or '付款计划' }}">删除</button></form>
+	            {% if p.can_delete %}<form method="post" action="{{ url_for('payments.payment_plans_save', contract_id=contract.id) }}" data-confirm="确定删除这条付款计划吗？"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="payments"><input type="hidden" name="return_page" value="{{ plan_result.page }}"><input type="hidden" name="plan_count" value="1"><input type="hidden" name="plan_0_id" value="{{ p.id }}"><input type="hidden" name="plan_0_delete" value="1"><button class="ui-button ghost danger compact" type="submit" aria-label="删除 {{ p.phase_name or '付款计划' }}">删除</button></form>{% else %}<button class="ui-button ghost compact" type="button" disabled title="已有付款或业务执行记录，必须保留审计记录" aria-label="{{ p.phase_name or '付款计划' }}已有执行记录，不能删除">保留记录</button>{% endif %}
           </div></td>
         </tr>{% endfor %}
       </tbody></table></div>{% else %}{{ ui.empty_state('banknote', '暂无实际付款计划', '确认付款规则并登记触发事件，或手动新增一条付款计划。') }}{% endif %}

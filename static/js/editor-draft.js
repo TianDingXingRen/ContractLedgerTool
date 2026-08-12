@@ -44,12 +44,141 @@ var draftIdentityHash = draftSchemaHash([
   draftScope,
   draftTemplateSchema,
 ].join('\u001f'));
-var draftKey = 'ct_draft_v3_' + (editorConfig.templateFilename || 'unknown') + '_' +
-  draftIdentityHash;
+var sharedDraftKey = 'ct_draft_v3_' +
+  (editorConfig.templateFilename || 'unknown') + '_' + draftIdentityHash;
+var tabDraftPrefix = 'ct_draft_v4_' +
+  (editorConfig.templateFilename || 'unknown') + '_' + draftIdentityHash + '_';
+var draftTabStorageKey = 'ct_draft_tab_v1_' +
+  (editorConfig.templateFilename || 'unknown') + '_' + draftIdentityHash;
+var draftInstanceId = validDraftTabId(editorConfig.draftPageId) ?
+  String(editorConfig.draftPageId) : newDraftTabId();
+var draftTabId = '';
+var draftKey = '';
+var draftOwnerKey = '';
+var draftCloneKey = '';
 var draftTimer;
 var draftDirty = false;
 var draftRestoring = false;
 var hasUnsavedChanges = false;
+
+function newDraftTabId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID().replace(/-/g, '');
+  }
+  if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+    var values = new Uint32Array(4);
+    window.crypto.getRandomValues(values);
+    return Array.from(values, function(value) {
+      return value.toString(36);
+    }).join('');
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2) +
+    Math.random().toString(36).slice(2);
+}
+
+function validDraftTabId(value) {
+  return /^[A-Za-z0-9_-]{8,128}$/.test(String(value || ''));
+}
+
+function tabDraftKey(tabId) {
+  return tabDraftPrefix + tabId;
+}
+
+function tabOwnerKey(tabId) {
+  return 'ct_draft_owner_v1_' + draftIdentityHash + '_' + tabId;
+}
+
+function assignDraftTab(tabId) {
+  draftTabId = tabId;
+  draftKey = tabDraftKey(tabId);
+  draftOwnerKey = tabOwnerKey(tabId);
+  try {
+    sessionStorage.setItem(draftTabStorageKey, tabId);
+  } catch (error) {
+    // A private browsing policy can disable sessionStorage. The in-memory ID
+    // still isolates this document from other open editors.
+  }
+}
+
+function initializeDraftTab() {
+  var candidate = '';
+  try {
+    candidate = sessionStorage.getItem(draftTabStorageKey) || '';
+  } catch (error) {
+    candidate = '';
+  }
+  if (!validDraftTabId(candidate)) candidate = draftInstanceId;
+
+  // sessionStorage is normally tab-local, but browsers copy it when a tab is
+  // duplicated or opened with an opener. The local owner claim detects that
+  // copy and forks the new page before either page can share a draft key.
+  for (var attempt = 0; attempt < 4; attempt++) {
+    assignDraftTab(candidate);
+    try {
+      var owner = localStorage.getItem(draftOwnerKey);
+      if (owner && owner !== draftInstanceId) {
+        if (!draftCloneKey) draftCloneKey = draftKey;
+        candidate = attempt === 0 ? draftInstanceId : newDraftTabId();
+        continue;
+      }
+      localStorage.setItem(draftOwnerKey, draftInstanceId);
+      if (localStorage.getItem(draftOwnerKey) === draftInstanceId) return;
+    } catch (error) {
+      return;
+    }
+    if (!draftCloneKey) draftCloneKey = draftKey;
+    candidate = newDraftTabId();
+  }
+  assignDraftTab(newDraftTabId());
+}
+
+function releaseDraftTab() {
+  try {
+    if (localStorage.getItem(draftOwnerKey) === draftInstanceId) {
+      localStorage.removeItem(draftOwnerKey);
+    }
+  } catch (error) {
+    // Storage cleanup is best-effort; an orphaned claim only causes a future
+    // page to fork to another safe identifier.
+  }
+}
+
+function pruneExpiredTabDrafts() {
+  try {
+    for (var index = localStorage.length - 1; index >= 0; index--) {
+      var key = localStorage.key(index);
+      if (!key || key.indexOf(tabDraftPrefix) !== 0) continue;
+      var raw = localStorage.getItem(key);
+      var expired = false;
+      try {
+        var data = JSON.parse(raw);
+        var savedAt = data && new Date(data._saved_at).getTime();
+        expired = !savedAt || !Number.isFinite(savedAt) ||
+          (Date.now() - savedAt) / 3600000 > 72;
+      } catch (error) {
+        expired = true;
+      }
+      if (!expired) continue;
+      localStorage.removeItem(key);
+    }
+  } catch (error) {
+    // Storage enumeration is best-effort under restrictive browser policies.
+  }
+}
+
+function handleDraftStorageEvent(event) {
+  if (!event || event.key !== draftOwnerKey || !event.newValue ||
+      event.newValue === draftInstanceId) return;
+  // A race between duplicated tabs can temporarily let both pages believe
+  // they own a copied sessionStorage ID. The losing owner forks as soon as the
+  // browser announces the competing claim; draft contents remain copyable.
+  draftCloneKey = draftKey;
+  assignDraftTab(newDraftTabId());
+  initializeDraftTab();
+}
+
+pruneExpiredTabDrafts();
+initializeDraftTab();
 
 function saveDraft() {
   try {
@@ -76,6 +205,7 @@ function saveDraft() {
     data._template_schema = draftTemplateSchema;
     data._template_revision = draftTemplateRevision;
     data._draft_scope = draftScope;
+    data._draft_tab_id = draftTabId;
     data._saved_at = new Date().toISOString();
     localStorage.setItem(draftKey, JSON.stringify(data));
   } catch (error) {
@@ -122,19 +252,33 @@ function parseDraftTables(data) {
   return parsed;
 }
 
+function storedDraftCandidate() {
+  var candidates = [draftKey];
+  if (draftCloneKey && draftCloneKey !== draftKey) {
+    candidates.push(draftCloneKey);
+  }
+  candidates.push(sharedDraftKey);
+  for (var index = 0; index < candidates.length; index++) {
+    var key = candidates[index];
+    var raw = localStorage.getItem(key);
+    if (raw) return {key: key, raw: raw};
+  }
+  return null;
+}
+
 function restoreDraft() {
   var previousRestoring = draftRestoring;
   draftRestoring = true;
   try {
-    var raw = localStorage.getItem(draftKey);
-    if (!raw) return false;
-    var data = JSON.parse(raw);
+    var candidate = storedDraftCandidate();
+    if (!candidate) return false;
+    var data = JSON.parse(candidate.raw);
     if (!data || !data._saved_at ||
         data._template_schema !== draftTemplateSchema ||
         data._template_revision !== draftTemplateRevision ||
         data._draft_scope !== draftScope) return false;
     if ((Date.now() - new Date(data._saved_at).getTime()) / 3600000 > 72) {
-      localStorage.removeItem(draftKey);
+      localStorage.removeItem(candidate.key);
       return false;
     }
     var parsedTables = parseDraftTables(data);
@@ -190,6 +334,15 @@ function restoreDraft() {
       updateProgress();
       recalcAllFields();
     }
+    if (candidate.key !== draftKey) {
+      data._draft_tab_id = draftTabId;
+      localStorage.setItem(draftKey, JSON.stringify(data));
+      // A copied-tab draft belongs to the original page too. Copy it into the
+      // new page's namespace, while legacy shared v3 data is migrated once.
+      if (candidate.key === sharedDraftKey) {
+        localStorage.removeItem(candidate.key);
+      }
+    }
     return hasContent;
   } catch (error) {
     console.warn('恢复本地草稿失败', error);
@@ -223,8 +376,6 @@ function clearDraft() {
   draftDirty = false;
   hasUnsavedChanges = false;
   localStorage.removeItem(draftKey);
-  localStorage.removeItem(legacyDraftKey);
-  localStorage.removeItem(legacySchemaDraftKey);
 }
 
 function preserveDraft() {
@@ -253,6 +404,9 @@ window.addEventListener('beforeunload', function(event) {
   event.preventDefault();
   event.returnValue = '';
 });
+window.addEventListener('pagehide', releaseDraftTab);
+window.addEventListener('pageshow', initializeDraftTab);
+window.addEventListener('storage', handleDraftStorageEvent);
 
 window.ContractEditor.draft = Object.freeze({
   save: saveDraft,

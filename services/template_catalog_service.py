@@ -102,9 +102,7 @@ def open_template_editor(name):
     )
 
     fields = definition.data['fields']
-    for index, field in enumerate(fields):
-        if 'id' not in field:
-            field['id'] = index
+    template_def.normalize_field_ids(fields)
     preview_model = editor_preview_model(
         definition.data.get('source_docx', ''),
         fields,

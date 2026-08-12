@@ -65,3 +65,19 @@ def test_parse_template_fields_rejects_invalid_formula():
 
     with pytest.raises(ValueError, match='合计 公式无效'):
         parse_template_fields(form)
+
+
+def test_parse_template_fields_rejects_table_formula_cycle():
+    form = {
+        'field_label_0': '明细',
+        'field_type_0': 'table',
+        'col_label_0_0': 'a',
+        'col_type_0_0': 'calculated',
+        'col_formula_0_0': 'b + 1',
+        'col_label_0_1': 'b',
+        'col_type_0_1': 'calculated',
+        'col_formula_0_1': 'a + 1',
+    }
+
+    with pytest.raises(ValueError, match='循环依赖'):
+        parse_template_fields(form)

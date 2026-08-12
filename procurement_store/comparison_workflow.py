@@ -2,6 +2,8 @@
 
 import json
 
+from .status_transitions import transition_project
+
 
 def create_comparison_run(get_conn, audit, now_func, project_id, quote_ids, rule_config, results):
     now = now_func()
@@ -68,9 +70,8 @@ def create_clarifications_from_results(get_conn, now_func, project_id, questions
             )
             created += cur.rowcount
         if created:
-            conn.execute(
-                "UPDATE procurement_projects SET status = 'clarifying', updated_at = ? WHERE id = ?",
-                (now, project_id),
+            transition_project(
+                conn, project_id, 'clarifying', now, allow_forward_skip=True
             )
     return created
 

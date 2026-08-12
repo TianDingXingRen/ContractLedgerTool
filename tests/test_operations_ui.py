@@ -13,6 +13,10 @@ import app
 import ledger_store
 import procurement_store
 import template_def
+from flask import request
+from services.handover_archive import (
+    MAX_FULL_PACKAGE_UPLOAD_REQUEST_BYTES,
+)
 from utils.session_store import save_session_data
 
 
@@ -187,13 +191,87 @@ class OperationsUiTests(unittest.TestCase):
                 '/backups/full/upload',
                 data={'csrf_token': 'test-token', 'file': (bad_zip, 'bad.zip')},
                 content_type='multipart/form-data',
-                headers={'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+                headers={
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': 'test-token',
+                },
             )
             try:
                 self.assertEqual(response.status_code, 400)
                 self.assertFalse(response.get_json()['success'])
             finally:
                 response.close()
+
+    def test_full_backup_upload_uses_dedicated_request_limit(self):
+        self.test_app.config['MAX_CONTENT_LENGTH'] = 256
+        observed = {}
+
+        def capture_limit(file_storage, paths=None):
+            observed['limit'] = request.max_content_length
+            raise ValueError('stop after request parsing')
+
+        payload = io.BytesIO(b'x' * 1024)
+        with mock.patch(
+            'routes.settings_bp.handover_service.upload_full_backup_package',
+            side_effect=capture_limit,
+        ), self._client_with_csrf() as client:
+            response = client.post(
+                '/backups/full/upload',
+                data={
+                    'csrf_token': 'test-token',
+                    'file': (payload, 'backup.zip'),
+                },
+                content_type='multipart/form-data',
+                headers={'X-CSRF-Token': 'test-token'},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            observed['limit'], MAX_FULL_PACKAGE_UPLOAD_REQUEST_BYTES
+        )
+
+    def test_full_backup_upload_rejects_missing_header_before_body_parse(self):
+        with mock.patch(
+            'flask.wrappers.Request.form',
+            new_callable=mock.PropertyMock,
+            side_effect=AssertionError('multipart body was parsed'),
+        ), mock.patch(
+            'routes.settings_bp.handover_service.upload_full_backup_package'
+        ) as upload, self._client_with_csrf() as client:
+            response = client.post(
+                '/backups/full/upload',
+                data=b'unparsed multipart bytes',
+                content_type='multipart/form-data; boundary=test',
+            )
+
+        self.assertEqual(response.status_code, 400)
+        upload.assert_not_called()
+
+    def test_full_backup_upload_enforces_dedicated_request_limit(self):
+        self.test_app.config['FULL_BACKUP_MAX_CONTENT_LENGTH'] = 256
+        with self._client_with_csrf() as client:
+            response = client.post(
+                '/backups/full/upload',
+                data={'file': (io.BytesIO(b'x' * 1024), 'backup.zip')},
+                content_type='multipart/form-data',
+                headers={'X-CSRF-Token': 'test-token'},
+            )
+
+        self.assertEqual(response.status_code, 413)
+
+    def test_full_backup_creation_discards_package_that_fails_self_check(self):
+        packages_dir = os.path.join(ledger_store.BACKUP_DIR, 'packages')
+        before = set(os.listdir(packages_dir)) if os.path.isdir(packages_dir) else set()
+        with mock.patch(
+            'services.handover_service.validate_full_backup_package',
+            side_effect=ValueError('self-check failed'),
+        ):
+            with self.assertRaisesRegex(ValueError, 'self-check failed'):
+                from services import handover_service
+                handover_service.create_full_backup_package(paths=self.paths)
+
+        self.assertEqual(set(os.listdir(packages_dir)), before)
 
     def test_handover_export_contains_contract_payment_procurement_and_risks(self):
         from openpyxl import load_workbook
@@ -365,6 +443,7 @@ class OperationsUiTests(unittest.TestCase):
         self.assertIn('"previewWarnings"', html)
         self.assertIn('"templateRevision"', html)
         self.assertIn('"draftScope"', html)
+        self.assertIn('"draftPageId"', html)
         self.assertIn('data-testid="editor-missing-fields"', html)
         self.assertIn('data-testid="editor-structure-list"', html)
         self.assertIn('id="fieldNavigator"', html)

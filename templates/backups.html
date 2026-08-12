@@ -37,7 +37,7 @@
     <div class="p-4 border-b border-base-300 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
             <h3 class="font-semibold">完整数据包</h3>
-            <p class="text-xs text-base-content/50 mt-1">包含数据库、模板、上传文件、输出文件和常用配置</p>
+            <p class="text-xs text-base-content/50 mt-1">包含数据库、模板、上传文件、输出文件和常用配置；上传恢复上限 {{ '%.0f'|format(full_backup_max_archive_bytes / 1024 / 1024) }} MB</p>
         </div>
         <div class="flex flex-col sm:flex-row gap-2">
             <form method="post" action="{{ url_for('settings.full_backup_create') }}">
@@ -48,7 +48,7 @@
                 </button>
             </form>
             <form method="post" action="{{ url_for('settings.full_backup_upload') }}" enctype="multipart/form-data"
-                  class="flex flex-wrap items-center gap-2" data-file-picker>
+                  class="flex flex-wrap items-center gap-2" data-file-picker data-full-backup-upload>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label class="btn btn-ghost btn-sm cursor-pointer">
                     <i data-lucide="folder-open" class="w-4 h-4"></i> 选择数据包
