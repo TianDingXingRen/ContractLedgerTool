@@ -1,11 +1,12 @@
 param(
-    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\ContractLedgerTool",
+    [string]$InstallDir = $PSScriptRoot,
     [switch]$RemoveData,
     [switch]$NoPrompt,
     [switch]$SkipSystemIntegrationCleanup
 )
 
 $ErrorActionPreference = "Stop"
+$InstallMarkerName = ".contract-ledger-tool-install"
 
 function Assert-SafeInstallDirectory($Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -36,6 +37,81 @@ function Assert-SafeInstallDirectory($Path) {
     return $Resolved
 }
 
+function Test-SameDirectory($Left, $Right) {
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+        return $false
+    }
+    $LeftPath = [System.IO.Path]::GetFullPath($Left).TrimEnd('\')
+    $RightPath = [System.IO.Path]::GetFullPath($Right).TrimEnd('\')
+    return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-InstallDirectoryOwnership($Path) {
+    $DirectoryInfo = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (-not $DirectoryInfo.PSIsContainer) {
+        return $false
+    }
+    if ($DirectoryInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Install directory cannot be a symbolic link or junction: $Path"
+    }
+
+    $MarkerPath = Join-Path $Path $InstallMarkerName
+    if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
+        try {
+            $MarkerInfo = Get-Item -LiteralPath $MarkerPath -ErrorAction Stop
+            if ($MarkerInfo.Length -le 128) {
+                $MarkerValue = (Get-Content -LiteralPath $MarkerPath -Raw -ErrorAction Stop).Trim()
+                if ($MarkerValue -ceq "ContractLedgerTool") {
+                    return $true
+                }
+            }
+        } catch {
+            # A malformed or unreadable marker is not ownership evidence.
+        }
+    }
+
+    $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ContractLedgerTool"
+    try {
+        $RegisteredPath = (Get-ItemProperty -LiteralPath $RegistryPath `
+            -Name InstallLocation -ErrorAction Stop).InstallLocation
+        if (Test-SameDirectory $Path $RegisteredPath) {
+            return $true
+        }
+    } catch {
+        # Missing registration is expected for legacy source installations.
+    }
+
+    $LegacyBundledDefault = Join-Path $env:LOCALAPPDATA "Programs\ContractLedgerTool"
+    if (Test-SameDirectory $Path $LegacyBundledDefault) {
+        $BundledFiles = @("ContractLedgerTool.exe", "start.ps1", "version.txt")
+        $BundledMatch = $true
+        foreach ($Name in $BundledFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Path $Name) -PathType Leaf)) {
+                $BundledMatch = $false
+                break
+            }
+        }
+        if ($BundledMatch) {
+            return $true
+        }
+    }
+
+    $LegacySourceDefault = Join-Path $env:LOCALAPPDATA "ContractLedgerTool"
+    if (Test-SameDirectory $Path $LegacySourceDefault) {
+        $LegacyFiles = @("app.py", "start.ps1", "setup_autostart.ps1", "version.txt")
+        foreach ($Name in $LegacyFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Path $Name) -PathType Leaf)) {
+                return $false
+            }
+        }
+        return (
+            (Test-Path -LiteralPath (Join-Path $Path ".venv") -PathType Container) -and
+            (Test-Path -LiteralPath (Join-Path $Path "data") -PathType Container)
+        )
+    }
+    return $false
+}
+
 function Remove-IfPresent($Path, [switch]$Recurse) {
     if (-not (Test-Path -LiteralPath $Path)) {
         return
@@ -51,6 +127,9 @@ $InstallDir = Assert-SafeInstallDirectory $InstallDir
 $AppExe = Join-Path $InstallDir "ContractLedgerTool.exe"
 if (-not (Test-Path -LiteralPath $AppExe)) {
     throw "ContractLedgerTool.exe was not found in the requested install directory."
+}
+if (-not (Test-InstallDirectoryOwnership $InstallDir)) {
+    throw "Refusing to uninstall an unrecognized ContractLedgerTool directory: $InstallDir"
 }
 
 if (-not $NoPrompt) {

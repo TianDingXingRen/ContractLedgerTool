@@ -43,7 +43,10 @@ def get_all_docx_paths(get_conn, db_path):
         return [row[0] for row in rows]
     except Exception:
         get_logger().warning('Unable to query contract docx paths', exc_info=True)
-        return []
+        # Callers use this list as a deletion protection set.  Returning an
+        # empty list on query failure turns an unavailable ledger into "no
+        # referenced documents" and can make maintenance delete live files.
+        raise
 
 
 def check_db_integrity(get_conn, db_path, quick=True):

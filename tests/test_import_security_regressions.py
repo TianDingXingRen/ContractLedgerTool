@@ -116,6 +116,34 @@ def test_failed_full_backup_upload_removes_partial_temp_file(
     assert not any(name.startswith('.upload_') for name in os.listdir(tmp_path))
 
 
+def test_full_backup_write_budget_rejects_oversize_member_before_zip_write(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / 'oversize.bin'
+    source.write_bytes(b'12345')
+    writes = []
+
+    class RecordingZip:
+        @staticmethod
+        def write(*args):
+            writes.append(args)
+
+    monkeypatch.setattr(handover_archive, 'MAX_FULL_PACKAGE_MEMBER_SIZE', 4)
+    budget = handover_archive.FullPackageWriteBudget()
+
+    with pytest.raises(ValueError, match='单个文件过大'):
+        handover_archive.add_file(
+            RecordingZip(),
+            source,
+            'output/oversize.bin',
+            [],
+            budget,
+        )
+
+    assert writes == []
+
+
 def test_empty_sqlite_file_is_not_accepted_as_application_backup(tmp_path):
     database = tmp_path / 'empty.db'
     with sqlite3.connect(database):

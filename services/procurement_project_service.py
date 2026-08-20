@@ -117,20 +117,24 @@ def _next_project_no(conn=None):
     prefix = 'CG-' + date.today().strftime('%Y%m%d') + '-'
     def _read(connection):
         return connection.execute(
-            'SELECT project_no FROM procurement_projects WHERE project_no LIKE ? ORDER BY project_no DESC LIMIT 1',
-            (prefix + '%',),
+            """SELECT MAX(CAST(SUBSTR(project_no, ?) AS INTEGER))
+                 FROM procurement_projects
+                WHERE project_no LIKE ?
+                  AND SUBSTR(project_no, ?) != ''
+                  AND SUBSTR(project_no, ?) NOT GLOB '*[^0-9]*'""",
+            (
+                len(prefix) + 1,
+                prefix + '%',
+                len(prefix) + 1,
+                len(prefix) + 1,
+            ),
         ).fetchone()
     if conn is None:
         with ledger_store.get_conn() as managed_conn:
             rows = _read(managed_conn)
     else:
         rows = _read(conn)
-    if not rows:
-        return prefix + '0001'
-    try:
-        sequence = int(rows[0].rsplit('-', 1)[1]) + 1
-    except (ValueError, IndexError):
-        sequence = 1
+    sequence = int(rows[0] or 0) + 1
     return prefix + f'{sequence:04d}'
 
 

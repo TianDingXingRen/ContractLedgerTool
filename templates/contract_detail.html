@@ -6,7 +6,8 @@
 {% set notice_status_labels = {'draft':'草稿','issued':'已发出','acknowledged':'已确认','closed':'已关闭','cancelled':'已取消'} %}
 {% set invoice_review_labels = {'pending':'待核验','verified':'已核验','exception':'异常'} %}
 {% set invoice_status_labels = {'valid':'有效','red':'红字','void':'作废'} %}
-{% set coverage_mode = 'not_applicable' if contract.coverage_not_applicable else ('range' if contract.coverage_start is not none and contract.coverage_end is not none else '') %}
+{% set edit_contract = contract_form or contract %}
+{% set coverage_mode = contract_form.get('coverage_mode', '') if contract_form else ('not_applicable' if contract.coverage_not_applicable else ('range' if contract.coverage_start is not none and contract.coverage_end is not none else '')) %}
 
 <div class="ui-page" data-testid="contract-workspace">
   {% if error %}<div class="ui-alert" role="alert">{{ error }}</div>{% endif %}
@@ -258,21 +259,21 @@
   {% endif %}
 </div>
 
-<dialog class="ui-drawer narrow" id="contractEditDrawer" aria-labelledby="contractEditTitle">
+<dialog class="ui-drawer narrow" id="contractEditDrawer" aria-labelledby="contractEditTitle" {% if contract_edit_error %}open{% endif %}>
   <form method="post" action="{{ url_for('contracts.contract_update', contract_id=contract.id) }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="{{ tab }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="return_tab" value="{{ tab }}"><input type="hidden" name="revision" value="{{ contract.revision }}">
     <header class="ui-drawer-header"><div><h2 class="ui-drawer-title" id="contractEditTitle">编辑合同台账</h2><p class="ui-drawer-subtitle">修改会写入合同变更记录</p></div><button class="ui-icon-button" type="button" data-drawer-close aria-label="关闭"><i data-lucide="x"></i></button></header>
-    <div class="ui-drawer-body"><div class="ui-form-grid">
-      <label class="ui-field"><span>合同编号</span><input class="ui-input" name="contract_no" value="{{ contract.contract_no or '' }}" autofocus></label>
-      <label class="ui-field"><span>合同状态</span><select class="ui-select" name="status">{% for value,label in contract_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if contract.status == value }}>{{ label }}</option>{% endfor %}</select></label>
-      <label class="ui-field span-2"><span>合同名称</span><input class="ui-input" name="title" value="{{ contract.title or '' }}"></label>
-      <label class="ui-field span-2"><span>对方单位</span><input class="ui-input" name="counterparty" value="{{ contract.counterparty or '' }}"></label>
-      <label class="ui-field"><span>合同金额</span><input class="ui-input" name="amount" inputmode="decimal" value="{{ contract.amount if contract.amount is not none else '' }}"></label>
-      <label class="ui-field"><span>负责人</span><input class="ui-input" name="owner" value="{{ contract.owner or '' }}"></label>
-      <label class="ui-field"><span>签订日期</span><input class="ui-input" type="date" name="sign_date" value="{{ contract.sign_date or '' }}"></label>
-      <label class="ui-field"><span>到期日期</span><input class="ui-input" type="date" name="expiry_date" value="{{ contract.expiry_date or '' }}"></label>
-      <label class="ui-field span-2"><span>项目名称</span><input class="ui-input" name="project_name" list="projectNameOptions" maxlength="120" value="{{ contract.project_name or '' }}" placeholder="此处填写火箭型号名称" data-coverage-project {% if coverage_mode == 'range' %}required{% endif %}><small>可输入新项目，也可选择已有项目</small></label>
-      <label class="ui-field span-2"><span>所属分系统</span><input class="ui-input" name="subsystem_name" maxlength="120" value="{{ contract.subsystem_name or '' }}" placeholder="选填"></label>
+    <div class="ui-drawer-body">{% if contract_edit_error %}<div class="ui-alert" role="alert">{{ contract_edit_error }}</div>{% endif %}<div class="ui-form-grid">
+      <label class="ui-field"><span>合同编号</span><input class="ui-input" name="contract_no" value="{{ edit_contract.contract_no or '' }}" autofocus></label>
+      <label class="ui-field"><span>合同状态</span><select class="ui-select" name="status">{% for value,label in contract_status_labels.items() %}<option value="{{ value }}" {{ 'selected' if edit_contract.status == value }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="ui-field span-2"><span>合同名称</span><input class="ui-input" name="title" value="{{ edit_contract.title or '' }}"></label>
+      <label class="ui-field span-2"><span>对方单位</span><input class="ui-input" name="counterparty" value="{{ edit_contract.counterparty or '' }}"></label>
+      <label class="ui-field"><span>合同金额</span><input class="ui-input" name="amount" inputmode="decimal" value="{{ edit_contract.amount if edit_contract.amount is not none else '' }}"></label>
+      <label class="ui-field"><span>负责人</span><input class="ui-input" name="owner" value="{{ edit_contract.owner or '' }}"></label>
+      <label class="ui-field"><span>签订日期</span><input class="ui-input" type="date" name="sign_date" value="{{ edit_contract.sign_date or '' }}"></label>
+      <label class="ui-field"><span>到期日期</span><input class="ui-input" type="date" name="expiry_date" value="{{ edit_contract.expiry_date or '' }}"></label>
+      <label class="ui-field span-2"><span>项目名称</span><input class="ui-input" name="project_name" list="projectNameOptions" maxlength="120" value="{{ edit_contract.project_name or '' }}" placeholder="此处填写火箭型号名称" data-coverage-project {% if coverage_mode == 'range' %}required{% endif %}><small>可输入新项目，也可选择已有项目</small></label>
+      <label class="ui-field span-2"><span>所属分系统</span><input class="ui-input" name="subsystem_name" maxlength="120" value="{{ edit_contract.subsystem_name or '' }}" placeholder="选填"></label>
       <fieldset class="ui-field span-2" data-coverage-mode data-coverage-locked="{{ coverage_mode }}">
         <legend class="text-xs font-semibold text-base-content/60">发次适用性 {% if not coverage_mode %}<span class="text-error">*</span>{% endif %}</legend>
         <div class="grid grid-cols-2 gap-2">
@@ -290,8 +291,8 @@
           </label>
         </div>
         <div class="ui-form-grid" data-coverage-range-fields>
-          <label class="ui-field"><span>起始发次</span><input class="ui-input" type="number" name="coverage_start" min="1" max="1000000000" value="{{ contract.coverage_start if contract.coverage_start is not none else '' }}" data-coverage-bound {% if coverage_mode == 'range' %}required{% endif %} {% if coverage_mode == 'not_applicable' %}disabled{% endif %}></label>
-          <label class="ui-field"><span>结束发次</span><input class="ui-input" type="number" name="coverage_end" min="1" max="1000000000" value="{{ contract.coverage_end if contract.coverage_end is not none else '' }}" data-coverage-bound {% if coverage_mode == 'range' %}required{% endif %} {% if coverage_mode == 'not_applicable' %}disabled{% endif %}></label>
+          <label class="ui-field"><span>起始发次</span><input class="ui-input" type="number" name="coverage_start" min="1" max="1000000000" value="{{ edit_contract.coverage_start if edit_contract.coverage_start is not none else '' }}" data-coverage-bound {% if coverage_mode == 'range' %}required{% endif %} {% if coverage_mode == 'not_applicable' %}disabled{% endif %}></label>
+          <label class="ui-field"><span>结束发次</span><input class="ui-input" type="number" name="coverage_end" min="1" max="1000000000" value="{{ edit_contract.coverage_end if edit_contract.coverage_end is not none else '' }}" data-coverage-bound {% if coverage_mode == 'range' %}required{% endif %} {% if coverage_mode == 'not_applicable' %}disabled{% endif %}></label>
         </div>
         <small id="detailCoverageModeHint" data-coverage-hint>{% if coverage_mode == 'range' %}发次适用性已锁定；仍可修正或扩展数字范围。{% elif coverage_mode == 'not_applicable' %}发次适用性已锁定为不适用。{% else %}请选择填写数字范围或不适用；保存后适用性不可切换。{% endif %}</small>
       </fieldset>

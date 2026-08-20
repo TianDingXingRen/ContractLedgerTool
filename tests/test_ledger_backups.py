@@ -28,6 +28,21 @@ def test_ledger_backup_wrappers_delegate_to_split_module(tmp_db):
     assert os.path.isfile(scheduled)
 
 
+def test_document_path_query_failure_is_not_reported_as_an_empty_ledger(
+    tmp_path,
+):
+    from ledger_store import backups
+
+    database = tmp_path / 'contracts.db'
+    database.touch()
+
+    def _failed_connection():
+        raise sqlite3.OperationalError('database is unavailable')
+
+    with pytest.raises(sqlite3.OperationalError):
+        backups.get_all_docx_paths(_failed_connection, str(database))
+
+
 def test_contract_document_path_rebases_after_runtime_move(tmp_path, monkeypatch):
     import ledger_store
 

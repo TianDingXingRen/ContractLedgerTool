@@ -6,7 +6,9 @@ import json
 
 from flask import redirect, render_template, request, send_file, url_for
 
+from core.domain_errors import ConflictError
 from routes import contract_batch_support
+from routes.contract_workspace import render_contract_detail
 from routes.workspace_navigation import contract_detail_location
 from runtime.flask_paths import current_runtime_paths
 from services import contract_ledger_service
@@ -160,7 +162,20 @@ def contract_update(contract_id):
             request.form,
             new_status,
         )
-        contract_ledger_service.update_contract(contract_id, update)
+        contract_ledger_service.update_contract(
+            contract_id,
+            update,
+            expected_revision=contract_batch_support.parse_contract_revision(
+                request.form
+            ),
+        )
+    except ConflictError as exc:
+        return render_contract_detail(
+            contract_id,
+            contract_form=dict(request.form),
+            contract_edit_error=exc.public_message,
+            force_tab='overview',
+        ), exc.status_code
     except ValueError as exc:
         return safe_error(exc, '合同更新失败')
     return redirect(

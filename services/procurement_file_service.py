@@ -115,14 +115,39 @@ def sha256_file(path):
 
 def save_upload(project, file_type, file_storage):
     path = target_path(project, file_type, file_storage.filename or 'upload.xlsx')
-    file_storage.save(path)
-    return {
-        'absolute_path': str(path),
-        'relative_path': relative_path(path),
-        'original_name': os.path.basename(file_storage.filename or path.name),
-        'sha256': sha256_file(path),
-        'size_bytes': path.stat().st_size,
-    }
+    stage = path.with_name(f'.upload_{uuid.uuid4().hex}.part')
+    finalized = False
+    try:
+        file_storage.save(stage)
+        size_bytes = stage.stat().st_size
+        digest = sha256_file(stage)
+        os.replace(stage, path)
+        finalized = True
+        return {
+            'absolute_path': str(path),
+            'relative_path': relative_path(path),
+            'original_name': os.path.basename(file_storage.filename or path.name),
+            'sha256': digest,
+            'size_bytes': size_bytes,
+        }
+    except Exception:
+        if finalized:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger('contract_tool').error(
+                    'Failed to remove unregistered procurement upload',
+                    exc_info=True,
+                )
+        raise
+    finally:
+        try:
+            stage.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger('contract_tool').warning(
+                'Failed to remove procurement upload staging file',
+                exc_info=True,
+            )
 
 
 def save_generated(

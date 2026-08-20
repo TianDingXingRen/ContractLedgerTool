@@ -35,7 +35,7 @@ MAX_FUNCTION_LINES = 150
 # Existing large route registrars are tracked as explicit debt. Their budgets
 # prevent further growth while allowing incremental extraction without a rewrite.
 LEGACY_FILE_BUDGETS = {
-    'services/handover_service.py': 690,
+    'services/handover_service.py': 688,
     'xlsx_exporter.py': 891,
 }
 LEGACY_FUNCTION_BUDGETS = {

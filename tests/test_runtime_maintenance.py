@@ -117,6 +117,30 @@ def test_cleanup_skips_uploads_when_a_template_is_malformed(tmp_path, monkeypatc
     assert old_upload.exists()
 
 
+def test_cleanup_skips_all_file_deletion_when_ledger_paths_are_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    import sqlite3
+
+    import ledger_store
+
+    paths = RuntimePaths.create(tmp_path)
+    paths.ensure_writable_dirs()
+    referenced_output = paths.output_dir / 'referenced-contract.docx'
+    _touch_old(referenced_output)
+
+    def _query_failed():
+        raise sqlite3.OperationalError('database is unavailable')
+
+    monkeypatch.setattr(ledger_store, 'get_all_docx_paths', _query_failed)
+    config = SimpleNamespace(OUTPUT_CLEANUP_DAYS=1, SESSION_TTL_HOURS=1)
+
+    runtime_maintenance.cleanup_old_files(paths, config)
+
+    assert referenced_output.exists()
+
+
 def test_cleanup_removes_nested_recovery_and_trash_files(tmp_path, monkeypatch):
     import ledger_store
     import template_def

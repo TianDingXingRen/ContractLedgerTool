@@ -381,8 +381,12 @@ def test_contract_update_delegates_and_preserves_return_location(
     monkeypatch.setattr(
         contract_ledger_routes.contract_ledger_service,
         'update_contract',
-        lambda contract_id, update: captured.update(
-            {'contract_id': contract_id, 'update': update}
+        lambda contract_id, update, *, expected_revision: captured.update(
+            {
+                'contract_id': contract_id,
+                'update': update,
+                'expected_revision': expected_revision,
+            }
         ),
     )
 
@@ -391,6 +395,7 @@ def test_contract_update_delegates_and_preserves_return_location(
         '/contracts/8/update',
         {
             'status': 'active',
+            'revision': '7',
             'return_tab': 'payments',
             'return_page': '2',
         },
@@ -400,9 +405,87 @@ def test_contract_update_delegates_and_preserves_return_location(
     assert captured == {
         'contract_id': 8,
         'update': {'status': 'active'},
+        'expected_revision': 7,
     }
     assert 'tab=payments' in response.headers['Location']
     assert 'page=2' in response.headers['Location']
+
+
+def test_contract_update_rejects_stale_revision_and_preserves_submitted_form(app):
+    import ledger_store
+
+    contract_id = ledger_store.create_contract(
+        {
+            'contract_no': 'CAS-001',
+            'title': '原始标题',
+            'owner': '原负责人',
+            'coverage_not_applicable': True,
+        },
+        {},
+        '',
+    )
+    baseline = ledger_store.get_contract(contract_id)
+    common = {
+        'contract_no': 'CAS-001',
+        'counterparty': '',
+        'amount': '',
+        'sign_date': '',
+        'expiry_date': '',
+        'status': 'draft',
+        'project_name': '',
+        'subsystem_name': '',
+        'coverage_mode': 'not_applicable',
+        'revision': str(baseline['revision']),
+    }
+
+    winner = _post(
+        app.test_client(),
+        f'/contracts/{contract_id}/update',
+        {**common, 'title': '先保存的标题', 'owner': '原负责人'},
+    )
+    assert winner.status_code == 302
+
+    stale = _post(
+        app.test_client(),
+        f'/contracts/{contract_id}/update',
+        {**common, 'title': '旧页面标题', 'owner': '后保存的负责人'},
+    )
+    html = stale.get_data(as_text=True)
+    current = ledger_store.get_contract(contract_id)
+
+    assert stale.status_code == 409
+    assert current['title'] == '先保存的标题'
+    assert current['owner'] == '原负责人'
+    assert current['revision'] == baseline['revision'] + 1
+    assert '旧页面标题' in html
+    assert '后保存的负责人' in html
+    assert '合同已被其他页面修改' in html
+    assert f'name="revision" value="{current["revision"]}"' in html
+
+
+def test_contract_update_requires_revision_baseline(app):
+    import ledger_store
+
+    contract_id = ledger_store.create_contract(
+        {
+            'title': '需要版本',
+            'coverage_not_applicable': True,
+        },
+        {},
+        '',
+    )
+    response = _post(
+        app.test_client(),
+        f'/contracts/{contract_id}/update',
+        {
+            'title': '不应保存',
+            'status': 'draft',
+            'coverage_mode': 'not_applicable',
+        },
+    )
+
+    assert response.status_code == 400
+    assert ledger_store.get_contract(contract_id)['title'] == '需要版本'
 
 
 def test_contract_editor_redirects_expired_session(
@@ -691,12 +774,13 @@ def test_contract_ledger_service_trash_export_and_commands(
         monkeypatch.setattr(
             contract_ledger_service.ledger_store,
             store_name,
-            lambda *_args, marker=marker: marker,
+            lambda *_args, marker=marker, **_kwargs: marker,
         )
 
     assert contract_ledger_service.update_contract(
         7,
         {'status': 'active'},
+        expected_revision=3,
     ) == 'update_contract'
     assert contract_ledger_service.batch_delete([7]) == 'batch_delete'
     assert contract_ledger_service.batch_update_status(

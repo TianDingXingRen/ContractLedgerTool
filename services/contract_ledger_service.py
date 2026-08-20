@@ -90,8 +90,12 @@ def contract_exists(contract_id):
     return bool(ledger_store.get_contract(contract_id))
 
 
-def update_contract(contract_id, update):
-    return ledger_store.update_contract(contract_id, update)
+def update_contract(contract_id, update, *, expected_revision):
+    return ledger_store.update_contract(
+        contract_id,
+        update,
+        expected_revision=expected_revision,
+    )
 
 
 def batch_delete(contract_ids):
