@@ -86,92 +86,105 @@ def _history_page(contract_id):
     }
 
 
-def register_contract_workspace(bp):
-    @bp.route('/contracts/<int:contract_id>')
-    def contract_detail(contract_id):
-        contract = ledger_store.get_contract(contract_id)
-        if not contract:
-            return '合同记录不存在', 404
-        import procurement_store
+def render_contract_detail(
+    contract_id,
+    *,
+    contract_form=None,
+    contract_edit_error='',
+    force_tab=None,
+):
+    contract = ledger_store.get_contract(contract_id)
+    if not contract:
+        return '合同记录不存在', 404
+    import procurement_store
 
-        tab = normalize_contract_tab(request.args.get('tab'))
-        plans, payment_rules, payment_events = [], [], []
-        contract_serials, active_contract_serials = [], []
-        contract_items, production_notices, invoices, history, activity = [], [], [], [], []
-        plan_result = _empty_result()
-        notice_result = _empty_result()
-        invoice_result = _empty_result()
-        history_result = _empty_result()
+    tab = normalize_contract_tab(force_tab or request.args.get('tab'))
+    plans, payment_rules, payment_events = [], [], []
+    contract_serials, active_contract_serials = [], []
+    contract_items, production_notices, invoices, history, activity = [], [], [], [], []
+    plan_result = _empty_result()
+    notice_result = _empty_result()
+    invoice_result = _empty_result()
+    history_result = _empty_result()
 
-        if tab == 'overview':
-            contract_items = ledger_store.list_contract_items(contract_id)
-            recent_notices = ledger_store.list_production_notices(
-                contract_id=contract_id, page=1, per_page=6
-            )['rows']
-            recent_invoices = ledger_store.list_invoices(
-                contract_id=contract_id, page=1, per_page=6
-            )['rows']
-            recent_plans = ledger_store.list_payment_plans(
-                contract_id=contract_id, limit=8, include_void_contracts=True
-            )
-            recent_history = ledger_store.get_contract_history(contract_id)[:6]
-            activity = _contract_activity(
-                contract, recent_notices, recent_invoices, recent_plans, recent_history
-            )
-        elif tab == 'payments':
-            contract_serials = ledger_store.list_contract_serials(
-                contract_id, include_inactive=True
-            )
-            active_contract_serials = [
-                row for row in contract_serials if row.get('status') == 'active'
-            ]
-            plan_result = ledger_store.list_payment_plans(
-                contract_id=contract_id, page=_positive_page('plan_page'), per_page=20,
-                include_void_contracts=True,
-            )
-            plans = plan_result['rows']
-            today_text = date.today().strftime('%Y-%m-%d')
-            for plan in plans:
-                plan['unpaid_amount'] = max(
-                    (plan.get('due_amount') or 0) - (plan.get('paid_amount') or 0), 0
-                )
-                plan['is_overdue'] = bool(
-                    plan.get('due_date') and plan['due_date'] < today_text and
-                    plan.get('payment_status') != 'paid'
-                )
-            payment_rules = ledger_store.list_payment_rules(contract_id)
-            payment_events = ledger_store.list_payment_trigger_events(contract_id)
-        elif tab == 'production':
-            contract_items = ledger_store.list_contract_items(contract_id)
-            notice_result = ledger_store.list_production_notices(
-                contract_id=contract_id, page=_positive_page('notice_page'), per_page=20
-            )
-            production_notices = notice_result['rows']
-        elif tab == 'invoices':
-            invoice_result = ledger_store.list_invoices(
-                contract_id=contract_id, page=_positive_page('invoice_page'), per_page=20
-            )
-            invoices = invoice_result['rows']
-        elif tab == 'history':
-            history_result = _history_page(contract_id)
-            history = history_result['rows']
-
-        return render_template(
-            'contract_detail.html', contract=contract, tab=tab,
-            summary=ledger_store.get_contract_workspace_summary(contract_id),
-            plans=plans, plan_result=plan_result,
-            payment_rules=payment_rules, payment_events=payment_events,
-            contract_serials=contract_serials,
-            active_contract_serials=active_contract_serials,
-            contract_items=contract_items,
-            production_notices=production_notices, notice_result=notice_result,
-            invoices=invoices, invoice_result=invoice_result,
-            history=history, history_result=history_result, activity=activity,
-            today_str=date.today().strftime('%Y-%m-%d'),
-            project_names=ledger_store.list_project_names(),
-            procurement_linked=procurement_store.contract_has_refs(contract_id),
-            payment_execution_locked=(
-                ledger_store.contract_has_payment_execution_trace(contract_id)
-            ),
-            error=request.args.get('error', ''),
+    if tab == 'overview':
+        contract_items = ledger_store.list_contract_items(contract_id)
+        recent_notices = ledger_store.list_production_notices(
+            contract_id=contract_id, page=1, per_page=6
+        )['rows']
+        recent_invoices = ledger_store.list_invoices(
+            contract_id=contract_id, page=1, per_page=6
+        )['rows']
+        recent_plans = ledger_store.list_payment_plans(
+            contract_id=contract_id, limit=8, include_void_contracts=True
         )
+        recent_history = ledger_store.get_contract_history(contract_id)[:6]
+        activity = _contract_activity(
+            contract, recent_notices, recent_invoices, recent_plans, recent_history
+        )
+    elif tab == 'payments':
+        contract_serials = ledger_store.list_contract_serials(
+            contract_id, include_inactive=True
+        )
+        active_contract_serials = [
+            row for row in contract_serials if row.get('status') == 'active'
+        ]
+        plan_result = ledger_store.list_payment_plans(
+            contract_id=contract_id, page=_positive_page('plan_page'), per_page=20,
+            include_void_contracts=True,
+        )
+        plans = plan_result['rows']
+        today_text = date.today().strftime('%Y-%m-%d')
+        for plan in plans:
+            plan['unpaid_amount'] = max(
+                (plan.get('due_amount') or 0) - (plan.get('paid_amount') or 0), 0
+            )
+            plan['is_overdue'] = bool(
+                plan.get('due_date') and plan['due_date'] < today_text and
+                plan.get('payment_status') != 'paid'
+            )
+        payment_rules = ledger_store.list_payment_rules(contract_id)
+        payment_events = ledger_store.list_payment_trigger_events(contract_id)
+    elif tab == 'production':
+        contract_items = ledger_store.list_contract_items(contract_id)
+        notice_result = ledger_store.list_production_notices(
+            contract_id=contract_id, page=_positive_page('notice_page'), per_page=20
+        )
+        production_notices = notice_result['rows']
+    elif tab == 'invoices':
+        invoice_result = ledger_store.list_invoices(
+            contract_id=contract_id, page=_positive_page('invoice_page'), per_page=20
+        )
+        invoices = invoice_result['rows']
+    elif tab == 'history':
+        history_result = _history_page(contract_id)
+        history = history_result['rows']
+
+    return render_template(
+        'contract_detail.html', contract=contract, contract_form=contract_form,
+        contract_edit_error=contract_edit_error, tab=tab,
+        summary=ledger_store.get_contract_workspace_summary(contract_id),
+        plans=plans, plan_result=plan_result,
+        payment_rules=payment_rules, payment_events=payment_events,
+        contract_serials=contract_serials,
+        active_contract_serials=active_contract_serials,
+        contract_items=contract_items,
+        production_notices=production_notices, notice_result=notice_result,
+        invoices=invoices, invoice_result=invoice_result,
+        history=history, history_result=history_result, activity=activity,
+        today_str=date.today().strftime('%Y-%m-%d'),
+        project_names=ledger_store.list_project_names(),
+        procurement_linked=procurement_store.contract_has_refs(contract_id),
+        payment_execution_locked=(
+            ledger_store.contract_has_payment_execution_trace(contract_id)
+        ),
+        error=request.args.get('error', ''),
+    )
+
+
+def register_contract_workspace(bp):
+    bp.add_url_rule(
+        '/contracts/<int:contract_id>',
+        endpoint='contract_detail',
+        view_func=render_contract_detail,
+    )

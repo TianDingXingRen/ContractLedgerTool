@@ -34,3 +34,16 @@ def parse_contract_update(form, status):
         'status': status,
         **classification,
     }
+
+
+def parse_contract_revision(form):
+    raw = str(form.get('revision', '') or '').strip()
+    if not raw:
+        raise ValueError('编辑合同必须提供版本，请刷新页面后重试')
+    try:
+        revision = int(raw)
+    except ValueError as exc:
+        raise ValueError('合同版本无效，请刷新页面后重试') from exc
+    if revision <= 0:
+        raise ValueError('合同版本无效，请刷新页面后重试')
+    return revision

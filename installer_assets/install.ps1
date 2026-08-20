@@ -583,7 +583,10 @@ function Register-Uninstaller($InstallDir, $AppExe, $Version) {
     $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ContractLedgerTool"
     $UninstallScript = Join-Path $InstallDir "uninstall.ps1"
     $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $UninstallCommand = "`"$PowerShellExe`" -NoProfile -ExecutionPolicy Bypass -File `"$UninstallScript`""
+    $UninstallCommand = (
+        "`"$PowerShellExe`" -NoProfile -ExecutionPolicy Bypass " +
+        "-File `"$UninstallScript`" -InstallDir `"$InstallDir`""
+    )
     $QuietUninstallCommand = "$UninstallCommand -NoPrompt"
     $EstimatedSize = [int][Math]::Ceiling((Get-Item -LiteralPath $AppExe).Length / 1KB)
 

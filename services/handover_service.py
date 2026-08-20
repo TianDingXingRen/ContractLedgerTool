@@ -27,6 +27,7 @@ from services.handover_archive import (
     sha256_zip_member as _sha256_zip_member,
     validate_application_database as _validate_application_database,
     validate_package_archive as _validate_package_archive,
+    write_manifest as _write_manifest,
     read_optional_text as _read_optional_text,
     remove_file_if_exists as _remove_file_if_exists,
     MAX_MANIFEST_BYTES,
@@ -163,10 +164,7 @@ def _create_full_backup_package_unlocked(label='handover', paths=None):
                 'roots': roots,
                 'files': records,
             }
-            zf.writestr(
-                MANIFEST_NAME,
-                json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8'),
-            )
+            _write_manifest(zf, MANIFEST_NAME, manifest)
         validate_full_backup_package(target_path, paths)
     except Exception:
         _remove_file_if_exists(packages_dir, target_name)

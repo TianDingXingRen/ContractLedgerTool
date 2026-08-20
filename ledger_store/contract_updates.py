@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from core.domain_errors import ConflictError
 from database.connection_factory import begin_immediate
 
 from .contract_status_policy import assert_contracts_can_be_voided
@@ -31,8 +32,21 @@ class ContractUpdateRepository:
         self.update_fields = update_fields
         self.contract_serials = contract_serials
 
-    def update(self, contract_id, data):
+    @staticmethod
+    def _revision(value):
+        if value is None:
+            return None
+        try:
+            revision = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('合同版本无效，请刷新页面后重试') from exc
+        if revision <= 0:
+            raise ValueError('合同版本无效，请刷新页面后重试')
+        return revision
+
+    def update(self, contract_id, data, *, expected_revision=None):
         data = dict(data)
+        expected_revision = self._revision(expected_revision)
         try:
             with self.get_conn() as conn:
                 # The coverage choice is permanent.  Reserve the write slot
@@ -43,6 +57,16 @@ class ContractUpdateRepository:
                     'SELECT * FROM contracts WHERE id = ?', (contract_id,)
                 ).fetchone()
                 old_contract = self.row_to_dict(old_row)
+                if not old_contract:
+                    raise ValueError('合同记录不存在')
+                current_revision = int(old_contract.get('revision') or 1)
+                if (
+                    expected_revision is not None
+                    and current_revision != expected_revision
+                ):
+                    raise ConflictError(
+                        '合同已被其他页面修改，已保留你的输入，请核对最新内容后再提交'
+                    )
                 self._validate_coverage_transition(old_contract, data)
                 assignments, values = self._assignments(data)
                 if not assignments:
@@ -54,12 +78,17 @@ class ContractUpdateRepository:
                 ):
                     assert_contracts_can_be_voided(conn, [contract_id])
                 now = self.now()
-                assignments.append('updated_at = ?')
-                values.extend([now, contract_id])
-                conn.execute(
-                    f"UPDATE contracts SET {', '.join(assignments)} WHERE id = ?",
+                assignments.extend(['updated_at = ?', 'revision = revision + 1'])
+                values.extend([now, contract_id, current_revision])
+                cursor = conn.execute(
+                    f"UPDATE contracts SET {', '.join(assignments)} "
+                    "WHERE id = ? AND revision = ?",
                     values,
                 )
+                if cursor.rowcount == 0:
+                    raise ConflictError(
+                        '合同已被其他页面修改，已保留你的输入，请核对最新内容后再提交'
+                    )
                 self._sync_serial_range_if_needed(conn, contract_id, data, now)
                 self._write_history(
                     conn, contract_id, old_contract, data, now

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import PurePosixPath
@@ -26,6 +27,47 @@ MAX_FULL_PACKAGE_ARCHIVE_BYTES = (
 MAX_FULL_PACKAGE_UPLOAD_REQUEST_BYTES = (
     MAX_FULL_PACKAGE_ARCHIVE_BYTES + 16 * 1024 * 1024
 )
+
+
+class FullPackageWriteBudget:
+    """Track archive limits before members consume ZIP output space."""
+
+    def __init__(self):
+        self.member_count = 0
+        self.total_uncompressed = 0
+
+    def reserve(self, size):
+        size = int(size)
+        if size < 0:
+            raise ValueError('完整数据包文件大小无效')
+        if size > MAX_FULL_PACKAGE_MEMBER_SIZE:
+            raise ValueError('完整数据包中的单个文件过大')
+        if self.member_count + 1 > MAX_FULL_PACKAGE_MEMBERS:
+            raise ValueError('完整数据包包含异常数量的文件')
+        if self.total_uncompressed + size > MAX_FULL_PACKAGE_UNCOMPRESSED:
+            raise ValueError('完整数据包解压后内容过大')
+        self.member_count += 1
+        self.total_uncompressed += size
+
+
+def _write_budget(zf, budget=None):
+    if budget is not None:
+        return budget
+    existing = getattr(zf, '_full_package_write_budget', None)
+    if existing is None:
+        existing = FullPackageWriteBudget()
+        zf._full_package_write_budget = existing
+    return existing
+
+
+def write_manifest(zf, name, manifest):
+    payload = json.dumps(
+        manifest, ensure_ascii=False, indent=2
+    ).encode('utf-8')
+    if len(payload) > MAX_MANIFEST_BYTES:
+        raise ValueError('完整数据包清单过大')
+    _write_budget(zf).reserve(len(payload))
+    zf.writestr(name, payload)
 
 
 def read_optional_text(path):
@@ -199,12 +241,13 @@ def validate_application_database(
             connection.close()
 
 
-def add_file(zf, source_path, archive_path, records):
+def add_file(zf, source_path, archive_path, records, budget=None):
     if not os.path.isfile(source_path) or os.path.islink(source_path):
         return False
     archive_path = normalize_archive_name(archive_path)
-    zf.write(source_path, archive_path)
     file_stat = os.stat(source_path)
+    _write_budget(zf, budget).reserve(file_stat.st_size)
+    zf.write(source_path, archive_path)
     records.append({
         'path': archive_path,
         'size': file_stat.st_size,
@@ -213,11 +256,13 @@ def add_file(zf, source_path, archive_path, records):
     return True
 
 
-def add_directory(zf, source_dir, archive_root, records):
+def add_directory(zf, source_dir, archive_root, records, budget=None):
+    budget = _write_budget(zf, budget)
     archive_root = normalize_archive_name(archive_root)
     root_info = {'path': archive_root, 'kind': 'dir', 'present': os.path.isdir(source_dir)}
     if not root_info['present']:
         return root_info
+    budget.reserve(0)
     zf.writestr(archive_root + '/', b'')
     for current, dirs, files in os.walk(source_dir):
         dirs[:] = [
@@ -226,11 +271,18 @@ def add_directory(zf, source_dir, archive_root, records):
         ]
         rel_dir = os.path.relpath(current, source_dir)
         if rel_dir != '.':
+            budget.reserve(0)
             zf.writestr(archive_name(archive_root, rel_dir.replace(os.sep, '/')) + '/', b'')
         for filename in files:
             source_path = os.path.join(current, filename)
             if os.path.islink(source_path):
                 continue
             rel_path = os.path.relpath(source_path, source_dir).replace(os.sep, '/')
-            add_file(zf, source_path, archive_name(archive_root, rel_path), records)
+            add_file(
+                zf,
+                source_path,
+                archive_name(archive_root, rel_path),
+                records,
+                budget,
+            )
     return root_info

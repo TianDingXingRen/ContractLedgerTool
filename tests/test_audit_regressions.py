@@ -3,6 +3,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import date
 
 import pytest
 from openpyxl import load_workbook
@@ -94,6 +95,50 @@ def test_generated_project_file_is_removed_when_registration_fails(
 
     assert not list(base_dir.rglob('*.xlsx'))
     assert not list(base_dir.rglob('*.stage*'))
+
+
+def test_interrupted_procurement_upload_leaves_no_partial_file(
+    tmp_path,
+    monkeypatch,
+):
+    base_dir = tmp_path / 'procurement'
+    monkeypatch.setattr(procurement_file_service, 'BASE_DIR', base_dir)
+    project = {'id': 1, 'project_no': 'CG-001', 'project_name': '上传清理'}
+
+    class InterruptedUpload:
+        filename = 'quote.xlsx'
+
+        @staticmethod
+        def save(path):
+            Path(path).write_bytes(b'partial upload')
+            raise OSError('upload interrupted')
+
+    with pytest.raises(OSError, match='upload interrupted'):
+        procurement_file_service.save_upload(
+            project,
+            'supplier_quote',
+            InterruptedUpload(),
+        )
+
+    assert not list(base_dir.rglob('*.*'))
+
+
+def test_custom_project_number_cannot_poison_daily_auto_sequence(app):
+    prefix = 'CG-' + date.today().strftime('%Y%m%d') + '-'
+    procurement_project_service.create_project({
+        'project_no': prefix + 'ZZZZ',
+        'project_name': '自定义编号项目',
+    })
+
+    first_id = procurement_project_service.create_project({
+        'project_name': '自动编号一',
+    })
+    second_id = procurement_project_service.create_project({
+        'project_name': '自动编号二',
+    })
+
+    assert procurement_store.get_project(first_id)['project_no'] == prefix + '0001'
+    assert procurement_store.get_project(second_id)['project_no'] == prefix + '0002'
 
 
 def test_database_backup_failure_leaves_no_partial_target(tmp_path, monkeypatch):
